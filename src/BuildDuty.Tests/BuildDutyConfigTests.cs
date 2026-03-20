@@ -1,4 +1,4 @@
-using BuildDuty.Core;
+using BuildDuty.Core.Models;
 using Xunit;
 
 namespace BuildDuty.Tests;
@@ -41,6 +41,48 @@ public class BuildDutyConfigTests : IDisposable
         var path = WriteConfig("name: \"\"\nAzureDevOps:\n  organizations: []");
         var ex = Assert.Throws<InvalidOperationException>(() => BuildDutyConfig.LoadFromFile(path));
         Assert.Contains("name", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void LoadFromFile_ParsesAdoPipelines()
+    {
+        var yaml = """
+            name: test-project
+            azureDevOps:
+              organizations:
+                - url: https://dev.azure.com/myorg
+                  projects:
+                    - name: myproject
+                      pipelines:
+                        - id: 42
+                          name: ci-pipeline
+                          branches:
+                            - main
+                            - release/*
+                          status:
+                            - failed
+                            - partiallySucceeded
+            """;
+        var path = WriteConfig(yaml);
+        var config = BuildDutyConfig.LoadFromFile(path);
+
+        Assert.NotNull(config.AzureDevOps);
+        var org = Assert.Single(config.AzureDevOps.Organizations);
+        Assert.Equal("https://dev.azure.com/myorg", org.Url);
+        var project = Assert.Single(org.Projects);
+        Assert.Equal("myproject", project.Name);
+        var pipeline = Assert.Single(project.Pipelines);
+        Assert.Equal(42, pipeline.Id);
+        Assert.Equal("ci-pipeline", pipeline.Name);
+        Assert.Equal(["main", "release/*"], pipeline.Branches);
+        Assert.Equal(["failed", "partiallySucceeded"], pipeline.EffectiveStatus);
+    }
+
+    [Fact]
+    public void PipelineStatus_DefaultsToFailed_WhenOmitted()
+    {
+        var pipeline = new AzureDevOpsPipelineConfig { Id = 1, Name = "test" };
+        Assert.Equal(["failed"], pipeline.EffectiveStatus);
     }
 
     private string WriteConfig(string yaml)

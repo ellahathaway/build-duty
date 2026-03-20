@@ -1,0 +1,53 @@
+using YamlDotNet.Serialization;
+
+namespace BuildDuty.Core.Models;
+
+public sealed class AzureDevOpsConfig
+{
+    [YamlMember(Alias = "organizations")]
+    public List<AzureDevOpsOrganizationConfig> Organizations { get; set; } = [];
+}
+
+public sealed class AzureDevOpsOrganizationConfig
+{
+    [YamlMember(Alias = "url")]
+    public string Url { get; set; } = string.Empty;
+
+    [YamlMember(Alias = "projects")]
+    public List<AzureDevOpsProjectConfig> Projects { get; set; } = [];
+}
+
+public sealed class AzureDevOpsProjectConfig
+{
+    [YamlMember(Alias = "name")]
+    public string Name { get; set; } = string.Empty;
+
+    [YamlMember(Alias = "pipelines")]
+    public List<AzureDevOpsPipelineConfig> Pipelines { get; set; } = [];
+}
+
+public sealed class AzureDevOpsPipelineConfig
+{
+    [YamlMember(Alias = "id")]
+    public int Id { get; set; }
+
+    [YamlMember(Alias = "name")]
+    public string Name { get; set; } = string.Empty;
+
+    [YamlMember(Alias = "branches")]
+    public List<string> Branches { get; set; } = [];
+
+    /// <summary>
+    /// Pipeline run result statuses to collect. Accepted values:
+    /// <c>failed</c>, <c>partiallySucceeded</c>, <c>canceled</c>, <c>succeeded</c>.
+    /// Defaults to <c>["failed"]</c> when omitted.
+    /// </summary>
+    [YamlMember(Alias = "status")]
+    public List<string>? Status { get; set; }
+
+    /// <summary>
+    /// Returns the effective status filter, defaulting to <c>["failed"]</c>.
+    /// </summary>
+    public IReadOnlyList<string> EffectiveStatus =>
+        Status is { Count: > 0 } ? Status : ["failed"];
+}

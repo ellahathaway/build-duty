@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using BuildDuty.AI;
 using BuildDuty.Core;
+using BuildDuty.Core.Models;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -35,18 +36,32 @@ internal sealed class AiRunSettings : CommandSettings
 
 internal sealed class AiRunCommand : AsyncCommand<AiRunSettings>
 {
+    private readonly RouterManifest _router;
+    private readonly CopilotAdapter _adapter;
+    private readonly Func<string, WorkItemStore> _wiStoreFactory;
+    private readonly Func<string, AiRunStore> _aiStoreFactory;
+
+    public AiRunCommand(
+        RouterManifest router,
+        CopilotAdapter adapter,
+        Func<string, WorkItemStore> wiStoreFactory,
+        Func<string, AiRunStore> aiStoreFactory)
+    {
+        _router = router;
+        _adapter = adapter;
+        _wiStoreFactory = wiStoreFactory;
+        _aiStoreFactory = aiStoreFactory;
+    }
+
     public override async Task<int> ExecuteAsync(CommandContext context, AiRunSettings settings)
     {
         var configPath = Paths.ConfigPath()
             ?? throw new InvalidOperationException("No .build-duty.yml found. Use scan --config or run from a repository with a config.");
         var config = BuildDutyConfig.LoadFromFile(configPath);
 
-        var routerPath = Paths.RouterYamlPath();
-        var router = RouterManifest.LoadFromFile(routerPath);
-        var adapter = new CopilotAdapter();
-        var wiStore = new WorkItemStore(Paths.WorkItemsDir(config.Name));
-        var aiStore = new AiRunStore(Paths.AiRunsDir(config.Name));
-        var orchestrator = new AiOrchestrator(router, adapter, wiStore, aiStore);
+        var wiStore = _wiStoreFactory(config.Name);
+        var aiStore = _aiStoreFactory(config.Name);
+        var orchestrator = new AiOrchestrator(_router, _adapter, wiStore, aiStore);
 
         if (settings.WorkItemId is not null)
         {

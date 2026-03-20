@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using BuildDuty.Core;
+using BuildDuty.Core.Models;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -18,12 +19,19 @@ internal sealed class WorkItemsListSettings : CommandSettings
 
 internal sealed class WorkItemsListCommand : AsyncCommand<WorkItemsListSettings>
 {
+    private readonly Func<string, WorkItemStore> _storeFactory;
+
+    public WorkItemsListCommand(Func<string, WorkItemStore> storeFactory)
+    {
+        _storeFactory = storeFactory;
+    }
+
     public override async Task<int> ExecuteAsync(CommandContext context, WorkItemsListSettings settings)
     {
         var configPath = Paths.ConfigPath()
             ?? throw new InvalidOperationException("No .build-duty.yml found.");
         var config = BuildDutyConfig.LoadFromFile(configPath);
-        var store = new WorkItemStore(Paths.WorkItemsDir(config.Name));
+        var store = _storeFactory(config.Name);
 
         WorkItemState? filter = settings.State?.ToLowerInvariant() switch
         {
@@ -84,12 +92,19 @@ internal sealed class WorkItemsShowSettings : CommandSettings
 
 internal sealed class WorkItemsShowCommand : AsyncCommand<WorkItemsShowSettings>
 {
+    private readonly Func<string, WorkItemStore> _storeFactory;
+
+    public WorkItemsShowCommand(Func<string, WorkItemStore> storeFactory)
+    {
+        _storeFactory = storeFactory;
+    }
+
     public override async Task<int> ExecuteAsync(CommandContext context, WorkItemsShowSettings settings)
     {
         var configPath = Paths.ConfigPath()
             ?? throw new InvalidOperationException("No .build-duty.yml found.");
         var config = BuildDutyConfig.LoadFromFile(configPath);
-        var store = new WorkItemStore(Paths.WorkItemsDir(config.Name));
+        var store = _storeFactory(config.Name);
         var item = await store.LoadAsync(settings.Id);
 
         if (item is null)

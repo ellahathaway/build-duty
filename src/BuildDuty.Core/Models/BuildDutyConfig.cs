@@ -1,16 +1,19 @@
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
-namespace BuildDuty.Core;
+namespace BuildDuty.Core.Models;
 
 /// <summary>
 /// Represents the top-level .build-duty.yml configuration.
-/// Only the <c>name</c> field is required; it drives local storage isolation.
+/// The <c>name</c> field is required; it drives local storage isolation.
 /// </summary>
 public sealed class BuildDutyConfig
 {
     [YamlMember(Alias = "name")]
     public string Name { get; set; } = string.Empty;
+
+    [YamlMember(Alias = "azureDevOps")]
+    public AzureDevOpsConfig? AzureDevOps { get; set; }
 
     /// <summary>
     /// Load a <see cref="BuildDutyConfig"/> from a YAML file, validating that a

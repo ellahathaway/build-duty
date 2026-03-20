@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using BuildDuty.Core;
+using BuildDuty.Core.Models;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -18,10 +19,25 @@ internal sealed class ScanSettings : CommandSettings
     [CommandOption("--config")]
     [Description("Path to .build-duty.yml config file")]
     public string? Config { get; set; }
+
+    [CommandOption("--ci")]
+    [Description("Use CI credentials (env vars / Azure CLI) instead of interactive browser auth")]
+    public bool Ci { get; set; }
 }
 
 internal sealed class ScanCommand : AsyncCommand<ScanSettings>
 {
+    private readonly Func<string, WorkItemStore> _storeFactory;
+    private readonly Func<AzureDevOpsConfig, bool, IAzureDevOpsSignalService> _azureDevOpsServiceFactory;
+
+    public ScanCommand(
+        Func<string, WorkItemStore> storeFactory,
+        Func<AzureDevOpsConfig, bool, IAzureDevOpsSignalService> azureDevOpsServiceFactory)
+    {
+        _storeFactory = storeFactory;
+        _azureDevOpsServiceFactory = azureDevOpsServiceFactory;
+    }
+
     public override async Task<int> ExecuteAsync(CommandContext context, ScanSettings settings)
     {
         var configPath = settings.Config ?? Paths.ConfigPath();
@@ -40,13 +56,12 @@ internal sealed class ScanCommand : AsyncCommand<ScanSettings>
         var config = BuildDutyConfig.LoadFromFile(configPath);
         AnsiConsole.MarkupLine($"Using config: [bold]{configPath}[/] (name: [bold]{Markup.Escape(config.Name)}[/])");
 
-        var services = new ISignalService[]
-        {
-            new AzureDevOpsSignalService(),
-            new GitHubSignalService()
-        };
+        var services = new List<ISignalService>();
+        if (config.AzureDevOps is not null)
+            services.Add(_azureDevOpsServiceFactory(config.AzureDevOps, settings.Ci));
+        services.Add(new GitHubSignalService());
 
-        var store = new WorkItemStore(Paths.WorkItemsDir(config.Name));
+        var store = _storeFactory(config.Name);
         var totalNew = 0;
 
         await AnsiConsole.Status()
