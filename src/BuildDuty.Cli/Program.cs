@@ -5,6 +5,7 @@ using BuildDuty.Cli.Infrastructure;
 using BuildDuty.Core;
 using BuildDuty.Core.Models;
 using Microsoft.Extensions.DependencyInjection;
+using Octokit;
 using Spectre.Console.Cli;
 
 var services = new ServiceCollection();
@@ -22,6 +23,16 @@ services.AddSingleton<Func<bool, IBuildHttpClientFactory>>(sp => ci =>
 services.AddSingleton<Func<AzureDevOpsConfig, bool, IAzureDevOpsSignalService>>(sp =>
     (config, ci) => new AzureDevOpsSignalService(
         config, sp.GetRequiredService<Func<bool, IBuildHttpClientFactory>>()(ci)));
+
+// GitHub
+services.AddSingleton<IGitHubCredentialProvider>(_ => GitHubCredentialProvider.Create());
+services.AddSingleton<IGitHubClient>(sp =>
+{
+    var creds = sp.GetRequiredService<IGitHubCredentialProvider>().GetCredentials();
+    return new GitHubClient(new Octokit.ProductHeaderValue("build-duty")) { Credentials = creds };
+});
+services.AddSingleton<Func<GitHubConfig, IGitHubSignalService>>(sp =>
+    config => new GitHubSignalService(config, sp.GetRequiredService<IGitHubClient>()));
 
 // Config + store factories — config path is resolved at command time, so we
 // register factories that commands invoke with the loaded config name.

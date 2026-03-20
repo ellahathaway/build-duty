@@ -29,13 +29,16 @@ internal sealed class ScanCommand : AsyncCommand<ScanSettings>
 {
     private readonly Func<string, WorkItemStore> _storeFactory;
     private readonly Func<AzureDevOpsConfig, bool, IAzureDevOpsSignalService> _azureDevOpsServiceFactory;
+    private readonly Func<GitHubConfig, IGitHubSignalService> _gitHubServiceFactory;
 
     public ScanCommand(
         Func<string, WorkItemStore> storeFactory,
-        Func<AzureDevOpsConfig, bool, IAzureDevOpsSignalService> azureDevOpsServiceFactory)
+        Func<AzureDevOpsConfig, bool, IAzureDevOpsSignalService> azureDevOpsServiceFactory,
+        Func<GitHubConfig, IGitHubSignalService> gitHubServiceFactory)
     {
         _storeFactory = storeFactory;
         _azureDevOpsServiceFactory = azureDevOpsServiceFactory;
+        _gitHubServiceFactory = gitHubServiceFactory;
     }
 
     public override async Task<int> ExecuteAsync(CommandContext context, ScanSettings settings)
@@ -59,7 +62,8 @@ internal sealed class ScanCommand : AsyncCommand<ScanSettings>
         var services = new List<ISignalService>();
         if (config.AzureDevOps is not null)
             services.Add(_azureDevOpsServiceFactory(config.AzureDevOps, settings.Ci));
-        services.Add(new GitHubSignalService());
+        if (config.GitHub is not null)
+            services.Add(_gitHubServiceFactory(config.GitHub));
 
         var store = _storeFactory(config.Name);
         var totalNew = 0;

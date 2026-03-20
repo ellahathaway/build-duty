@@ -15,6 +15,9 @@ public sealed class BuildDutyConfig
     [YamlMember(Alias = "azureDevOps")]
     public AzureDevOpsConfig? AzureDevOps { get; set; }
 
+    [YamlMember(Alias = "github")]
+    public GitHubConfig? GitHub { get; set; }
+
     /// <summary>
     /// Load a <see cref="BuildDutyConfig"/> from a YAML file, validating that a
     /// non-empty <c>name</c> field is present.
