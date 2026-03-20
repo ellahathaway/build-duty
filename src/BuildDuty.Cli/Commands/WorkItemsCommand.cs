@@ -12,6 +12,10 @@ internal sealed class WorkItemsListSettings : CommandSettings
     [Description("Filter by state (unresolved, inprogress, resolved)")]
     public string? State { get; set; }
 
+    [CommandOption("--show-resolved")]
+    [Description("Include resolved work items")]
+    public bool ShowResolved { get; set; }
+
     [CommandOption("--limit")]
     [Description("Maximum number of items to display")]
     public int? Limit { get; set; }
@@ -19,9 +23,9 @@ internal sealed class WorkItemsListSettings : CommandSettings
 
 internal sealed class WorkItemsListCommand : AsyncCommand<WorkItemsListSettings>
 {
-    private readonly Func<string, WorkItemStore> _storeFactory;
+    private readonly Func<string, string?, WorkItemStore> _storeFactory;
 
-    public WorkItemsListCommand(Func<string, WorkItemStore> storeFactory)
+    public WorkItemsListCommand(Func<string, string?, WorkItemStore> storeFactory)
     {
         _storeFactory = storeFactory;
     }
@@ -31,7 +35,7 @@ internal sealed class WorkItemsListCommand : AsyncCommand<WorkItemsListSettings>
         var configPath = Paths.ConfigPath()
             ?? throw new InvalidOperationException("No .build-duty.yml found.");
         var config = BuildDutyConfig.LoadFromFile(configPath);
-        var store = _storeFactory(config.Name);
+        var store = _storeFactory(config.Name, configPath);
 
         WorkItemState? filter = settings.State?.ToLowerInvariant() switch
         {
@@ -43,6 +47,10 @@ internal sealed class WorkItemsListCommand : AsyncCommand<WorkItemsListSettings>
         };
 
         var items = await store.ListAsync(filter, settings.Limit);
+
+        // Exclude resolved by default unless --show-resolved or --state resolved
+        if (!settings.ShowResolved && filter != WorkItemState.Resolved)
+            items = items.Where(i => i.State != WorkItemState.Resolved).ToList();
 
         if (items.Count == 0)
         {
@@ -92,9 +100,9 @@ internal sealed class WorkItemsShowSettings : CommandSettings
 
 internal sealed class WorkItemsShowCommand : AsyncCommand<WorkItemsShowSettings>
 {
-    private readonly Func<string, WorkItemStore> _storeFactory;
+    private readonly Func<string, string?, WorkItemStore> _storeFactory;
 
-    public WorkItemsShowCommand(Func<string, WorkItemStore> storeFactory)
+    public WorkItemsShowCommand(Func<string, string?, WorkItemStore> storeFactory)
     {
         _storeFactory = storeFactory;
     }
@@ -104,7 +112,7 @@ internal sealed class WorkItemsShowCommand : AsyncCommand<WorkItemsShowSettings>
         var configPath = Paths.ConfigPath()
             ?? throw new InvalidOperationException("No .build-duty.yml found.");
         var config = BuildDutyConfig.LoadFromFile(configPath);
-        var store = _storeFactory(config.Name);
+        var store = _storeFactory(config.Name, configPath);
         var item = await store.LoadAsync(settings.Id);
 
         if (item is null)

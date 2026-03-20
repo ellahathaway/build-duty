@@ -21,6 +21,10 @@ internal sealed class AiSettings : CommandSettings
     [Description("Filter work items by state for batch/selection")]
     public string? State { get; set; }
 
+    [CommandOption("--show-resolved")]
+    [Description("Include resolved work items in selection")]
+    public bool ShowResolved { get; set; }
+
     [CommandOption("--limit")]
     [Description("Max items to process")]
     public int? Limit { get; set; }
@@ -40,13 +44,13 @@ internal sealed class AiSettings : CommandSettings
 internal sealed class AiCommand : AsyncCommand<AiSettings>
 {
     private readonly Func<BuildDutyConfig, WorkItemStore, CopilotAdapter> _adapterFactory;
-    private readonly Func<string, WorkItemStore> _wiStoreFactory;
-    private readonly Func<string, AiRunStore> _aiStoreFactory;
+    private readonly Func<string, string?, WorkItemStore> _wiStoreFactory;
+    private readonly Func<string, string?, AiRunStore> _aiStoreFactory;
 
     public AiCommand(
         Func<BuildDutyConfig, WorkItemStore, CopilotAdapter> adapterFactory,
-        Func<string, WorkItemStore> wiStoreFactory,
-        Func<string, AiRunStore> aiStoreFactory)
+        Func<string, string?, WorkItemStore> wiStoreFactory,
+        Func<string, string?, AiRunStore> aiStoreFactory)
     {
         _adapterFactory = adapterFactory;
         _wiStoreFactory = wiStoreFactory;
@@ -59,8 +63,8 @@ internal sealed class AiCommand : AsyncCommand<AiSettings>
             ?? throw new InvalidOperationException("No .build-duty.yml found. Use --config to specify a path.");
         var config = BuildDutyConfig.LoadFromFile(configPath);
 
-        var wiStore = _wiStoreFactory(config.Name);
-        var aiStore = _aiStoreFactory(config.Name);
+        var wiStore = _wiStoreFactory(config.Name, configPath);
+        var aiStore = _aiStoreFactory(config.Name, configPath);
         var action = settings.Action!;
 
         if (settings.WorkItemId is not null)
@@ -88,6 +92,11 @@ internal sealed class AiCommand : AsyncCommand<AiSettings>
             };
 
             var items = await wiStore.ListAsync(stateFilter, settings.Limit);
+
+            // Exclude resolved by default unless --show-resolved or --state resolved
+            if (!settings.ShowResolved && stateFilter != WorkItemState.Resolved)
+                items = items.Where(i => i.State != WorkItemState.Resolved).ToList();
+
             if (items.Count == 0)
             {
                 var scope = stateFilter.HasValue ? $" in state '{Markup.Escape(settings.State!)}'" : "";

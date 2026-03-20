@@ -37,10 +37,10 @@ services.AddSingleton<Func<GitHubConfig, IGitHubSignalService>>(sp =>
 
 // Config + store factories — config path is resolved at command time, so we
 // register factories that commands invoke with the loaded config name.
-services.AddSingleton<Func<string, WorkItemStore>>(
-    _ => (string configName) => new WorkItemStore(Paths.WorkItemsDir(configName)));
-services.AddSingleton<Func<string, AiRunStore>>(
-    _ => (string configName) => new AiRunStore(Paths.AiRunsDir(configName)));
+services.AddSingleton<Func<string, string?, WorkItemStore>>(
+    _ => (string configName, string? configPath) => new WorkItemStore(Paths.WorkItemsDir(configName, configPath)));
+services.AddSingleton<Func<string, string?, AiRunStore>>(
+    _ => (string configName, string? configPath) => new AiRunStore(Paths.AiRunsDir(configName, configPath)));
 
 // AI — adapter factory builds a CopilotClient with tools at command time.
 // MCP servers are loaded from mcp.json by the session factory.

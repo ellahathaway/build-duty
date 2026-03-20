@@ -5,6 +5,12 @@ namespace BuildDuty.Cli;
 /// </summary>
 internal static class Paths
 {
+    /// <summary>
+    /// Root of all build-duty data: ~/.build-duty/
+    /// </summary>
+    public static string HomeDir() =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".build-duty");
+
     public static string RepoRoot()
     {
         // Walk up from CWD looking for .build-duty.yml or BuildDuty.slnx
@@ -31,14 +37,14 @@ internal static class Paths
     }
 
     /// <summary>
-    /// Root of config-scoped local storage: .build-duty/&lt;configName&gt;/
+    /// Config-scoped local storage: ~/.build-duty/&lt;configName&gt;/
     /// </summary>
-    public static string DataDir(string configName) =>
-        Path.Combine(RepoRoot(), ".build-duty", configName);
+    public static string DataDir(string configName, string? configPath = null) =>
+        Path.Combine(HomeDir(), configName);
 
-    public static string WorkItemsDir(string configName) =>
+    public static string WorkItemsDir(string configName, string? configPath = null) =>
         Path.Combine(DataDir(configName), "workitems");
 
-    public static string AiRunsDir(string configName) =>
+    public static string AiRunsDir(string configName, string? configPath = null) =>
         Path.Combine(DataDir(configName), "ai-runs");
 }

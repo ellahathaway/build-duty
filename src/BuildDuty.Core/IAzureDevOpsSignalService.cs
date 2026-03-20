@@ -28,6 +28,12 @@ public sealed class AzureDevOpsSignalService : IAzureDevOpsSignalService
 
     public string SourceName => "AzureDevOps";
 
+    /// <summary>
+    /// Correlation IDs where the latest build now passes (doesn't match
+    /// the failure filter). Existing work items with these IDs can be resolved.
+    /// </summary>
+    public HashSet<string> PassingCorrelationIds { get; } = new(StringComparer.Ordinal);
+
     public async Task<IReadOnlyList<WorkItem>> CollectAsync(CancellationToken ct = default)
     {
         var items = new List<WorkItem>();
@@ -48,16 +54,31 @@ public sealed class AzureDevOpsSignalService : IAzureDevOpsSignalService
                     foreach (var build in builds)
                     {
                         var resultName = build.Result?.ToString().ToLowerInvariant();
-                        if (resultName is null || !statusFilter.Contains(resultName))
-                            continue;
+                        var corrId = CorrelationIdFor(pipeline.Id, build);
 
-                        items.Add(ToWorkItem(org.Url, project.Name, pipeline, build));
+                        if (resultName is not null && statusFilter.Contains(resultName))
+                        {
+                            items.Add(ToWorkItem(org.Url, project.Name, pipeline, build));
+                        }
+                        else
+                        {
+                            // Latest build is passing — track so we can resolve old items
+                            PassingCorrelationIds.Add(corrId);
+                        }
                     }
                 }
             }
         }
 
         return items;
+    }
+
+    private static string CorrelationIdFor(int pipelineId, Build build)
+    {
+        var shortBranch = build.SourceBranch.StartsWith("refs/heads/", StringComparison.Ordinal)
+            ? build.SourceBranch["refs/heads/".Length..]
+            : build.SourceBranch;
+        return $"corr_ado_{pipelineId}_{Sanitize(shortBranch)}";
     }
 
     private static WorkItem ToWorkItem(string orgUrl, string project, AzureDevOpsPipelineConfig pipeline, Build build)
@@ -76,7 +97,7 @@ public sealed class AzureDevOpsSignalService : IAzureDevOpsSignalService
             Id = $"wi_ado_{build.Id}",
             State = WorkItemState.Unresolved,
             Title = $"[{pipeline.Name}] {shortBranch} — Build #{build.BuildNumber} {build.Result?.ToString().ToLowerInvariant()}",
-            CorrelationId = $"corr_ado_{pipeline.Id}_{Sanitize(shortBranch)}",
+            CorrelationId = CorrelationIdFor(pipeline.Id, build),
             Signals =
             [
                 new SignalReference { Type = "ado-pipeline-run", Ref = webUrl }

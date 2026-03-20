@@ -7,3 +7,4 @@ artifacts/
 # .NET build output
 bin/
 obj/
+nupkg/
