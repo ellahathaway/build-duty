@@ -14,7 +14,7 @@ internal sealed class ScanSettings : CommandSettings
 
     [CommandOption("--config")]
     [Description("Path to .build-duty.yml config file")]
-    public string? ConfigPath { get; set; }
+    public string? Config { get; set; }
 
     [CommandOption("--ci")]
     [Description("Use CI credentials (env vars / Azure CLI) instead of interactive browser auth")]
@@ -39,10 +39,21 @@ internal sealed class ScanCommand : AsyncCommand<ScanSettings>
 
     public override async Task<int> ExecuteAsync(CommandContext context, ScanSettings settings)
     {
-        var configPath = settings.ConfigPath ?? Paths.ConfigPath()
-            ?? throw new InvalidOperationException("No .build-duty.yml found. Use --config to specify a path.");
+        var configPath = settings.Config ?? Paths.ConfigPath();
+        if (configPath is null)
+        {
+            AnsiConsole.MarkupLine("[red bold]Error:[/] No .build-duty.yml found in the repository root. Use --config to specify a path.");
+            return 1;
+        }
+
+        if (!File.Exists(configPath))
+        {
+            AnsiConsole.MarkupLine($"[red bold]Error:[/] Config file not found: {configPath}");
+            return 1;
+        }
+
         var config = BuildDutyConfig.LoadFromFile(configPath);
-        AnsiConsole.MarkupLine($"Using config: [bold]{Markup.Escape(configPath)}[/] (name: {Markup.Escape(config.Name)})");
+        AnsiConsole.MarkupLine($"Using config: [bold]{configPath}[/] (name: [bold]{Markup.Escape(config.Name)}[/])");
 
         var services = new List<ISignalService>();
         if (config.AzureDevOps is not null)
@@ -54,26 +65,25 @@ internal sealed class ScanCommand : AsyncCommand<ScanSettings>
         var totalNew = 0;
 
         await AnsiConsole.Status()
-            .StartAsync("Scanning...", async ctx =>
+            .Spinner(Spinner.Known.Dots)
+            .StartAsync("Scanning signals...", async ctx =>
             {
                 foreach (var svc in services)
                 {
-                    ctx.Status($"Collecting from {svc.SourceName}...");
+                    ctx.Status($"Collecting from [bold]{svc.SourceName}[/]...");
                     var items = await svc.CollectAsync();
-                    var newCount = 0;
                     foreach (var item in items)
                     {
                         if (!store.Exists(item.Id))
                         {
                             await store.SaveAsync(item);
-                            newCount++;
+                            totalNew++;
                         }
                     }
-                    totalNew += newCount;
                 }
             });
 
-        // Auto-resolve work items whose latest build now passes
+        // Auto-resolve work items whose latest build now passes or whose branch is stale
         var totalResolved = 0;
         var adoService = services.OfType<AzureDevOpsSignalService>().FirstOrDefault();
 
@@ -85,15 +95,36 @@ internal sealed class ScanCommand : AsyncCommand<ScanSettings>
                 if (item.State == WorkItemState.Resolved || item.CorrelationId is null)
                     continue;
 
+                bool shouldResolve = false;
+                string? reason = null;
+
                 // Check if latest build now passes
                 if (adoService.PassingCorrelationIds.Contains(item.CorrelationId))
+                {
+                    shouldResolve = true;
+                    reason = "Auto-resolved: latest build succeeded";
+                }
+                // Check if branch is stale (release pipeline only)
+                else if (adoService.ReleasePipelinePrefixes.Count > 0)
+                {
+                    var matchesReleasePipeline = adoService.ReleasePipelinePrefixes
+                        .Any(prefix => item.CorrelationId.StartsWith(prefix, StringComparison.Ordinal));
+
+                    if (matchesReleasePipeline &&
+                        !adoService.ActiveCorrelationIds.Contains(item.CorrelationId))
+                    {
+                        shouldResolve = true;
+                        reason = "Auto-resolved: branch superseded by newer release";
+                    }
+                }
+
+                if (shouldResolve)
                 {
                     if (item.State == WorkItemState.Unresolved)
                         item.TransitionTo(WorkItemState.InProgress,
                             "Build status changed", actor: "build-duty");
 
-                    item.TransitionTo(WorkItemState.Resolved,
-                        "Auto-resolved: latest build succeeded", actor: "build-duty");
+                    item.TransitionTo(WorkItemState.Resolved, reason!, actor: "build-duty");
                     await store.SaveAsync(item);
                     totalResolved++;
                 }
@@ -104,7 +135,7 @@ internal sealed class ScanCommand : AsyncCommand<ScanSettings>
         table.AddColumn("Source");
         table.AddColumn("Status");
         foreach (var svc in services)
-            table.AddRow(Markup.Escape(svc.SourceName), "[green]✓ collected[/]");
+            table.AddRow(svc.SourceName, "[green]✓[/] collected");
         AnsiConsole.Write(table);
 
         AnsiConsole.MarkupLine($"\nScan complete. [bold green]{totalNew}[/] new work item(s) created.");
@@ -113,3 +144,4 @@ internal sealed class ScanCommand : AsyncCommand<ScanSettings>
         return 0;
     }
 }
+

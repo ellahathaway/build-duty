@@ -1,5 +1,6 @@
 using BuildDuty.Core.Models;
 using Microsoft.TeamFoundation.Build.WebApi;
+using Microsoft.TeamFoundation.SourceControl.WebApi;
 
 namespace BuildDuty.Core;
 
@@ -9,21 +10,32 @@ namespace BuildDuty.Core;
 public static class BuildHttpClientExtensions
 {
     /// <summary>
-    /// Returns the single latest completed build per branch. When no branches
-    /// are configured, returns the single latest build across all branches.
-    /// No result filter is applied — the caller decides which results to act on.
+    /// Returns the single latest completed build per branch along with the
+    /// resolved branch list. When <see cref="AzureDevOpsPipelineConfig.Release"/>
+    /// is set, resolves release branches dynamically before fetching.
     /// </summary>
-    public static async Task<IReadOnlyList<Build>> GetLatestBuildsAsync(
+    public static async Task<(IReadOnlyList<Build> Builds, IReadOnlyList<string> ResolvedBranches)> GetLatestBuildsAsync(
         this BuildHttpClient client,
         string project,
         AzureDevOpsPipelineConfig pipeline,
+        GitHttpClient? gitClient = null,
         CancellationToken ct = default)
     {
+        var branches = pipeline.Branches;
+
+        // If release config is set, resolve release branches dynamically
+        if (pipeline.Release is not null && gitClient is not null)
+        {
+            var resolver = new ReleaseBranchResolver();
+            var resolved = await resolver.ResolveAsync(gitClient, project, pipeline.Release, ct);
+            branches = resolved.ToList();
+        }
+
         var builds = new List<Build>();
 
-        if (pipeline.Branches is { Count: > 0 })
+        if (branches is { Count: > 0 })
         {
-            foreach (var branch in pipeline.Branches)
+            foreach (var branch in branches)
             {
                 var build = await client.FetchLatestBuildAsync(project, pipeline.Id, branch, ct);
                 if (build is not null)
@@ -37,7 +49,7 @@ public static class BuildHttpClientExtensions
                 builds.Add(build);
         }
 
-        return builds;
+        return (builds, branches);
     }
 
     /// <summary>

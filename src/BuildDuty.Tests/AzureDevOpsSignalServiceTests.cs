@@ -1,4 +1,5 @@
 using Microsoft.TeamFoundation.Build.WebApi;
+using Microsoft.TeamFoundation.SourceControl.WebApi;
 using BuildDuty.Core;
 using BuildDuty.Core.Models;
 using Xunit;
@@ -38,6 +39,9 @@ public class AzureDevOpsSignalServiceTests
     private sealed class FakeBuildHttpClientFactory : IBuildHttpClientFactory
     {
         public Task<BuildHttpClient> CreateAsync(string organizationUrl, CancellationToken ct = default)
+            => throw new InvalidOperationException("Should not be called when there are no organizations");
+
+        public Task<GitHttpClient> CreateGitClientAsync(string organizationUrl, CancellationToken ct = default)
             => throw new InvalidOperationException("Should not be called when there are no organizations");
     }
 }
