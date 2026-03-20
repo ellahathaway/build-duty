@@ -1,0 +1,62 @@
+using System.ComponentModel;
+using BuildDuty.Core;
+using Spectre.Console;
+using Spectre.Console.Cli;
+
+namespace BuildDuty.Cli.Commands;
+
+internal sealed class ScanSettings : CommandSettings
+{
+    [CommandOption("--since")]
+    [Description("Time window for signal collection (e.g. 24h)")]
+    public string? Since { get; set; }
+
+    [CommandOption("--profile")]
+    [Description("Signal collection profile")]
+    public string? Profile { get; set; }
+}
+
+internal sealed class ScanCommand : AsyncCommand<ScanSettings>
+{
+    public override async Task<int> ExecuteAsync(CommandContext context, ScanSettings settings)
+    {
+        var services = new ISignalService[]
+        {
+            new AzureDevOpsSignalService(),
+            new GitHubSignalService()
+        };
+
+        var store = new WorkItemStore(Paths.WorkItemsDir());
+        var totalNew = 0;
+
+        await AnsiConsole.Status()
+            .Spinner(Spinner.Known.Dots)
+            .StartAsync("Scanning signals...", async ctx =>
+            {
+                foreach (var svc in services)
+                {
+                    ctx.Status($"Collecting from [bold]{svc.SourceName}[/]...");
+                    var items = await svc.CollectAsync();
+                    foreach (var item in items)
+                    {
+                        if (!store.Exists(item.Id))
+                        {
+                            await store.SaveAsync(item);
+                            totalNew++;
+                        }
+                    }
+                }
+            });
+
+        var table = new Table().Border(TableBorder.Rounded);
+        table.AddColumn("Source");
+        table.AddColumn("Status");
+        foreach (var svc in services)
+            table.AddRow(svc.SourceName, "[green]✓[/] collected");
+        AnsiConsole.Write(table);
+
+        AnsiConsole.MarkupLine($"\nScan complete. [bold green]{totalNew}[/] new work item(s) created.");
+        return 0;
+    }
+}
+

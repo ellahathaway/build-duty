@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>build-duty</ToolCommandName>
+    <PackageId>BuildDuty</PackageId>
+    <Version>0.1.0</Version>
+    <Description>CLI tool for build-duty triage and AI-assisted analysis</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Spectre.Console" Version="0.50.0" />
+    <PackageReference Include="Spectre.Console.Cli" Version="0.50.0" />
+    <PackageReference Include="YamlDotNet" Version="16.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BuildDuty.Core\BuildDuty.Core.csproj" />
+    <ProjectReference Include="..\BuildDuty.AI\BuildDuty.AI.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);NU5118</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="..\..\assets\ai\**\*" LinkBase="assets\ai" CopyToOutputDirectory="PreserveNewest" Pack="true" PackagePath="tools\net10.0\any\assets\ai" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,11 @@
+ai:
+  provider: copilot-cli
+  jobs:
+    summarize:
+      skill: summarize-failure
+    cluster:
+      skill: cluster-incidents
+    root-cause:
+      skill: diagnose-build-break
+    next-actions:
+      skill: suggest-next-actions

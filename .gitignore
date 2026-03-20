@@ -1,0 +1,8 @@
+# Build artifacts
+artifacts/workitems/
+artifacts/ai/
+artifacts/packages/
+
+# .NET build output
+bin/
+obj/

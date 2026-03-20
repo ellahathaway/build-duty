@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/BuildDuty.Cli/BuildDuty.Cli.csproj" />
+    <Project Path="src/BuildDuty.Core/BuildDuty.Core.csproj" />
+    <Project Path="src/BuildDuty.AI/BuildDuty.AI.csproj" />
+    <Project Path="src/BuildDuty.Tests/BuildDuty.Tests.csproj" />
+  </Folder>
+</Solution>
