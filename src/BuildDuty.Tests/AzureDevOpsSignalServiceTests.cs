@@ -20,10 +20,10 @@ public class AzureDevOpsSignalServiceTests
     }
 
     [Fact]
-    public void PipelineStatus_DefaultsToFailed()
+    public void PipelineStatus_DefaultsToFailedAndPartiallySucceeded()
     {
         var pipeline = new AzureDevOpsPipelineConfig { Id = 1, Name = "test" };
-        Assert.Equal(["failed"], pipeline.EffectiveStatus);
+        Assert.Equal(["failed", "partiallySucceeded"], pipeline.EffectiveStatus);
     }
 
     [Theory]

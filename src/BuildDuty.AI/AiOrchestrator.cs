@@ -3,46 +3,48 @@ using BuildDuty.Core;
 namespace BuildDuty.AI;
 
 /// <summary>
-/// Orchestrates AI job execution: resolves skills, manages state, invokes Copilot, persists results.
+/// Orchestrates AI execution: manages work item state, invokes the adapter, persists results.
 /// </summary>
 public sealed class AiOrchestrator
 {
-    private readonly RouterManifest _router;
     private readonly CopilotAdapter _adapter;
     private readonly WorkItemStore _workItemStore;
     private readonly AiRunStore _aiRunStore;
 
     public AiOrchestrator(
-        RouterManifest router,
         CopilotAdapter adapter,
         WorkItemStore workItemStore,
         AiRunStore aiRunStore)
     {
-        _router = router;
         _adapter = adapter;
         _workItemStore = workItemStore;
         _aiRunStore = aiRunStore;
     }
 
     /// <summary>
-    /// Run an AI job for a single work item.
+    /// Run a free-form AI action for a single work item.
     /// </summary>
-    public async Task<AiRunResult> RunAsync(string workItemId, string job, CancellationToken ct = default)
+    public async Task<AiRunResult> RunAsync(string workItemId, string action, CancellationToken ct = default)
     {
-        var skill = _router.ResolveSkill(job);
-
         var workItem = await _workItemStore.LoadAsync(workItemId, ct)
             ?? throw new InvalidOperationException($"Work item '{workItemId}' not found.");
+
+        // Look up prior run so the AI can build on previous analysis
+        AiRunResult? priorRun = null;
+        if (workItem.State == WorkItemState.InProgress)
+        {
+            priorRun = await _aiRunStore.FindLatestForWorkItemAsync(workItemId, ct);
+        }
 
         // Transition to InProgress
         if (workItem.State == WorkItemState.Unresolved)
         {
-            workItem.TransitionTo(WorkItemState.InProgress, $"AI job '{job}' started");
+            workItem.TransitionTo(WorkItemState.InProgress, $"AI action: {action}");
             await _workItemStore.SaveAsync(workItem, ct);
         }
 
         var runId = IdGenerator.NewAiRunId();
-        var result = await _adapter.ExecuteAsync(workItem, job, skill, runId, ct);
+        var result = await _adapter.ExecuteAsync(workItem, action, runId, priorRun, ct);
 
         // Persist AI result
         await _aiRunStore.SaveAsync(result, ct);

@@ -7,117 +7,182 @@ using Spectre.Console.Cli;
 
 namespace BuildDuty.Cli.Commands;
 
-internal sealed class AiRunSettings : CommandSettings
+internal sealed class AiSettings : CommandSettings
 {
-    [CommandOption("--workitem")]
+    [CommandOption("--id")]
     [Description("Work item ID to analyze")]
     public string? WorkItemId { get; set; }
 
-    [CommandOption("--job")]
-    [Description("Job type (summarize, cluster, root-cause, next-actions)")]
-    [DefaultValue("summarize")]
-    public string Job { get; set; } = "summarize";
+    [CommandOption("--action")]
+    [Description("Free-form description of what to do (e.g. 'summarize this failure', 'what is the root cause?')")]
+    public string? Action { get; set; }
 
     [CommandOption("--state")]
-    [Description("Batch: run against all items in this state")]
+    [Description("Filter work items by state for batch/selection")]
     public string? State { get; set; }
 
     [CommandOption("--limit")]
-    [Description("Batch: max items to process")]
+    [Description("Max items to process")]
     public int? Limit { get; set; }
+
+    [CommandOption("--config")]
+    [Description("Path to .build-duty.yml config file")]
+    public string? Config { get; set; }
 
     public override ValidationResult Validate()
     {
-        if (string.IsNullOrWhiteSpace(WorkItemId) && string.IsNullOrWhiteSpace(State))
-            return ValidationResult.Error("Specify --workitem <id> or --state <state> for batch mode.");
+        if (string.IsNullOrWhiteSpace(Action))
+            return ValidationResult.Error("Specify --action to describe what you want the AI to do.");
         return ValidationResult.Success();
     }
 }
 
-internal sealed class AiRunCommand : AsyncCommand<AiRunSettings>
+internal sealed class AiCommand : AsyncCommand<AiSettings>
 {
-    private readonly RouterManifest _router;
-    private readonly CopilotAdapter _adapter;
+    private readonly Func<BuildDutyConfig, WorkItemStore, CopilotAdapter> _adapterFactory;
     private readonly Func<string, WorkItemStore> _wiStoreFactory;
     private readonly Func<string, AiRunStore> _aiStoreFactory;
 
-    public AiRunCommand(
-        RouterManifest router,
-        CopilotAdapter adapter,
+    public AiCommand(
+        Func<BuildDutyConfig, WorkItemStore, CopilotAdapter> adapterFactory,
         Func<string, WorkItemStore> wiStoreFactory,
         Func<string, AiRunStore> aiStoreFactory)
     {
-        _router = router;
-        _adapter = adapter;
+        _adapterFactory = adapterFactory;
         _wiStoreFactory = wiStoreFactory;
         _aiStoreFactory = aiStoreFactory;
     }
 
-    public override async Task<int> ExecuteAsync(CommandContext context, AiRunSettings settings)
+    public override async Task<int> ExecuteAsync(CommandContext context, AiSettings settings)
     {
-        var configPath = Paths.ConfigPath()
-            ?? throw new InvalidOperationException("No .build-duty.yml found. Use scan --config or run from a repository with a config.");
+        var configPath = settings.Config ?? Paths.ConfigPath()
+            ?? throw new InvalidOperationException("No .build-duty.yml found. Use --config to specify a path.");
         var config = BuildDutyConfig.LoadFromFile(configPath);
 
         var wiStore = _wiStoreFactory(config.Name);
         var aiStore = _aiStoreFactory(config.Name);
-        var orchestrator = new AiOrchestrator(_router, _adapter, wiStore, aiStore);
+        var action = settings.Action!;
 
         if (settings.WorkItemId is not null)
         {
-            await RunSingleAsync(orchestrator, settings.WorkItemId, settings.Job);
+            var adapter = _adapterFactory(config, wiStore);
+            var orchestrator = new AiOrchestrator(adapter, wiStore, aiStore);
+
+            await AnsiConsole.Status()
+                .Spinner(Spinner.Known.Dots)
+                .StartAsync($"Running on {Markup.Escape(settings.WorkItemId)}...", async _ =>
+                {
+                    var result = await orchestrator.RunAsync(settings.WorkItemId, action);
+                    PrintResult(result);
+                });
         }
-        else if (settings.State is not null)
+        else
         {
-            var filter = settings.State.ToLowerInvariant() switch
+            WorkItemState? stateFilter = settings.State?.ToLowerInvariant() switch
             {
                 "unresolved" => WorkItemState.Unresolved,
                 "inprogress" => WorkItemState.InProgress,
                 "resolved" => WorkItemState.Resolved,
+                null => null,
                 _ => throw new ArgumentException($"Unknown state '{settings.State}'")
             };
 
-            var items = await wiStore.ListAsync(filter, settings.Limit);
+            var items = await wiStore.ListAsync(stateFilter, settings.Limit);
             if (items.Count == 0)
             {
-                AnsiConsole.MarkupLine($"[yellow]No work items in state '{Markup.Escape(settings.State)}'.[/]");
+                var scope = stateFilter.HasValue ? $" in state '{Markup.Escape(settings.State!)}'" : "";
+                AnsiConsole.MarkupLine($"[yellow]No work items found{scope}.[/]");
                 return 0;
             }
 
-            AnsiConsole.MarkupLine($"Running [bold]'{Markup.Escape(settings.Job)}'[/] on [bold]{items.Count}[/] item(s)...\n");
-            foreach (var item in items)
+            var selected = AnsiConsole.Prompt(
+                new MultiSelectionPrompt<string>()
+                    .Title("Select work items to run against:")
+                    .PageSize(15)
+                    .InstructionsText("[grey](Press [blue]<space>[/] to toggle, [green]<enter>[/] to accept)[/]")
+                    .AddChoices(items.Select(i =>
+                    {
+                        var state = i.State.ToString().ToLowerInvariant();
+                        var stateColor = state switch
+                        {
+                            "unresolved" => "red",
+                            "inprogress" => "yellow",
+                            "resolved" => "green",
+                            _ => "grey"
+                        };
+                        return $"{i.Id}  [{stateColor}]{state}[/]  {Markup.Escape(i.Title)}";
+                    })));
+
+            if (selected.Count == 0)
             {
-                await RunSingleAsync(orchestrator, item.Id, settings.Job);
+                AnsiConsole.MarkupLine("[yellow]No work items selected.[/]");
+                return 0;
             }
+
+            var ids = selected.Select(s => s.Split("  ", 2)[0]).ToList();
+
+            await AnsiConsole.Progress()
+                .AutoClear(false)
+                .Columns(
+                    new TaskDescriptionColumn(),
+                    new SpinnerColumn(),
+                    new ElapsedTimeColumn())
+                .StartAsync(async ctx =>
+                {
+                    var tasks = ids.Select(id =>
+                    {
+                        var progressTask = ctx.AddTask(Markup.Escape(id), maxValue: 1);
+                        return Task.Run(async () =>
+                        {
+                            // Each parallel run gets its own adapter/orchestrator
+                            var adapter = _adapterFactory(config, wiStore);
+                            var orchestrator = new AiOrchestrator(adapter, wiStore, aiStore);
+                            try
+                            {
+                                var result = await orchestrator.RunAsync(id, action);
+                                progressTask.Description = result.ExitCode == 0
+                                    ? $"[green]✓[/] {Markup.Escape(id)}"
+                                    : $"[red]✗[/] {Markup.Escape(id)}";
+                                return result;
+                            }
+                            catch (Exception ex)
+                            {
+                                progressTask.Description = $"[red]✗[/] {Markup.Escape(id)}: {Markup.Escape(ex.Message)}";
+                                return (AiRunResult?)null;
+                            }
+                            finally
+                            {
+                                progressTask.Increment(1);
+                            }
+                        });
+                    }).ToList();
+
+                    var results = await Task.WhenAll(tasks);
+
+                    // Print results after progress completes
+                    foreach (var result in results)
+                    {
+                        if (result is not null)
+                            PrintResult(result);
+                    }
+                });
         }
 
         return 0;
     }
 
-    private static async Task RunSingleAsync(AiOrchestrator orchestrator, string workItemId, string job)
+    private static void PrintResult(AiRunResult result)
     {
-        AiRunResult? result = null;
-
-        await AnsiConsole.Status()
-            .Spinner(Spinner.Known.Dots)
-            .StartAsync($"Running '{job}' on {workItemId}...", async _ =>
-            {
-                result = await orchestrator.RunAsync(workItemId, job);
-            });
-
-        if (result is null) return;
-
-        var table = new Table().Border(TableBorder.Rounded).Title($"[bold blue]AI Run: {Markup.Escape(job)}[/]");
+        AnsiConsole.WriteLine();
+        var table = new Table().Border(TableBorder.Rounded).Title($"[bold blue]AI Result[/]");
         table.AddColumn("Field");
         table.AddColumn("Value");
         table.AddRow("Work Item", Markup.Escape(result.WorkItemId));
-        table.AddRow("Skill", Markup.Escape(result.Skill));
+        table.AddRow("Action", Markup.Escape(result.Job));
         table.AddRow("Exit Code", result.ExitCode == 0 ? "[green]0[/]" : $"[red]{result.ExitCode}[/]");
         table.AddRow("Summary", Markup.Escape(result.Summary ?? "(none)"));
         table.AddRow("Artifact", Markup.Escape(result.ArtifactPath ?? "(none)"));
         table.AddRow("Duration", $"{(result.FinishedUtc - result.StartedUtc).TotalSeconds:F1}s");
-
         AnsiConsole.Write(table);
-        AnsiConsole.WriteLine();
     }
 }

@@ -25,8 +25,4 @@
     <NoWarn>$(NoWarn);NU5118</NoWarn>
   </PropertyGroup>
 
-  <ItemGroup>
-    <Content Include="..\..\assets\ai\**\*" LinkBase="assets\ai" CopyToOutputDirectory="PreserveNewest" Pack="true" PackagePath="tools\net10.0\any\assets\ai" />
-  </ItemGroup>
-
 </Project>

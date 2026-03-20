@@ -61,7 +61,6 @@ public class BuildDutyConfigTests : IDisposable
                             - release/*
                           status:
                             - failed
-                            - partiallySucceeded
             """;
         var path = WriteConfig(yaml);
         var config = BuildDutyConfig.LoadFromFile(path);
@@ -75,14 +74,14 @@ public class BuildDutyConfigTests : IDisposable
         Assert.Equal(42, pipeline.Id);
         Assert.Equal("ci-pipeline", pipeline.Name);
         Assert.Equal(["main", "release/*"], pipeline.Branches);
-        Assert.Equal(["failed", "partiallySucceeded"], pipeline.EffectiveStatus);
+        Assert.Equal(["failed"], pipeline.EffectiveStatus);
     }
 
     [Fact]
-    public void PipelineStatus_DefaultsToFailed_WhenOmitted()
+    public void PipelineStatus_DefaultsToFailedAndPartiallySucceeded_WhenOmitted()
     {
         var pipeline = new AzureDevOpsPipelineConfig { Id = 1, Name = "test" };
-        Assert.Equal(["failed"], pipeline.EffectiveStatus);
+        Assert.Equal(["failed", "partiallySucceeded"], pipeline.EffectiveStatus);
     }
 
     private string WriteConfig(string yaml)

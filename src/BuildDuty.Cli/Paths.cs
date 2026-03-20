@@ -1,7 +1,7 @@
 namespace BuildDuty.Cli;
 
 /// <summary>
-/// Resolves well-known paths for BuildDuty artifacts and assets.
+/// Resolves well-known paths for BuildDuty artifacts.
 /// </summary>
 internal static class Paths
 {
@@ -41,18 +41,4 @@ internal static class Paths
 
     public static string AiRunsDir(string configName) =>
         Path.Combine(DataDir(configName), "ai-runs");
-
-    public static string AssetsDir()
-    {
-        // First check relative to the exe (packaged tool scenario)
-        var exeDir = AppContext.BaseDirectory;
-        var candidate = Path.Combine(exeDir, "assets", "ai");
-        if (Directory.Exists(candidate))
-            return Path.Combine(exeDir, "assets");
-
-        // Fallback to repo-root layout (development scenario)
-        return Path.Combine(RepoRoot(), "assets");
-    }
-
-    public static string RouterYamlPath() => Path.Combine(AssetsDir(), "ai", "router.yaml");
 }

@@ -4,6 +4,7 @@ using BuildDuty.Cli.Commands;
 using BuildDuty.Cli.Infrastructure;
 using BuildDuty.Core;
 using BuildDuty.Core.Models;
+using GitHub.Copilot.SDK;
 using Microsoft.Extensions.DependencyInjection;
 using Octokit;
 using Spectre.Console.Cli;
@@ -41,9 +42,24 @@ services.AddSingleton<Func<string, WorkItemStore>>(
 services.AddSingleton<Func<string, AiRunStore>>(
     _ => (string configName) => new AiRunStore(Paths.AiRunsDir(configName)));
 
-// AI components — these are config-independent singletons.
-services.AddSingleton(_ => RouterManifest.LoadFromFile(Paths.RouterYamlPath()));
-services.AddSingleton<CopilotAdapter>();
+// AI — adapter factory builds a CopilotClient with tools at command time.
+// MCP servers are loaded from mcp.json by the session factory.
+services.AddSingleton<Func<BuildDutyConfig, WorkItemStore, CopilotAdapter>>(sp =>
+{
+    var ghCredProvider = sp.GetRequiredService<IGitHubCredentialProvider>();
+    return (config, wiStore) =>
+    {
+        var token = ghCredProvider.GetToken();
+        var tools = BuildDutyTools.Create(wiStore);
+
+        var clientOptions = new CopilotClientOptions
+        {
+            GitHubToken = token
+        };
+
+        return new CopilotAdapter(clientOptions, tools, config.Ai?.Model);
+    };
+});
 
 var registrar = new TypeRegistrar(services);
 var app = new CommandApp(registrar);
@@ -66,13 +82,8 @@ app.Configure(config =>
             .WithDescription("Inspect a single work item");
     });
 
-    config.AddBranch("ai", ai =>
-    {
-        ai.SetDescription("AI-assisted analysis");
-
-        ai.AddCommand<AiRunCommand>("run")
-            .WithDescription("Run an AI job against work item(s)");
-    });
+    config.AddCommand<AiCommand>("ai")
+        .WithDescription("Run an AI job against work item(s)");
 });
 
 return await app.RunAsync(args);

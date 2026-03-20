@@ -40,9 +40,17 @@ public sealed class AzureDevOpsSignalService : IAzureDevOpsSignalService
             {
                 foreach (var pipeline in project.Pipelines)
                 {
+                    var statusFilter = pipeline.EffectiveStatus
+                        .Select(s => s.ToLowerInvariant())
+                        .ToHashSet();
+
                     var builds = await client.GetLatestBuildsAsync(project.Name, pipeline, ct);
                     foreach (var build in builds)
                     {
+                        var resultName = build.Result?.ToString().ToLowerInvariant();
+                        if (resultName is null || !statusFilter.Contains(resultName))
+                            continue;
+
                         items.Add(ToWorkItem(org.Url, project.Name, pipeline, build));
                     }
                 }

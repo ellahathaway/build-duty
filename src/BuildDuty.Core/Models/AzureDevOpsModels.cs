@@ -38,16 +38,17 @@ public sealed class AzureDevOpsPipelineConfig
     public List<string> Branches { get; set; } = [];
 
     /// <summary>
-    /// Pipeline run result statuses to collect. Accepted values:
+    /// Pipeline run result statuses that should produce work items. Accepted values:
     /// <c>failed</c>, <c>partiallySucceeded</c>, <c>canceled</c>, <c>succeeded</c>.
-    /// Defaults to <c>["failed"]</c> when omitted.
+    /// Defaults to <c>["failed", "partiallySucceeded"]</c> when omitted.
     /// </summary>
     [YamlMember(Alias = "status")]
     public List<string>? Status { get; set; }
 
     /// <summary>
-    /// Returns the effective status filter, defaulting to <c>["failed"]</c>.
+    /// Returns the effective status filter, defaulting to
+    /// <c>["failed", "partiallySucceeded"]</c>.
     /// </summary>
     public IReadOnlyList<string> EffectiveStatus =>
-        Status is { Count: > 0 } ? Status : ["failed"];
+        Status is { Count: > 0 } ? Status : ["failed", "partiallySucceeded"];
 }

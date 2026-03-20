@@ -8,6 +8,11 @@ namespace BuildDuty.Core;
 public interface IGitHubCredentialProvider
 {
     Credentials GetCredentials();
+
+    /// <summary>
+    /// Returns the raw token string for use with non-Octokit clients.
+    /// </summary>
+    string GetToken();
 }
 
 /// <summary>
@@ -16,11 +21,11 @@ public interface IGitHubCredentialProvider
 /// </summary>
 public sealed class GitHubCredentialProvider : IGitHubCredentialProvider
 {
-    private readonly Lazy<Credentials> _credentials;
+    private readonly Lazy<string?> _token;
 
-    private GitHubCredentialProvider(Func<Credentials> factory)
+    private GitHubCredentialProvider(Func<string?> tokenFactory)
     {
-        _credentials = new Lazy<Credentials>(factory);
+        _token = new Lazy<string?>(tokenFactory);
     }
 
     /// <summary>
@@ -36,13 +41,19 @@ public sealed class GitHubCredentialProvider : IGitHubCredentialProvider
             if (string.IsNullOrWhiteSpace(token))
                 token = ResolveFromGhCli();
 
-            return string.IsNullOrWhiteSpace(token)
-                ? Credentials.Anonymous
-                : new Credentials(token);
+            return string.IsNullOrWhiteSpace(token) ? null : token;
         });
     }
 
-    public Credentials GetCredentials() => _credentials.Value;
+    public Credentials GetCredentials()
+    {
+        var token = _token.Value;
+        return token is null ? Credentials.Anonymous : new Credentials(token);
+    }
+
+    public string GetToken() =>
+        _token.Value ?? throw new InvalidOperationException(
+            "No GitHub token available. Set GITHUB_TOKEN or run 'gh auth login'.");
 
     private static string? ResolveFromGhCli()
     {
