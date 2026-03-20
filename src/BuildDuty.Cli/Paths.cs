@@ -21,8 +21,26 @@ internal static class Paths
         return Directory.GetCurrentDirectory();
     }
 
-    public static string WorkItemsDir() => Path.Combine(RepoRoot(), "artifacts", "workitems");
-    public static string AiRunsDir() => Path.Combine(RepoRoot(), "artifacts", "ai");
+    /// <summary>
+    /// Returns the path to .build-duty.yml in the current working directory, or null if it does not exist.
+    /// </summary>
+    public static string? ConfigPath()
+    {
+        var path = Path.Combine(Directory.GetCurrentDirectory(), ".build-duty.yml");
+        return File.Exists(path) ? path : null;
+    }
+
+    /// <summary>
+    /// Root of config-scoped local storage: .build-duty/&lt;configName&gt;/
+    /// </summary>
+    public static string DataDir(string configName) =>
+        Path.Combine(RepoRoot(), ".build-duty", configName);
+
+    public static string WorkItemsDir(string configName) =>
+        Path.Combine(DataDir(configName), "workitems");
+
+    public static string AiRunsDir(string configName) =>
+        Path.Combine(DataDir(configName), "ai-runs");
 
     public static string AssetsDir()
     {

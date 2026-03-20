@@ -20,7 +20,10 @@ internal sealed class WorkItemsListCommand : AsyncCommand<WorkItemsListSettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, WorkItemsListSettings settings)
     {
-        var store = new WorkItemStore(Paths.WorkItemsDir());
+        var configPath = Paths.ConfigPath()
+            ?? throw new InvalidOperationException("No .build-duty.yml found.");
+        var config = BuildDutyConfig.LoadFromFile(configPath);
+        var store = new WorkItemStore(Paths.WorkItemsDir(config.Name));
 
         WorkItemState? filter = settings.State?.ToLowerInvariant() switch
         {
@@ -83,7 +86,10 @@ internal sealed class WorkItemsShowCommand : AsyncCommand<WorkItemsShowSettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, WorkItemsShowSettings settings)
     {
-        var store = new WorkItemStore(Paths.WorkItemsDir());
+        var configPath = Paths.ConfigPath()
+            ?? throw new InvalidOperationException("No .build-duty.yml found.");
+        var config = BuildDutyConfig.LoadFromFile(configPath);
+        var store = new WorkItemStore(Paths.WorkItemsDir(config.Name));
         var item = await store.LoadAsync(settings.Id);
 
         if (item is null)

@@ -1,7 +1,8 @@
 # Build artifacts
-artifacts/workitems/
-artifacts/ai/
-artifacts/packages/
+artifacts/
+
+# BuildDuty local data (work items, AI runs)
+.build-duty/
 
 # .NET build output
 bin/

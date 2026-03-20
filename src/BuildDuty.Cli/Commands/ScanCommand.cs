@@ -14,19 +14,39 @@ internal sealed class ScanSettings : CommandSettings
     [CommandOption("--profile")]
     [Description("Signal collection profile")]
     public string? Profile { get; set; }
+
+    [CommandOption("--config")]
+    [Description("Path to .build-duty.yml config file")]
+    public string? Config { get; set; }
 }
 
 internal sealed class ScanCommand : AsyncCommand<ScanSettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, ScanSettings settings)
     {
+        var configPath = settings.Config ?? Paths.ConfigPath();
+        if (configPath is null)
+        {
+            AnsiConsole.MarkupLine("[red bold]Error:[/] No .build-duty.yml found in the repository root. Use --config to specify a path.");
+            return 1;
+        }
+
+        if (!File.Exists(configPath))
+        {
+            AnsiConsole.MarkupLine($"[red bold]Error:[/] Config file not found: {configPath}");
+            return 1;
+        }
+
+        var config = BuildDutyConfig.LoadFromFile(configPath);
+        AnsiConsole.MarkupLine($"Using config: [bold]{configPath}[/] (name: [bold]{Markup.Escape(config.Name)}[/])");
+
         var services = new ISignalService[]
         {
             new AzureDevOpsSignalService(),
             new GitHubSignalService()
         };
 
-        var store = new WorkItemStore(Paths.WorkItemsDir());
+        var store = new WorkItemStore(Paths.WorkItemsDir(config.Name));
         var totalNew = 0;
 
         await AnsiConsole.Status()

@@ -37,11 +37,15 @@ internal sealed class AiRunCommand : AsyncCommand<AiRunSettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, AiRunSettings settings)
     {
+        var configPath = Paths.ConfigPath()
+            ?? throw new InvalidOperationException("No .build-duty.yml found. Use scan --config or run from a repository with a config.");
+        var config = BuildDutyConfig.LoadFromFile(configPath);
+
         var routerPath = Paths.RouterYamlPath();
         var router = RouterManifest.LoadFromFile(routerPath);
         var adapter = new CopilotAdapter();
-        var wiStore = new WorkItemStore(Paths.WorkItemsDir());
-        var aiStore = new AiRunStore(Paths.AiRunsDir());
+        var wiStore = new WorkItemStore(Paths.WorkItemsDir(config.Name));
+        var aiStore = new AiRunStore(Paths.AiRunsDir(config.Name));
         var orchestrator = new AiOrchestrator(router, adapter, wiStore, aiStore);
 
         if (settings.WorkItemId is not null)
