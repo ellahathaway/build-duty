@@ -4,8 +4,8 @@ using Microsoft.Extensions.AI;
 namespace BuildDuty.AI;
 
 /// <summary>
-/// Creates <see cref="AIFunction"/> tools for the Copilot session that
-/// provide access to build-duty work item data.
+/// Shared tools available to all AI sessions (scan and triage).
+/// Provides read-only work item data access.
 /// </summary>
 public static class BuildDutyTools
 {
@@ -25,9 +25,9 @@ public static class BuildDutyTools
                 "Get full details of a work item by ID, including signals and history."),
 
             AIFunctionFactory.Create(
-                async (string state, int limit) =>
+                async (string? state, int? limit) =>
                 {
-                    WorkItemState? filter = state.ToLowerInvariant() switch
+                    WorkItemState? filter = state?.ToLowerInvariant() switch
                     {
                         "unresolved" => WorkItemState.Unresolved,
                         "inprogress" => WorkItemState.InProgress,
@@ -35,31 +35,26 @@ public static class BuildDutyTools
                         _ => null
                     };
 
-                    var items = await store.ListAsync(filter, limit);
-                    return items.Count == 0
-                        ? "No work items found."
-                        : string.Join("\n---\n", items.Select(FormatWorkItem));
+                    var items = await store.ListAsync(filter, limit ?? 200);
+                    if (items.Count == 0)
+                        return "No work items found.";
+
+                    return string.Join("\n", items.Select(i =>
+                        $"- {i.Id} [{i.State}] {i.Title} (corr: {i.CorrelationId ?? "none"})"));
                 },
                 "list_work_items",
-                "List work items, optionally filtered by state (unresolved, inprogress, resolved)."),
+                "List tracked work items, optionally filtered by state (unresolved, inprogress, resolved) and limited to a count."),
 
             AIFunctionFactory.Create(
-                async (string workItemId) =>
-                {
-                    var item = await store.LoadAsync(workItemId);
-                    if (item is null)
-                        return $"Work item '{workItemId}' not found.";
-                    if (item.Signals.Count == 0)
-                        return "No signals collected for this work item.";
-
-                    return string.Join('\n', item.Signals.Select(s => $"- [{s.Type}] {s.Ref}"));
-                },
-                "get_signals",
-                "Get the collected signals (pipeline URLs, issues, PRs) for a work item. Use the Azure DevOps MCP server to query build details from the URL.")
+                (string id) => store.Exists(id)
+                    ? $"Work item '{id}' exists."
+                    : $"Work item '{id}' does not exist.",
+                "work_item_exists",
+                "Check whether a work item with the given ID is already tracked."),
         ];
     }
 
-    private static string FormatWorkItem(WorkItem item)
+    internal static string FormatWorkItem(WorkItem item)
     {
         var lines = new List<string>
         {

@@ -7,7 +7,7 @@ using Spectre.Console.Cli;
 
 namespace BuildDuty.Cli.Commands;
 
-internal sealed class AiSettings : CommandSettings
+internal sealed class TriageSettings : CommandSettings
 {
     [CommandOption("--id")]
     [Description("Work item ID to analyze")]
@@ -41,42 +41,42 @@ internal sealed class AiSettings : CommandSettings
     }
 }
 
-internal sealed class AiCommand : AsyncCommand<AiSettings>
+internal sealed class TriageCommand : AsyncCommand<TriageSettings>
 {
     private readonly Func<BuildDutyConfig, WorkItemStore, CopilotAdapter> _adapterFactory;
     private readonly Func<string, string?, WorkItemStore> _wiStoreFactory;
-    private readonly Func<string, string?, AiRunStore> _aiStoreFactory;
+    private readonly Func<string, string?, TriageStore> _triageStoreFactory;
 
-    public AiCommand(
+    public TriageCommand(
         Func<BuildDutyConfig, WorkItemStore, CopilotAdapter> adapterFactory,
         Func<string, string?, WorkItemStore> wiStoreFactory,
-        Func<string, string?, AiRunStore> aiStoreFactory)
+        Func<string, string?, TriageStore> triageStoreFactory)
     {
         _adapterFactory = adapterFactory;
         _wiStoreFactory = wiStoreFactory;
-        _aiStoreFactory = aiStoreFactory;
+        _triageStoreFactory = triageStoreFactory;
     }
 
-    public override async Task<int> ExecuteAsync(CommandContext context, AiSettings settings)
+    public override async Task<int> ExecuteAsync(CommandContext context, TriageSettings settings)
     {
         var configPath = settings.Config ?? Paths.ConfigPath()
             ?? throw new InvalidOperationException("No .build-duty.yml found. Use --config to specify a path.");
         var config = BuildDutyConfig.LoadFromFile(configPath);
 
         var wiStore = _wiStoreFactory(config.Name, configPath);
-        var aiStore = _aiStoreFactory(config.Name, configPath);
+        var triageStore = _triageStoreFactory(config.Name, configPath);
         var action = settings.Action!;
+        var adoOrgName = config.AzureDevOps?.Organizations.FirstOrDefault()?.Url.TrimEnd('/').Split('/').LastOrDefault();
 
         if (settings.WorkItemId is not null)
         {
             var adapter = _adapterFactory(config, wiStore);
-            var orchestrator = new AiOrchestrator(adapter, wiStore, aiStore);
 
             await AnsiConsole.Status()
                 .Spinner(Spinner.Known.Dots)
                 .StartAsync($"Running on {Markup.Escape(settings.WorkItemId)}...", async _ =>
                 {
-                    var result = await orchestrator.RunAsync(settings.WorkItemId, action);
+                    var result = await RunTriageAsync(adapter, wiStore, triageStore, settings.WorkItemId, action, adoOrgName);
                     PrintResult(result);
                 });
         }
@@ -143,13 +143,11 @@ internal sealed class AiCommand : AsyncCommand<AiSettings>
                         var progressTask = ctx.AddTask(Markup.Escape(id), maxValue: 1);
                         return Task.Run(async () =>
                         {
-                            // Each parallel run gets its own adapter/orchestrator
                             var adapter = _adapterFactory(config, wiStore);
-                            var orchestrator = new AiOrchestrator(adapter, wiStore, aiStore);
                             try
                             {
-                                var result = await orchestrator.RunAsync(id, action);
-                                progressTask.Description = result.ExitCode == 0
+                                var result = await RunTriageAsync(adapter, wiStore, triageStore, id, action, adoOrgName);
+                                progressTask.Description = result.Success
                                     ? $"[green]✓[/] {Markup.Escape(id)}"
                                     : $"[red]✗[/] {Markup.Escape(id)}";
                                 return result;
@@ -157,7 +155,7 @@ internal sealed class AiCommand : AsyncCommand<AiSettings>
                             catch (Exception ex)
                             {
                                 progressTask.Description = $"[red]✗[/] {Markup.Escape(id)}: {Markup.Escape(ex.Message)}";
-                                return (AiRunResult?)null;
+                                return (TriageResult?)null;
                             }
                             finally
                             {
@@ -168,7 +166,6 @@ internal sealed class AiCommand : AsyncCommand<AiSettings>
 
                     var results = await Task.WhenAll(tasks);
 
-                    // Print results after progress completes
                     foreach (var result in results)
                     {
                         if (result is not null)
@@ -180,18 +177,53 @@ internal sealed class AiCommand : AsyncCommand<AiSettings>
         return 0;
     }
 
-    private static void PrintResult(AiRunResult result)
+    /// <summary>
+    /// Run triage for a single work item: transition state, look up prior run,
+    /// invoke the AI, and persist the result.
+    /// </summary>
+    private static async Task<TriageResult> RunTriageAsync(
+        CopilotAdapter adapter,
+        WorkItemStore wiStore,
+        TriageStore triageStore,
+        string workItemId,
+        string action,
+        string? adoOrgName = null,
+        CancellationToken ct = default)
+    {
+        var workItem = await wiStore.LoadAsync(workItemId, ct)
+            ?? throw new InvalidOperationException($"Work item '{workItemId}' not found.");
+
+        // Look up prior run so the AI can build on previous analysis
+        TriageResult? priorRun = null;
+        if (workItem.State == WorkItemState.InProgress)
+            priorRun = await triageStore.FindLatestForWorkItemAsync(workItemId, ct);
+
+        // Transition to InProgress
+        if (workItem.State == WorkItemState.Unresolved)
+        {
+            workItem.TransitionTo(WorkItemState.InProgress, $"Triage: {action}");
+            await wiStore.SaveAsync(workItem, ct);
+        }
+
+        var runId = IdGenerator.NewTriageRunId();
+        var mcpServers = CopilotSessionFactory.AllServers(adoOrgName);
+        var result = await adapter.TriageAsync(workItem, action, runId, TriageTools.Skills, mcpServers, priorRun, ct);
+
+        await triageStore.SaveAsync(result, ct);
+        return result;
+    }
+
+    private static void PrintResult(TriageResult result)
     {
         AnsiConsole.WriteLine();
-        var table = new Table().Border(TableBorder.Rounded).Title($"[bold blue]AI Result[/]");
+        var table = new Table().Border(TableBorder.Rounded).Title($"[bold blue]Triage Result[/]");
         table.AddColumn("Field");
         table.AddColumn("Value");
         table.AddRow("Work Item", Markup.Escape(result.WorkItemId));
-        table.AddRow("Action", Markup.Escape(result.Job));
-        table.AddRow("Exit Code", result.ExitCode == 0 ? "[green]0[/]" : $"[red]{result.ExitCode}[/]");
+        table.AddRow("Action", Markup.Escape(result.Action));
+        table.AddRow("Status", result.Success ? "[green]success[/]" : "[red]failed[/]");
         table.AddRow("Summary", Markup.Escape(result.Summary ?? "(none)"));
-        table.AddRow("Artifact", Markup.Escape(result.ArtifactPath ?? "(none)"));
-        table.AddRow("Duration", $"{(result.FinishedUtc - result.StartedUtc).TotalSeconds:F1}s");
+        table.AddRow("Duration", $"{result.Duration.TotalSeconds:F1}s");
         AnsiConsole.Write(table);
     }
 }

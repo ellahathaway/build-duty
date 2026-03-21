@@ -1,438 +1,182 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
-using BuildDuty.Core.Models;
-using Microsoft.TeamFoundation.SourceControl.WebApi;
 
 namespace BuildDuty.Core;
 
 /// <summary>
-/// Discovers .NET release branches from an Azure DevOps Git repository,
-/// filtered to branches matching supported .NET channels from the
-/// <c>dotnet/core</c> releases index.
+/// Resolves active branches for an ADO pipeline by:
+/// 1. Looking up the pipeline's repository via az CLI
+/// 2. Listing branches in that repo via az CLI
+/// 3. Filtering to branches matching active .NET release channels
+///
+/// Caches pipeline→repo mappings, branch listings, and the releases index
+/// for the lifetime of the process to avoid redundant CLI/HTTP calls.
 /// </summary>
-public sealed class ReleaseBranchResolver
+internal static class ReleaseBranchResolver
 {
-    private static readonly string[] DefaultSupportPhases =
-        ["active", "maintenance", "preview", "go-live", "rc"];
-
-    private static readonly Regex BranchLabelRegex = new(
-        @"^(\d+)\.(\d+)\.(\d+(?:xx)?)(?:-(preview|rc)(\d+))?$",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
-    private static readonly Regex ReleaseVersionPreviewRegex = new(
-        @"^(\d+)\.(\d+)\.\d+-(preview|rc)\.(\d+)",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
     private const string ReleasesIndexUrl =
         "https://raw.githubusercontent.com/dotnet/core/main/release-notes/releases-index.json";
 
-    /// <summary>
-    /// Resolve release branch names for a pipeline.
-    /// Returns the list of branch names (e.g. "main", "release/9.0.1xx", "internal/release/8.0.4xx").
-    /// </summary>
-    public async Task<IReadOnlyList<string>> ResolveAsync(
-        GitHttpClient gitClient,
-        string project,
-        ReleaseBranchConfig config,
-        CancellationToken ct = default)
+    private static readonly HashSet<string> DefaultPhases =
+        ["active", "maintenance", "preview", "go-live", "rc"];
+
+    // Matches release/{M}.{m}.{F}xx and internal/release/{M}.{m}.{F}xx (no suffix)
+    private static readonly Regex ReleaseBranchPattern =
+        new(@"^refs/heads/((internal/)?release/(\d+)\.(\d+)\.\d+xx)$", RegexOptions.Compiled);
+
+    // Caches: pipeline ID → repo name, repo key → branch list, releases index
+    private static readonly ConcurrentDictionary<string, string> PipelineRepoCache = new();
+    private static readonly ConcurrentDictionary<string, List<string>> RepoBranchCache = new();
+    private static List<IndexEntry>? s_releasesIndexCache;
+
+    public static async Task<string> ResolveAsync(
+        string org, string project, int pipelineId,
+        string? supportPhases, int? minVersion)
     {
-        var phases = config.SupportPhases is { Count: > 0 }
-            ? config.SupportPhases.Select(p => p.Trim().ToLowerInvariant()).Distinct().ToArray()
-            : DefaultSupportPhases;
+        // Normalize org to full URL if just the org name was provided
+        if (!org.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+            org = $"https://dev.azure.com/{org}";
 
-        // Fetch branches and supported channels in parallel
-        var branchNamesTask = ListBranchNamesAsync(gitClient, project, config.Repository, ct);
-        var channelsTask = DownloadSupportedChannelsAsync(ct);
-        await Task.WhenAll(branchNamesTask, channelsTask);
-
-        var branchNames = branchNamesTask.Result;
-        var allChannels = channelsTask.Result;
-
-        var supportedChannels = FilterChannels(allChannels, phases, config.MinVersion);
-        var supportedVersions = supportedChannels
-            .Select(c => c.ChannelVersion)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        // Download per-channel releases.json to discover released SDK versions and previews
-        var releaseData = await DownloadReleasedSdkVersionsAsync(supportedChannels, ct);
-
-        var labels = CollectReleaseBranchLabels(branchNames);
-        var filtered = FilterLabels(labels.AllLabels, supportedVersions);
-        var final = FilterByPreviewAndLatestSpecific(filtered, releaseData);
-        var sorted = SortLabels(final);
-
-        var results = new List<string>();
-
-        if (labels.HasMain)
-            results.Add("main");
-
-        foreach (var label in sorted)
+        // Step 1: Get the pipeline's repository name (cached)
+        var pipelineKey = $"{org}|{project}|{pipelineId}";
+        if (!PipelineRepoCache.TryGetValue(pipelineKey, out var repoName))
         {
-            if (labels.PublicBranches.TryGetValue(label, out var pub))
-                results.Add(pub);
-            if (labels.InternalBranches.TryGetValue(label, out var intern))
-                results.Add(intern);
+            var output = await RunAzAsync(
+                $"pipelines show --id {pipelineId} --org {org} --project {project} " +
+                "--query repository.name -o tsv");
+
+            if (string.IsNullOrWhiteSpace(output))
+                return JsonSerializer.Serialize(new { error = "Failed to discover repository for pipeline" });
+
+            repoName = output.Trim();
+            PipelineRepoCache[pipelineKey] = repoName;
         }
 
-        return results;
-    }
-
-    private static async Task<List<string>> ListBranchNamesAsync(
-        GitHttpClient gitClient,
-        string project,
-        string repository,
-        CancellationToken ct)
-    {
-        var refs = await gitClient.GetRefsAsync(
-            project: project,
-            repositoryId: repository,
-            filter: "heads/",
-            cancellationToken: ct);
-
-        return refs
-            .Select(r => r.Name.StartsWith("refs/heads/", StringComparison.Ordinal)
-                ? r.Name["refs/heads/".Length..]
-                : r.Name)
-            .ToList();
-    }
-
-    private static async Task<List<SupportedChannel>> DownloadSupportedChannelsAsync(CancellationToken ct)
-    {
-        using var http = new HttpClient();
-        await using var stream = await http.GetStreamAsync(ReleasesIndexUrl, ct);
-        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
-
-        var channels = new List<SupportedChannel>();
-
-        if (doc.RootElement.TryGetProperty("releases-index", out var index) &&
-            index.ValueKind == JsonValueKind.Array)
+        // Step 2: List branches matching release/ and internal/release/ prefixes (cached per repo)
+        var repoKey = $"{org}|{project}|{repoName}";
+        if (!RepoBranchCache.TryGetValue(repoKey, out var rawBranches))
         {
-            foreach (var release in index.EnumerateArray())
-            {
-                if (!release.TryGetProperty("support-phase", out var phaseEl) ||
-                    !release.TryGetProperty("channel-version", out var versionEl))
-                    continue;
+            var releaseTask = RunAzAsync(
+                $"repos ref list --repository {repoName} --org {org} --project {project} " +
+                "--filter heads/release/ --query [].name -o tsv");
+            var internalTask = RunAzAsync(
+                $"repos ref list --repository {repoName} --org {org} --project {project} " +
+                "--filter heads/internal/release/ --query [].name -o tsv");
 
-                var phase = phaseEl.GetString();
-                var version = versionEl.GetString();
-                if (string.IsNullOrWhiteSpace(phase) || string.IsNullOrWhiteSpace(version))
-                    continue;
+            await Task.WhenAll(releaseTask, internalTask);
 
-                var releasesUrl = release.TryGetProperty("releases.json", out var urlEl)
-                    ? urlEl.GetString()
-                    : null;
+            var releaseOutput = await releaseTask;
+            var internalOutput = await internalTask;
 
-                var (major, minor) = ParseChannelVersion(version);
-                channels.Add(new SupportedChannel(version, phase, major, minor, releasesUrl));
-            }
+            if (releaseOutput is null && internalOutput is null)
+                return JsonSerializer.Serialize(new { error = "Failed to list branches" });
+
+            rawBranches = new List<string>();
+            if (releaseOutput is not null)
+                rawBranches.AddRange(releaseOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()));
+            if (internalOutput is not null)
+                rawBranches.AddRange(internalOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()));
+
+            RepoBranchCache[repoKey] = rawBranches;
         }
 
-        return channels;
-    }
+        // Step 3: Get supported channel versions from releases index (cached)
+        var supportedChannels = await GetSupportedChannelsAsync(supportPhases, minVersion);
+        if (supportedChannels is null)
+            return JsonSerializer.Serialize(new { error = "Failed to fetch releases index" });
 
-    /// <summary>
-    /// Downloads per-channel releases.json files and extracts released SDK
-    /// versions and released preview/RC identifiers.
-    /// </summary>
-    private static async Task<ReleaseData> DownloadReleasedSdkVersionsAsync(
-        List<SupportedChannel> channels,
-        CancellationToken ct)
-    {
-        var sdkVersions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var releasedPreviews = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        using var http = new HttpClient();
+        // Step 4: Filter branches to those matching supported channels
+        var branches = new List<string> { "main" };
 
-        var tasks = channels
-            .Where(c => !string.IsNullOrWhiteSpace(c.ReleasesJsonUrl))
-            .Select(async c =>
-            {
-                try
-                {
-                    await using var stream = await http.GetStreamAsync(c.ReleasesJsonUrl!, ct);
-                    using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
-
-                    if (!doc.RootElement.TryGetProperty("releases", out var releases) ||
-                        releases.ValueKind != JsonValueKind.Array)
-                        return (Sdks: Array.Empty<string>(), Previews: Array.Empty<string>());
-
-                    var versions = new List<string>();
-                    var previews = new List<string>();
-
-                    foreach (var rel in releases.EnumerateArray())
-                    {
-                        // Extract release-version to detect released previews/RCs
-                        if (rel.TryGetProperty("release-version", out var rvEl))
-                        {
-                            var rv = rvEl.GetString();
-                            if (!string.IsNullOrWhiteSpace(rv))
-                            {
-                                var pm = ReleaseVersionPreviewRegex.Match(rv);
-                                if (pm.Success)
-                                {
-                                    // Key like "11.0-preview-2"
-                                    var key = $"{pm.Groups[1].Value}.{pm.Groups[2].Value}-{pm.Groups[3].Value.ToLowerInvariant()}-{pm.Groups[4].Value}";
-                                    previews.Add(key);
-                                }
-                            }
-                        }
-
-                        // Try "sdks" array first, then "sdk" object
-                        if (rel.TryGetProperty("sdks", out var sdksEl) && sdksEl.ValueKind == JsonValueKind.Array)
-                        {
-                            foreach (var sdk in sdksEl.EnumerateArray())
-                            {
-                                if (sdk.TryGetProperty("version", out var ver))
-                                {
-                                    var v = ver.GetString();
-                                    if (!string.IsNullOrWhiteSpace(v))
-                                        versions.Add(v);
-                                }
-                            }
-                        }
-                        else if (rel.TryGetProperty("sdk", out var sdkEl) && sdkEl.ValueKind == JsonValueKind.Object)
-                        {
-                            if (sdkEl.TryGetProperty("version", out var ver))
-                            {
-                                var v = ver.GetString();
-                                if (!string.IsNullOrWhiteSpace(v))
-                                    versions.Add(v);
-                            }
-                        }
-                    }
-                    return (Sdks: versions.ToArray(), Previews: previews.ToArray());
-                }
-                catch
-                {
-                    return (Sdks: Array.Empty<string>(), Previews: Array.Empty<string>());
-                }
-            });
-
-        var results = await Task.WhenAll(tasks);
-        foreach (var batch in results)
+        foreach (var line in rawBranches)
         {
-            foreach (var v in batch.Sdks)
-                sdkVersions.Add(v);
-            foreach (var p in batch.Previews)
-                releasedPreviews.Add(p);
+            var match = ReleaseBranchPattern.Match(line);
+            if (!match.Success) continue;
+
+            var branchName = match.Groups[1].Value; // e.g. release/10.0.1xx or internal/release/10.0.1xx
+            var channel = $"{match.Groups[3].Value}.{match.Groups[4].Value}"; // e.g. 10.0
+
+            if (supportedChannels.Contains(channel))
+                branches.Add(branchName);
         }
 
-        return new ReleaseData(sdkVersions, releasedPreviews);
+        return JsonSerializer.Serialize(branches);
     }
 
-    private static List<SupportedChannel> FilterChannels(
-        List<SupportedChannel> channels,
-        string[] phases,
-        int? minVersion)
+    private static async Task<HashSet<string>?> GetSupportedChannelsAsync(
+        string? supportPhases, int? minVersion)
     {
-        var phaseSet = new HashSet<string>(phases, StringComparer.OrdinalIgnoreCase);
-        IEnumerable<SupportedChannel> filtered = channels.Where(c => phaseSet.Contains(c.SupportPhase));
-        if (minVersion.HasValue)
-            filtered = filtered.Where(c => c.Major >= minVersion.Value);
+        var phases = DefaultPhases;
+        if (!string.IsNullOrWhiteSpace(supportPhases))
+            phases = supportPhases.Split(',').Select(p => p.Trim().ToLowerInvariant()).ToHashSet();
 
-        return filtered
-            .GroupBy(c => c.ChannelVersion, StringComparer.OrdinalIgnoreCase)
-            .Select(g => g.First())
-            .ToList();
-    }
-
-    internal static BranchLabelCollection CollectReleaseBranchLabels(IEnumerable<string> branchNames)
-    {
-        var publicBranches = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var internalBranches = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        bool hasMain = false;
-
-        foreach (var name in branchNames)
+        var entries = s_releasesIndexCache;
+        if (entries is null)
         {
-            if (name.Equals("main", StringComparison.OrdinalIgnoreCase))
-            {
-                hasMain = true;
-                continue;
-            }
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+            var indexData = await http.GetFromJsonAsync<ReleasesIndex>(ReleasesIndexUrl);
+            if (indexData?.Entries is null)
+                return null;
 
-            var pubMatch = Regex.Match(name, @"^release/(\d+\.\d+\..+)$", RegexOptions.IgnoreCase);
-            if (pubMatch.Success)
-            {
-                publicBranches[pubMatch.Groups[1].Value] = name;
-                continue;
-            }
-
-            var intMatch = Regex.Match(name, @"^internal/release/(\d+\.\d+\..+)$", RegexOptions.IgnoreCase);
-            if (intMatch.Success)
-                internalBranches[intMatch.Groups[1].Value] = name;
+            entries = indexData.Entries;
+            s_releasesIndexCache = entries;
         }
 
-        var allLabels = publicBranches.Keys
-            .Concat(internalBranches.Keys)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        return new BranchLabelCollection(hasMain, publicBranches, internalBranches, allLabels);
+        return entries
+            .Where(e => !string.IsNullOrEmpty(e.SupportPhase) && !string.IsNullOrEmpty(e.ChannelVersion))
+            .Where(e => phases.Contains(e.SupportPhase!.Trim().ToLowerInvariant()))
+            .Where(e =>
+            {
+                var parts = e.ChannelVersion!.Split('.');
+                return parts.Length >= 2 && int.TryParse(parts[0], out var major)
+                    && (minVersion is null || major >= minVersion);
+            })
+            .Select(e => e.ChannelVersion!)
+            .ToHashSet();
     }
 
-    internal static List<string> FilterLabels(IEnumerable<string> labels, HashSet<string> supportedChannels)
+    private static async Task<string?> RunAzAsync(string arguments)
     {
-        return labels
-            .Select(l => (Label: l, Parsed: ParseBranchLabel(l)))
-            .Where(x => x.Parsed is not null)
-            .Where(x => supportedChannels.Contains(x.Parsed!.MajorMinor))
-            .Select(x => x.Label)
-            .ToList();
-    }
-
-    internal static List<string> FilterByPreviewAndLatestSpecific(
-        IEnumerable<string> labels,
-        ReleaseData? releaseData = null)
-    {
-        var grouped = new Dictionary<string, List<(string Label, BranchLabelInfo Parsed)>>();
-
-        foreach (var label in labels)
+        try
         {
-            var parsed = ParseBranchLabel(label);
-            if (parsed is null) continue;
-
-            var key = $"{parsed.MajorMinor}.{parsed.FeatureBand}";
-            if (!grouped.TryGetValue(key, out var list))
+            var psi = new ProcessStartInfo("az", arguments)
             {
-                list = [];
-                grouped[key] = list;
-            }
-            list.Add((label, parsed));
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+
+            using var proc = Process.Start(psi);
+            if (proc is null) return null;
+
+            var output = await proc.StandardOutput.ReadToEndAsync();
+            await proc.WaitForExitAsync();
+
+            return proc.ExitCode == 0 ? output : null;
         }
-
-        var final = new List<string>();
-
-        foreach (var group in grouped.Values)
+        catch
         {
-            // Keep all non-preview feature band versions
-            final.AddRange(group
-                .Where(x => x.Parsed.IsFeatureBand && !x.Parsed.IsPreview)
-                .Select(x => x.Label));
-
-            // Keep only latest preview/RC that hasn't been released yet
-            var previewCandidates = group
-                .Where(x => x.Parsed.IsPreview)
-                .OrderByDescending(x => x.Parsed.Band)
-                .ThenByDescending(x => x.Parsed.SuffixType.Equals("rc", StringComparison.OrdinalIgnoreCase) ? 1 : 0)
-                .ThenByDescending(x => x.Parsed.SuffixNumber)
-                .ToList();
-
-            foreach (var candidate in previewCandidates)
-            {
-                // Check if this preview/RC has been released
-                var previewKey = $"{candidate.Parsed.MajorMinor}-{candidate.Parsed.SuffixType}-{candidate.Parsed.SuffixNumber}";
-                if (releaseData?.ReleasedPreviews.Contains(previewKey) == true)
-                    continue; // This preview shipped — skip it
-
-                final.Add(candidate.Label);
-                break; // Only keep the latest unreleased preview
-            }
-
-            // For specific versions: only keep if no higher version in the
-            // same feature band has been released (i.e. it's still the latest
-            // or hasn't shipped yet).
-            var specificVersions = group
-                .Where(x => !x.Parsed.IsFeatureBand && !x.Parsed.IsPreview)
-                .ToList();
-
-            if (specificVersions.Count > 0 && releaseData?.SdkVersions is { Count: > 0 })
-            {
-                foreach (var (label, parsed) in specificVersions)
-                {
-                    // Check if any higher SDK version in the same feature band
-                    // has been released. If so, this branch is stale.
-                    bool isSuperseded = releaseData.SdkVersions.Any(sdk =>
-                    {
-                        var sdkParsed = ParseBranchLabel(sdk);
-                        return sdkParsed is not null
-                            && sdkParsed.MajorMinor == parsed.MajorMinor
-                            && sdkParsed.FeatureBand == parsed.FeatureBand
-                            && !sdkParsed.IsFeatureBand
-                            && !sdkParsed.IsPreview
-                            && sdkParsed.Band > parsed.Band;
-                    });
-
-                    if (!isSuperseded)
-                        final.Add(label);
-                }
-            }
-            else
-            {
-                // No release data — fall back to keeping the latest specific
-                var latestSpecific = specificVersions
-                    .OrderByDescending(x => x.Parsed.Band)
-                    .FirstOrDefault();
-
-                if (!string.IsNullOrEmpty(latestSpecific.Label))
-                    final.Add(latestSpecific.Label);
-            }
+            return null;
         }
-
-        return final.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
-    internal static List<string> SortLabels(IEnumerable<string> labels)
+    // JSON models
+    private sealed class ReleasesIndex
     {
-        return labels
-            .Select(l => (Label: l, Parsed: ParseBranchLabel(l)))
-            .Where(x => x.Parsed is not null)
-            .OrderByDescending(x => x.Parsed!.Major)
-            .ThenByDescending(x => x.Parsed!.Minor)
-            .ThenByDescending(x => x.Parsed!.FeatureBand)
-            .ThenBy(x => x.Parsed!.IsFeatureBand ? 1 : 0)
-            .ThenByDescending(x => x.Parsed!.Band)
-            .ThenBy(x => x.Parsed!.SuffixType switch { "" => 0, "rc" => 1, _ => 2 })
-            .ThenByDescending(x => x.Parsed!.SuffixNumber)
-            .Select(x => x.Label)
-            .ToList();
+        [JsonPropertyName("releases-index")]
+        public List<IndexEntry>? Entries { get; set; }
     }
 
-    private static BranchLabelInfo? ParseBranchLabel(string label)
+    private sealed class IndexEntry
     {
-        var match = BranchLabelRegex.Match(label);
-        if (!match.Success) return null;
+        [JsonPropertyName("channel-version")]
+        public string? ChannelVersion { get; set; }
 
-        int major = int.Parse(match.Groups[1].Value);
-        int minor = int.Parse(match.Groups[2].Value);
-        string bandString = match.Groups[3].Value;
-        string suffixType = match.Groups[4].Success ? match.Groups[4].Value.ToLowerInvariant() : "";
-        int suffixNumber = match.Groups[5].Success ? int.Parse(match.Groups[5].Value) : 0;
-
-        bool isFeatureBand = bandString.EndsWith("xx", StringComparison.OrdinalIgnoreCase);
-        int band = isFeatureBand
-            ? int.Parse(bandString.Replace("xx", "00", StringComparison.OrdinalIgnoreCase))
-            : int.Parse(bandString);
-
-        int featureBand = (int)Math.Floor(band / 100d) * 100;
-        bool isPreview = suffixType is "preview" or "rc";
-
-        return new BranchLabelInfo(major, minor, $"{major}.{minor}", band, bandString,
-            isFeatureBand, suffixType, suffixNumber, isPreview, featureBand);
+        [JsonPropertyName("support-phase")]
+        public string? SupportPhase { get; set; }
     }
-
-    private static (int Major, int Minor) ParseChannelVersion(string channel)
-    {
-        var parts = channel.Split('.');
-        if (parts.Length < 2) return (0, 0);
-        int.TryParse(parts[0], out int major);
-        int.TryParse(parts[1], out int minor);
-        return (major, minor);
-    }
-
-    internal sealed record BranchLabelCollection(
-        bool HasMain,
-        Dictionary<string, string> PublicBranches,
-        Dictionary<string, string> InternalBranches,
-        List<string> AllLabels);
-
-    internal sealed record BranchLabelInfo(
-        int Major, int Minor, string MajorMinor, int Band, string BandString,
-        bool IsFeatureBand, string SuffixType, int SuffixNumber,
-        bool IsPreview, int FeatureBand);
-
-    internal sealed record SupportedChannel(
-        string ChannelVersion, string SupportPhase, int Major, int Minor, string? ReleasesJsonUrl);
-
-    internal sealed record ReleaseData(
-        HashSet<string> SdkVersions,
-        HashSet<string> ReleasedPreviews);
 }

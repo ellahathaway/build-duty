@@ -28,22 +28,22 @@ Over time, this has resulted in ad-hoc scripts, bookmarks, and personal checklis
 ## Objective
 BuildDuty is a .NET CLI tool that helps build-duty and on-call engineers quickly understand the current health of a repository and triage build and CI issues. It centralizes signal collection from Azure DevOps pipelines and GitHub issues/PRs into a single, repeatable workflow driven by repository-owned YAML configuration.
 
-The tool provides deterministic, auditable collection and correlation of relevant signals, with optional AI-assisted summarization to accelerate investigation and decision-making. BuildDuty does not replace existing dashboards, monitoring systems, or ownership models, nor does it perform automatic remediation. It serves as a local, assistive tool that helps engineers form faster, better-informed judgments during build duty and incident response.
+The tool uses AI-powered scanning through the GitHub Copilot SDK and MCP servers to collect and correlate signals, with bundled skills for triage and investigation. BuildDuty does not replace existing dashboards, monitoring systems, or ownership models, nor does it perform automatic remediation. It serves as a local, assistive tool that helps engineers form faster, better-informed judgments during build duty and incident response.
 
 ## Design
 BuildDuty is a local, CLI-based workflow that standardizes how build-duty engineers collect and reason about build health across repositories. The core design centers on a repo-owned YAML configuration that explicitly declares which signals matter, ensuring the tool adapts to different .NET repository needs without hard-coded assumptions.
 
-Signal collection and correlation are deterministic and auditable, producing repeatable results from the same inputs and configuration. Optional AI assistance is layered on top of this deterministic core through the GitHub Copilot SDK with bundled skills and MCP server integration. AI output does not replace or modify collected signals, allowing engineers to clearly distinguish between raw data and assistive analysis.
+Signal collection uses AI agents through the GitHub Copilot SDK. Each source type (ADO pipelines, GitHub issues, GitHub PRs) runs as a separate AI session with MCP server access and write tools for work item management. AI agents follow the bundled `scan-signals` skill and its reference documentation to ensure consistent scanning behavior. Triage-specific skills provide summarization, root-cause analysis, clustering, and next-step recommendations.
 
 ## Scope
 
 ### In Scope
-- Deterministic signal collection from Azure DevOps pipelines and GitHub issues/PRs.
-- Release branch auto-discovery from the dotnet/core releases index.
+- AI-powered signal scanning from Azure DevOps pipelines and GitHub issues/PRs.
+- Release branch auto-discovery from the dotnet/core releases index via bundled script.
 - Work item creation and lifecycle tracking (`Unresolved`, `InProgress`, `Resolved`).
-- Auto-resolution of work items when builds pass or release branches are superseded.
+- Auto-resolution of work items when builds pass, release branches are superseded, or issues are closed.
 - AI-assisted triage via GitHub Copilot SDK with bundled skills.
-- MCP server integration (Azure DevOps, GitHub) for deep AI investigation.
+- MCP server integration (Azure DevOps, GitHub) for AI scanning and investigation.
 - Local JSON-based storage scoped by config name.
 
 ### Out of Scope
@@ -53,38 +53,46 @@ Signal collection and correlation are deterministic and auditable, producing rep
 - Long-term archival of full raw logs.
 
 ## Architecture Overview
-BuildDuty is an orchestration-first CLI with clear boundaries between collection, correlation, AI execution, and persistence.
+BuildDuty is an AI-first CLI with clear boundaries between scanning, triage, and persistence.
 
-Signal collection uses a shared interface (`ISignalService`) with two implementations: `AzureDevOpsSignalService` for pipeline runs and `GitHubSignalService` for issues and pull requests. Services are composed via dependency injection and executed by the scan workflow.
+Signal scanning uses AI agents powered by the GitHub Copilot SDK and MCP servers. Each source type (ADO pipelines, GitHub issues, GitHub PRs) runs as a separate AI session with the `scan-signals` skill. AI agents use tools (`ScanTools`) to create and resolve work items, and call a bundled Python script for release branch discovery.
+
+AI triage uses the same Copilot SDK infrastructure with triage-specific skills (summarize, diagnose, cluster, suggest) and read-only data-access tools (`BuildDutyTools`).
 
 ```mermaid
 flowchart LR
   User[Engineer] --> CLI[BuildDuty CLI]
-  CLI --> SignalService[Signal Services]
-  SignalService --> Store[(Local Store)]
+  CLI --> Scan[Scan Agents]
+  Scan --> MCP[MCP Servers]
+  Scan --> ScanTools[ScanTools]
+  ScanTools --> Store[(Local Store)]
 
-  CLI --> AI[AI Orchestrator]
-  AI --> Copilot[Copilot SDK]
+  CLI --> Triage[Triage Command]
+  Triage --> Copilot[Copilot SDK]
   Copilot --> Skills[Bundled Skills]
-  Copilot --> MCP[MCP Servers]
-  Store --> AI
-  AI --> Store
+  Copilot --> MCP
+  Store --> Triage
+  Triage --> Store
 ```
 
 ```mermaid
 sequenceDiagram
   participant U as Engineer
   participant B as BuildDuty
-  participant S as Local Store
   participant C as Copilot SDK
+  participant M as MCP Servers
+  participant S as Local Store
 
-  U->>B: build-duty ai --id wi_123 --action "summarize"
-  B->>S: Load work item + set state to InProgress
-  B->>C: Create session with skills + MCP servers
-  C->>C: Execute with bundled skill context
-  C-->>B: AI result
-  B->>S: Persist output + execution metadata
-  B-->>U: Render summary
+  U->>B: build-duty scan
+  B->>C: Create ADO agent session
+  C->>M: Query pipeline builds
+  M-->>C: Build results
+  C->>S: create_work_item / resolve_work_item
+  B->>C: Create GitHub issues agent session
+  C->>M: Search issues
+  M-->>C: Matching issues
+  C->>S: create_work_item / resolve_work_item
+  B-->>U: Scan summary
 ```
 
 ## Repository Layout
@@ -100,15 +108,12 @@ build-duty/
 │  │  ├─ Commands/
 │  │  │  ├─ ScanCommand.cs
 │  │  │  ├─ WorkItemsCommand.cs
-│  │  │  └─ AiCommand.cs
+│  │  │  └─ TriageCommand.cs
 │  │  ├─ Paths.cs
 │  │  └─ Program.cs
 │  ├─ BuildDuty.Core/
 │  │  ├─ Models/
 │  │  │  └─ BuildDutyConfig.cs
-│  │  ├─ AzureDevOpsSignalService.cs
-│  │  ├─ GitHubSignalService.cs
-│  │  ├─ ReleaseBranchResolver.cs
 │  │  ├─ WorkItem.cs
 │  │  └─ WorkItemStore.cs
 │  ├─ BuildDuty.AI/
@@ -116,11 +121,20 @@ build-duty/
 │  │  │  ├─ summarize/
 │  │  │  ├─ diagnose-build-break/
 │  │  │  ├─ cluster-incidents/
-│  │  │  └─ suggest-next-actions/
+│  │  │  ├─ suggest-next-actions/
+│  │  │  └─ scan-signals/
+│  │  │     ├─ SKILL.md
+│  │  │     ├─ references/
+│  │  │     └─ scripts/
+│  │  │        └─ resolve-release-branches.py
 │  │  ├─ CopilotAdapter.cs
 │  │  ├─ CopilotSessionFactory.cs
-│  │  ├─ AiOrchestrator.cs
-│  │  └─ AiRunStore.cs
+│  │  ├─ BuildDutyTools.cs       (shared read-only tools)
+│  │  ├─ TriageTools.cs          (triage-only tools + skills)
+│  │  ├─ ScanTools.cs            (scan-only tools + skills)
+│  │  ├─ TriageResult.cs
+│  │  ├─ TriageStore.cs
+│  │  └─ ScanResult.cs
 │  └─ BuildDuty.Tests/
 ├─ eng/
 │  ├─ build.sh
@@ -188,47 +202,62 @@ BuildDuty exposes a small set of composable CLI commands for signal collection, 
 
 | Command | Purpose | Key Options | Output |
 |---|---|---|---|
-| `build-duty scan` | Collect signals, create/resolve work items | `--ci`, `--config` | New/updated/resolved work items |
+| `build-duty scan` | AI-assisted scanning for configured sources | `--config` | New/updated/resolved work items |
 | `build-duty workitems list` | List tracked work items | `--state`, `--show-resolved`, `--limit` | Tabular list |
 | `build-duty workitems show` | Inspect one work item | `--id` | Full detail and history |
-| `build-duty ai` | AI-assisted triage | `--id`, `--action`, `--state`, `--show-resolved`, `--limit` | AI analysis result |
+| `build-duty triage` | AI-assisted triage | `--id`, `--action`, `--state`, `--show-resolved`, `--limit` | AI analysis result |
 
 ### Credential handling
-BuildDuty supports two authentication modes:
-
-- **Interactive** (default): Uses `ChainedTokenCredential` with Azure CLI and interactive browser for Azure DevOps, and `gh auth token` or `GITHUB_TOKEN` for GitHub.
-- **CI mode** (`--ci`): Reads `SYSTEM_ACCESSTOKEN` or `AZURE_DEVOPS_PAT` environment variables for Azure DevOps, and `GITHUB_TOKEN` for GitHub.
+BuildDuty authenticates using the GitHub Copilot SDK's default credential resolution. MCP servers handle their own authentication independently.
 
 ## Signal Collection
-Signal collection is the deterministic core of BuildDuty. Each `ISignalService` implementation collects signals from a configured source and returns work items.
+Signal collection uses AI agents powered by the GitHub Copilot SDK and MCP servers. The `build-duty scan` command spawns separate AI sessions for each configured source type, all using the `scan-signals` skill.
 
-### Azure DevOps Signal Service
+### Scanning Architecture
+The `ScanCommand` reads `.build-duty.yml`, builds a prompt for each source type (ADO pipelines, GitHub issues, GitHub PRs), and creates a Copilot session for each. Sessions run in parallel and share access to the work item store via `ScanTools`.
+
+Each AI agent:
+1. Receives the source configuration as a YAML fragment in its prompt.
+2. Consults the `scan-signals` skill and its reference docs for scanning procedures.
+3. Uses MCP server tools to query the configured sources.
+4. Calls `ScanTools` to create new work items and resolve existing ones.
+
+### ScanTools
+Write tools exposed to AI agents during scanning:
+- **`create_work_item`** — Creates a new work item with ID, title, correlation ID, signal type, and signal reference URL. Skips duplicates.
+- **`work_item_exists`** — Checks whether a work item ID is already tracked.
+- **`resolve_work_item`** — Resolves a work item by transitioning it through `InProgress` → `Resolved` with a reason.
+- **`list_work_items`** — Lists existing work items, optionally filtered by state.
+- **`get_release_branches`** — Runs the bundled Python script to resolve active .NET release branches.
+
+### ADO Pipeline Scanning
 For each configured pipeline and branch combination:
-1. Fetch the latest completed build for that branch.
-2. If the build outcome matches the configured status filter, create a work item.
-3. Track the correlation ID (`corr_ado_{pipelineId}_{branch}`) for auto-resolution.
-4. If the latest build passes, record its correlation ID in `PassingCorrelationIds`.
+1. The AI agent queries the Azure DevOps MCP server for the latest completed build.
+2. If the build outcome matches the configured status filter, it creates a work item.
+3. If the build succeeded, it checks for existing work items with the same correlation ID and resolves them.
 
-Work item IDs follow the pattern `wi_ado_{buildId}`, ensuring each build failure maps to exactly one work item.
+Work item IDs follow the pattern `wi_ado_{buildId}`, and correlation IDs follow `corr_ado_{pipelineId}_{sanitizedBranch}`.
 
-### GitHub Signal Service
+### GitHub Issue and PR Scanning
 For each configured repository:
-1. Query issues matching configured labels and state.
-2. Query pull requests matching configured labels and state (if configured).
-3. Create work items with IDs following `wi_gh_issue_{owner}_{name}_{number}` or `wi_gh_pr_{owner}_{name}_{number}`.
+1. The AI agent queries the GitHub MCP server for issues/PRs matching configured labels and state.
+2. It creates work items for matching items not already tracked.
+3. It resolves work items for issues that have been closed or PRs that have been merged.
+
+Issue IDs follow `wi_gh_issue_{owner}_{name}_{number}`, PR IDs follow `wi_gh_pr_{owner}_{name}_{number}`.
 
 ## Release Branch Discovery
-When a pipeline has a `release` section, `ReleaseBranchResolver` automatically discovers which release branches to monitor:
+When a pipeline has a `release` section, the scanning AI agent uses the `get_release_branches` tool to discover active branches. This tool runs a bundled Python script (`resolve-release-branches.py`) that:
 
-1. **Fetch branches** from the configured Azure DevOps Git repository.
-2. **Download the releases index** from `https://raw.githubusercontent.com/dotnet/core/main/release-notes/releases-index.json`.
-3. **Filter channels** to those matching configured support phases and minimum version.
-4. **Download per-channel release data** to detect released SDK versions and shipped previews/RCs.
-5. **Categorize branches** by version label (main, feature-band, specific-version, preview/RC).
-6. **Filter stale branches**:
-   - Remove specific-version branches when a higher SDK version has been released in the same feature band.
-   - Remove preview/RC branches when that preview/RC has already shipped.
-   - Keep only the latest unreleased preview per major version.
+1. **Downloads the releases index** from `https://raw.githubusercontent.com/dotnet/core/main/release-notes/releases-index.json`.
+2. **Filters channels** to those matching configured support phases and minimum version.
+3. **Downloads per-channel release data** to detect released SDK versions and shipped previews/RCs.
+4. **Returns JSON** with supported channels, released SDK versions, and released preview identifiers.
+
+The AI agent then uses MCP server tools to list repository branches, matches them against the supported channels, and filters stale branches:
+- Removes branches for SDK versions that have already been released.
+- Removes branches for previews/RCs that have already shipped.
+- Keeps only the latest unreleased preview per major version.
 
 This ensures monitoring focuses on branches that still require attention, without tracking branches for already-released or superseded versions.
 
@@ -249,22 +278,25 @@ Valid transitions:
 Invalid transitions throw `InvalidOperationException`. Every state change is recorded in the work item's `History` array with timestamp and actor metadata.
 
 ## Auto-Resolution
-During scanning, BuildDuty automatically resolves work items that no longer need attention. A work item in `Unresolved` or `InProgress` state is resolved if:
+During scanning, AI agents automatically resolve work items that no longer need attention. A work item in `Unresolved` or `InProgress` state is resolved when:
 
-1. **Latest build passes**: The work item's correlation ID appears in `PassingCorrelationIds`, meaning the latest build for that pipeline/branch now succeeds. Resolution reason: *"Auto-resolved: latest build succeeded"*.
+1. **Latest build passes**: The AI agent finds the latest build for a pipeline/branch succeeds, and an existing work item tracks a failure for that same correlation ID. The agent calls `resolve_work_item` with reason: *"Auto-resolved: latest build succeeded"*.
 
-2. **Branch superseded**: For pipelines with `release` config, the work item's correlation ID matches a release pipeline prefix but is no longer in the set of active branches (i.e., the branch has been superseded by a newer release). Resolution reason: *"Auto-resolved: branch superseded by newer release"*.
+2. **Branch superseded**: For pipelines with `release` config, the AI determines (via the release branch script and MCP server data) that a branch is no longer active. Work items tracking failures on that branch are resolved with reason: *"Auto-resolved: branch superseded by newer release"*.
 
-Auto-resolution transitions through valid states: if the item is `Unresolved`, it moves to `InProgress` first, then to `Resolved`.
+3. **Issue/PR closed**: For GitHub-sourced work items, the AI resolves items when the underlying issue is closed or the PR is merged.
+
+Auto-resolution transitions through valid states: if the item is `Unresolved`, the `resolve_work_item` tool moves it to `InProgress` first, then to `Resolved`.
 
 ## AI Analysis
 BuildDuty provides AI-assisted triage through the GitHub Copilot SDK. The AI layer operates only on locally collected data and does not modify persisted signals.
 
 ### Architecture
-- **`CopilotAdapter`** — Creates a Copilot SDK client and session, sends prompts with work item context, and captures results.
-- **`CopilotSessionFactory`** — Configures sessions with bundled skills, MCP servers, and data-access tools.
-- **`AiOrchestrator`** — Manages work item state transitions around AI execution, invokes the adapter, and persists results.
-- **`BuildDutyTools`** — Exposes `get_work_item`, `list_work_items`, and `get_signals` as tools for the AI to call during analysis.
+- **`CopilotAdapter`** — Creates Copilot SDK sessions, sends prompts with context, and captures results. Supports both work-item-scoped triage (`TriageAsync`) and free-form scanning (`ScanSourceAsync`).
+- **`CopilotSessionFactory`** — Configures sessions with MCP servers and tools. Each command specifies which skills to load.
+- **`BuildDutyTools`** — Shared read-only tools (`get_work_item`, `list_work_items`, `work_item_exists`) available to all AI sessions.
+- **`TriageTools`** — Triage-only tools (`get_signals`) and skills (`summarize`, `diagnose-build-break`, `cluster-incidents`, `suggest-next-actions`).
+- **`ScanTools`** — Scan-only tools (`create_work_item`, `resolve_work_item`) and the `scan-signals` skill.
 
 ### Bundled skills
 Skills are shipped with BuildDuty and loaded from the `skills/` directory relative to the tool's install location. Each skill directory contains a `SKILL.md` with YAML front-matter and markdown instructions, plus `references/` and `scripts/` subdirectories.
@@ -275,6 +307,7 @@ Skills are shipped with BuildDuty and loaded from the `skills/` directory relati
 | `diagnose-build-break` | Root-cause analysis with ranked likely causes |
 | `cluster-incidents` | Group related failures by shared patterns |
 | `suggest-next-actions` | Recommend concrete next steps for triage |
+| `scan-signals` | AI-powered signal scanning with auto-resolution |
 
 ### MCP server integration
 BuildDuty configures two MCP servers for AI sessions:
@@ -283,19 +316,19 @@ BuildDuty configures two MCP servers for AI sessions:
 - **GitHub** (remote): `https://api.githubcopilot.com/mcp/` — enables the AI to query issues, pull requests, and commits.
 
 ### AI execution flow
-1. Engineer runs `build-duty ai --id wi_123 --action "summarize this failure"`.
+1. Engineer runs `build-duty triage --id wi_123 --action "summarize this failure"`.
 2. BuildDuty loads the work item and transitions it to `InProgress`.
-3. `CopilotAdapter` creates a session with all bundled skills and MCP servers.
-4. The prompt includes work item details, signals, action text, and any prior AI run context.
+3. `CopilotAdapter` creates a session with triage skills and MCP servers.
+4. The prompt includes work item details, signals, action text, and any prior run context.
 5. Copilot SDK processes the request, optionally calling tools and MCP servers.
-6. Result is persisted as a JSON file in `~/.build-duty/<name>/ai-runs/`.
+6. Result is persisted as a JSON file in `~/.build-duty/<name>/triage-runs/`.
 7. Summary is rendered to the terminal.
 
 ### Batch mode
 When `--id` is omitted, BuildDuty enters batch mode:
 1. Load work items matching `--state` and `--show-resolved` filters.
 2. Present an interactive multi-select prompt.
-3. Process selected items in parallel via `AiOrchestrator`.
+3. Process selected items in parallel, each getting its own AI session.
 
 ## Tool Distribution
 BuildDuty is distributed as a .NET CLI tool. Repositories opt in by adding it to their `.config/dotnet-tools.json` manifest or installing it globally.
@@ -312,7 +345,7 @@ BuildDuty persists work items and AI results as JSON files under `~/.build-duty/
 ~/.build-duty/
 └── sourcebuild-monitor/
     ├── workitems/          # {workItemId}.json
-    └── ai-runs/            # {aiRunId}.json
+    └── triage-runs/        # {triageRunId}.json
 ```
 
 Work item files contain the full work item record including signals and history. AI run files contain execution metadata, the action performed, and the AI's response.
@@ -344,33 +377,32 @@ Work item files contain the full work item record including signals and history.
 }
 ```
 
-### AI Run Result Schema
+### Triage Run Result Schema
 ```json
 {
-  "runId": "airun_abc123",
+  "runId": "triage_abc123",
   "workItemId": "wi_ado_12345",
   "action": "summarize this failure",
+  "success": true,
+  "summary": "Build failure caused by regression in PR #567...",
   "startedUtc": "2026-03-19T12:35:00Z",
-  "finishedUtc": "2026-03-19T12:35:08Z",
-  "exitCode": 0,
-  "summary": "Build failure caused by regression in PR #567..."
+  "finishedUtc": "2026-03-19T12:35:08Z"
 }
 ```
 
 ## Security and Data Handling
-- Only required fields are sent to AI execution.
+- Only required configuration and context are sent to AI sessions.
 - Secrets and tokens are never written to persisted artifacts.
-- Credentials are resolved at runtime via Azure.Identity or environment variables.
-- AI output is stored alongside — but never replaces — raw collected signals.
+- Credentials are resolved at runtime via `gh auth token` or environment variables.
+- MCP servers handle their own authentication independently.
+- AI output is stored alongside — but never replaces — raw work item data.
 
 ## Testing
 Tests are organized in `BuildDuty.Tests` using xUnit:
 
 | Test File | Coverage |
 |---|---|
-| `AzureDevOpsSignalServiceTests` | Service initialization, status defaults, URL parsing |
 | `BuildDutyConfigTests` | YAML parsing, name validation, pipeline config |
-| `GitHubSignalServiceTests` | Config defaults, empty repos, credential provider |
-| `ReleaseBranchResolverTests` | Branch categorization, filtering, preview/RC logic |
+| `ScanToolsTests` | Work item CRUD tools, dedup, state transitions, release branches |
 | `WorkItemStateTransitionTests` | Valid/invalid transitions, history tracking |
 | `WorkItemStoreTests` | JSON round-trip, filtering, listing |

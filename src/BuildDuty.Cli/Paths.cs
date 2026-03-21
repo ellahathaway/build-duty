@@ -45,6 +45,6 @@ internal static class Paths
     public static string WorkItemsDir(string configName, string? configPath = null) =>
         Path.Combine(DataDir(configName), "workitems");
 
-    public static string AiRunsDir(string configName, string? configPath = null) =>
-        Path.Combine(DataDir(configName), "ai-runs");
+    public static string TriageRunsDir(string configName, string? configPath = null) =>
+        Path.Combine(DataDir(configName), "triage-runs");
 }

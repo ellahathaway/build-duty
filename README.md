@@ -2,23 +2,23 @@
 
 A .NET CLI tool that streamlines build-duty workflows by centralizing signal
 collection from Azure DevOps and GitHub, tracking work items through a clear
-lifecycle, and enabling AI-assisted triage — all driven by repository-owned YAML
-configuration.
+lifecycle, and enabling AI-assisted triage and scanning — all driven by
+repository-owned YAML configuration.
 
 ## Why BuildDuty?
 
 Build-duty engineers juggle multiple dashboards, pipelines, and issue trackers to
 understand repository health. BuildDuty consolidates that work into a single,
-deterministic, auditable workflow:
+auditable workflow:
 
-- **Standardized signal collection** — scan Azure DevOps pipelines and GitHub
-  issues with one command.
+- **AI-powered scanning** — scan Azure DevOps pipelines and GitHub issues/PRs
+  using AI agents backed by MCP servers.
 - **Work-item lifecycle** — track incidents from `Unresolved` → `InProgress` →
   `Resolved` with full history.
-- **Auto-resolution** — automatically resolves work items when builds pass or
-  release branches are superseded.
+- **Auto-resolution** — AI agents automatically resolve work items when builds
+  pass, release branches are superseded, or issues are closed.
 - **Release branch discovery** — automatically discovers active .NET release
-  branches from the dotnet/core releases index.
+  branches from the dotnet/core releases index via a bundled Python script.
 - **AI-assisted triage** — bundled skills summarize failures, cluster related
   incidents, diagnose root causes, and suggest next actions via the GitHub
   Copilot SDK.
@@ -38,7 +38,7 @@ build-duty scan
 build-duty workitems list
 
 # AI-assisted triage
-build-duty ai --id wi_ado_12345 --action "summarize this failure"
+build-duty triage --id wi_ado_12345 --action "summarize this failure"
 ```
 
 ## Prerequisites
@@ -105,30 +105,32 @@ github:
 
 ### Release branch auto-discovery
 
-When a pipeline includes a `release` section, BuildDuty automatically discovers
-active .NET release branches by:
+When a pipeline includes a `release` section, BuildDuty's scanning AI agent
+calls a bundled Python script (`resolve-release-branches.py`) to discover
+active .NET release branches. The script:
 
-1. Fetching the branch list from the configured Azure DevOps repository.
-2. Querying the [dotnet/core releases index](https://github.com/dotnet/core/blob/main/release-notes/releases-index.json)
+1. Queries the [dotnet/core releases index](https://github.com/dotnet/core/blob/main/release-notes/releases-index.json)
    for supported channels matching the configured support phases and minimum version.
-3. Downloading per-channel release data to detect shipped SDK versions and
+2. Downloads per-channel release data to detect shipped SDK versions and
    previews/RCs.
-4. Filtering to branches whose version labels match supported channels, removing
-   branches for released previews/RCs and superseded specific versions.
+3. Returns structured JSON with supported channels, released SDK versions, and
+   released preview identifiers.
+
+The AI agent then uses MCP server tools to list branches in the configured
+repository, matches them against the supported channels, and filters out
+branches for released previews and superseded versions.
 
 ## CLI commands
 
 ### `build-duty scan`
 
-Collect signals from the sources declared in `.build-duty.yml`, create work items
-for failures, and auto-resolve work items when builds pass or branches are
+Run AI-assisted scanning for configured sources, creating work items
+for failures and auto-resolving work items when builds pass or branches are
 superseded.
 
 | Option | Description |
 |---|---|
 | `--config <path>` | Path to config file (default: auto-detect) |
-| `--ci` | Use CI credentials instead of interactive auth |
-| `--profile <name>` | Signal-collection profile |
 
 ### `build-duty workitems list`
 
@@ -148,7 +150,7 @@ Show full details for a single work item, including signals and history.
 |---|---|
 | `--id <id>` | Work item ID (required) |
 
-### `build-duty ai`
+### `build-duty triage`
 
 Run AI-assisted triage against one or more work items using the GitHub Copilot
 SDK with bundled skills and MCP server integration.
@@ -170,13 +172,14 @@ SDK with bundled skills and MCP server integration.
 | `diagnose-build-break` | Root-cause analysis with ranked likely causes |
 | `cluster-incidents` | Group related failures across pipelines/branches |
 | `suggest-next-actions` | Recommend concrete next steps |
+| `scan-signals` | AI-powered signal scanning (used by `build-duty scan`) |
 
 ## Architecture
 
 ```
 BuildDuty.Cli          CLI entry-point, commands, rendering (Spectre.Console)
-BuildDuty.Core         Domain model, signal services, work-item store, release branch resolver
-BuildDuty.AI           Copilot SDK adapter, skills, AI orchestrator, run store
+BuildDuty.Core         Domain model, work-item store, config
+BuildDuty.AI           Copilot SDK adapter, skills, tools
 BuildDuty.Tests        xUnit tests
 ```
 
@@ -184,19 +187,21 @@ BuildDuty.Tests        xUnit tests
 
 ```
 build-duty scan
-  ├─ AzureDevOpsSignalService  ──→ signals (latest build per branch)
-  │   └─ ReleaseBranchResolver ──→ active release branches
-  ├─ GitHubSignalService       ──→ signals (issues / PRs)
-  ├─ WorkItemStore             ←── new / updated work items
-  └─ Auto-resolve              ←── resolve passing builds & superseded branches
+  ├─ CopilotAdapter     → Copilot SDK sessions with scan-signals skill
+  │   ├─ ADO agent       → scans pipelines via Azure DevOps MCP server
+  │   ├─ Issues agent    → scans GitHub issues via GitHub MCP server
+  │   └─ PRs agent       → scans GitHub PRs via GitHub MCP server
+  ├─ ScanTools           → create_work_item, resolve_work_item, list_work_items
+  │   └─ get_release_branches → bundled Python script
+  └─ WorkItemStore       ←── new / updated / resolved work items
 
-build-duty ai
-  ├─ CopilotAdapter     → Copilot SDK session with skills + MCP servers
+build-duty triage
+  ├─ CopilotAdapter     → Copilot SDK session with triage skills + MCP servers
   │   ├─ Skills          (summarize, diagnose, cluster, suggest)
   │   ├─ MCP: Azure DevOps  (pipeline details, timelines, logs)
   │   └─ MCP: GitHub         (issues, PRs, commits)
   ├─ BuildDutyTools      → work item data access for AI
-  └─ AiRunStore          ←── persisted result
+  └─ TriageStore      ←── persisted result
 ```
 
 ### Local storage
@@ -208,10 +213,10 @@ Data is stored under `~/.build-duty/<name>/`, where `<name>` comes from the
 ~/.build-duty/
 └── sourcebuild-monitor/     ← matches name: sourcebuild-monitor
     ├── workitems/            # Work-item JSON files
-    └── ai-runs/              # AI run-result JSON files
+    └── triage-runs/          # Triage run-result JSON files
 ```
 
-AI output is stored alongside — but never replaces — the raw collected signals.
+Triage results are stored alongside work-item data for incremental analysis.
 
 ## Contributing
 

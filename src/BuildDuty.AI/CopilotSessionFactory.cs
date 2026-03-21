@@ -5,34 +5,46 @@ namespace BuildDuty.AI;
 
 /// <summary>
 /// Factory for creating Copilot sessions pre-configured with build-duty
-/// skills, tools, and MCP servers. Skills are loaded from the <c>skills/</c>
-/// directory and MCP servers are defined as defaults alongside them.
+/// tools and MCP servers. The GitHub MCP server is built-in to Copilot CLI
+/// and does not need explicit configuration.
 /// </summary>
 public static class CopilotSessionFactory
 {
-    private static readonly string[] DefaultSkills =
-    [
-        "skills/summarize",
-        "skills/diagnose-build-break",
-        "skills/cluster-incidents",
-        "skills/suggest-next-actions",
-    ];
-
-    private static readonly Dictionary<string, object> DefaultMcpServers = new()
+    /// <summary>
+    /// Build MCP server config for Azure DevOps pipeline scanning.
+    /// Uses the official @azure-devops/mcp server with az CLI auth and
+    /// only the pipelines domain enabled.
+    /// </summary>
+    public static Dictionary<string, object> AdoPipelineServers(string organizationName) => new()
     {
         ["azure-devops"] = new McpLocalServerConfig
         {
             Command = "npx",
-            Args = ["-y", "@mcp-apps/azure-devops-mcp-server"],
+            Args = ["-y", "@azure-devops/mcp", organizationName, "-a", "azcli", "-d", "pipelines"],
             Tools = ["*"],
-        },
-        ["github"] = new McpRemoteServerConfig
-        {
-            Url = "https://api.githubcopilot.com/mcp/",
-            Type = "http",
-            Tools = ["*"],
+            Env = new Dictionary<string, string>
+            {
+                ["GIT_TERMINAL_PROMPT"] = "0",
+            },
         },
     };
+
+    /// <summary>
+    /// Empty MCP server config — used when only built-in servers (GitHub) are needed.
+    /// </summary>
+    public static Dictionary<string, object> NoExtraServers() => [];
+
+    /// <summary>
+    /// Build MCP server config with the ADO server — used for triage and
+    /// other operations that may need access to ADO. The GitHub MCP server
+    /// is built-in and always available.
+    /// </summary>
+    public static Dictionary<string, object> AllServers(string? adoOrganizationName = null)
+    {
+        if (adoOrganizationName is not null)
+            return AdoPipelineServers(adoOrganizationName);
+        return NoExtraServers();
+    }
 
     private const string DefaultInstructions = """
         You are a build-duty assistant that helps on-call engineers triage CI/build failures.
@@ -42,6 +54,9 @@ public static class CopilotSessionFactory
         - Use MCP server tools when available to query external services
         - Use available skills and scripts when helpful
         - Summarize findings in structured markdown
+        - **NEVER prompt for user input.** You are running in a non-interactive context.
+          If any tool or MCP server requires interactive input (credentials, confirmation,
+          browser login, etc.), stop immediately and report the error. Do NOT wait for input.
         - If an MCP server returns an error (auth failure, connection refused, timeout),
           stop immediately and report the error. Do not attempt workarounds like curl.
           Include the MCP server name, the error message, and a suggested fix
@@ -50,27 +65,27 @@ public static class CopilotSessionFactory
         """;
 
     /// <summary>
-    /// Create a new Copilot session with build-duty skills, tools, MCP servers,
-    /// and instructions.
+    /// Create a new Copilot session with the specified skills, tools, MCP servers,
+    /// and instructions. Skills are enabled via RPC after session creation.
     /// </summary>
     public static async Task<CopilotSession> CreateAsync(
         CopilotClient client,
+        IEnumerable<string> skills,
+        Dictionary<string, object> mcpServers,
         string? model = null,
         IEnumerable<AIFunction>? tools = null,
-        IEnumerable<string>? extraSkills = null,
         string? instructions = null,
         CancellationToken ct = default)
     {
-        var skillDirs = DefaultSkills
+        var skillDirs = skills
             .Select(s => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, s)))
-            .Concat(extraSkills ?? [])
             .ToList();
 
         var config = new SessionConfig
         {
             OnPermissionRequest = PermissionHandler.ApproveAll,
             SkillDirectories = skillDirs,
-            McpServers = DefaultMcpServers,
+            McpServers = mcpServers,
             SystemMessage = new SystemMessageConfig
             {
                 Content = instructions ?? DefaultInstructions,
@@ -83,6 +98,15 @@ public static class CopilotSessionFactory
         if (model is not null)
             config.Model = model;
 
-        return await client.CreateSessionAsync(config, ct);
+        var session = await client.CreateSessionAsync(config, ct);
+
+        // Enable all configured skills via RPC so they're active immediately
+        foreach (var skillDir in skillDirs)
+        {
+            var skillName = Path.GetFileName(skillDir);
+            await session.Rpc.Skills.EnableAsync(skillName, ct);
+        }
+
+        return session;
     }
 }

@@ -27,13 +27,15 @@ public class CopilotAdapter : IAsyncDisposable
     }
 
     /// <summary>
-    /// Execute an AI action against a work item, optionally including prior run context.
+    /// Run AI triage against a specific work item, optionally including prior run context.
     /// </summary>
-    public virtual async Task<AiRunResult> ExecuteAsync(
+    public virtual async Task<TriageResult> TriageAsync(
         WorkItem workItem,
         string action,
         string runId,
-        AiRunResult? priorRun = null,
+        IReadOnlyList<string> skills,
+        Dictionary<string, object> mcpServers,
+        TriageResult? priorRun = null,
         CancellationToken ct = default)
     {
         var started = DateTime.UtcNow;
@@ -45,6 +47,8 @@ public class CopilotAdapter : IAsyncDisposable
 
             await using var session = await CopilotSessionFactory.CreateAsync(
                 _client,
+                skills: skills,
+                mcpServers: mcpServers,
                 model: _model,
                 tools: _tools,
                 ct: ct);
@@ -55,7 +59,7 @@ public class CopilotAdapter : IAsyncDisposable
                 priorContext = $"""
 
                     IMPORTANT: This work item was previously analyzed (run {priorRun.RunId} at {priorRun.FinishedUtc:u}).
-                    The prior action was: {priorRun.Job}
+                    The prior action was: {priorRun.Action}
                     The prior result was:
                     {priorRun.Summary}
 
@@ -73,39 +77,131 @@ public class CopilotAdapter : IAsyncDisposable
 
             var response = await session.SendAndWaitAsync(
                 new MessageOptions { Prompt = prompt },
-                timeout: TimeSpan.FromMinutes(15),
+                timeout: TimeSpan.FromMinutes(5),
                 cancellationToken: ct);
 
             var content = response?.Data?.Content ?? "(no response)";
 
-            return new AiRunResult
+            return new TriageResult
             {
                 RunId = runId,
                 WorkItemId = workItem.Id,
-                Job = action,
-                Skill = "(auto)",
+                Action = action,
+                Success = true,
+                Summary = content,
                 StartedUtc = started,
                 FinishedUtc = DateTime.UtcNow,
-                ExitCode = 0,
-                Summary = content,
-                Stdout = content,
-                Stderr = null
             };
         }
         catch (Exception ex)
         {
-            return new AiRunResult
+            return new TriageResult
             {
                 RunId = runId,
                 WorkItemId = workItem.Id,
-                Job = action,
-                Skill = "(auto)",
+                Action = action,
+                Success = false,
+                Summary = $"Error: {ex.Message}",
+                Error = ex.ToString(),
                 StartedUtc = started,
                 FinishedUtc = DateTime.UtcNow,
-                ExitCode = 1,
+            };
+        }
+    }
+
+    /// <summary>
+    /// Run a scan agent — a free-form prompt for source-specific signal collection.
+    /// </summary>
+    public virtual async Task<ScanResult> ScanSourceAsync(
+        string prompt,
+        string sourceName,
+        IReadOnlyList<string> skills,
+        Dictionary<string, object> mcpServers,
+        CancellationToken ct = default)
+    {
+        var started = DateTime.UtcNow;
+
+        try
+        {
+            _client ??= new CopilotClient(_clientOptions);
+            await _client.StartAsync(ct);
+
+            await using var session = await CopilotSessionFactory.CreateAsync(
+                _client,
+                skills: skills,
+                mcpServers: mcpServers,
+                model: _model,
+                tools: _tools,
+                ct: ct);
+
+            // Temporary: stream full agent output to log file for debugging
+            var logFile = Path.Combine(Path.GetTempPath(), $"build-duty-{sourceName.Replace(" ", "-").ToLowerInvariant()}.log");
+            var logWriter = new StreamWriter(logFile, append: false) { AutoFlush = true };
+            logWriter.WriteLine($"=== {sourceName} scan started at {DateTime.UtcNow:O} ===\n");
+            Console.Error.WriteLine($"[DIAG] Agent log: {logFile}");
+
+            session.On(e =>
+            {
+                var ts = $"[{DateTime.UtcNow:HH:mm:ss}]";
+                switch (e)
+                {
+                    case AssistantMessageDeltaEvent delta:
+                        logWriter.Write(delta.Data?.DeltaContent ?? "");
+                        break;
+                    case AssistantMessageEvent msg:
+                        logWriter.WriteLine($"\n\n--- Full message ---\n{msg.Data?.Content}\n---\n");
+                        break;
+                    case ToolExecutionStartEvent toolStart:
+                        var name = toolStart.Data?.McpToolName ?? toolStart.Data?.ToolName ?? "?";
+                        var server = toolStart.Data?.McpServerName;
+                        var label = server is not null ? $"{server}/{name}" : name;
+                        logWriter.WriteLine($"\n{ts} TOOL CALL: {label}");
+                        logWriter.WriteLine($"  args: {toolStart.Data?.Arguments}");
+                        break;
+                    case ToolExecutionCompleteEvent toolEnd:
+                        var ok = toolEnd.Data?.Success == true ? "✓" : "✗";
+                        logWriter.WriteLine($"{ts} TOOL RESULT: {ok}");
+                        break;
+                    case SessionErrorEvent err:
+                        logWriter.WriteLine($"\n{ts} ERROR: {err.Data}");
+                        break;
+                }
+            });
+
+            // Temporary: ask agent what skills and MCP servers it has
+            logWriter.WriteLine("=== DEBUG: Querying agent for skills and MCP servers ===\n");
+            var debugResponse = await session.SendAndWaitAsync(
+                new MessageOptions { Prompt = "List all your available skills and MCP servers. Be brief." },
+                timeout: TimeSpan.FromSeconds(30),
+                cancellationToken: ct);
+            logWriter.WriteLine($"\n=== DEBUG RESPONSE ===\n{debugResponse?.Data?.Content}\n=== END DEBUG ===\n");
+
+            var response = await session.SendAndWaitAsync(
+                new MessageOptions { Prompt = prompt },
+                timeout: TimeSpan.FromMinutes(5),
+                cancellationToken: ct);
+
+            var content = response?.Data?.Content ?? "(no response)";
+
+            return new ScanResult
+            {
+                Source = sourceName,
+                Success = true,
+                Summary = content,
+                StartedUtc = started,
+                FinishedUtc = DateTime.UtcNow,
+            };
+        }
+        catch (Exception ex)
+        {
+            return new ScanResult
+            {
+                Source = sourceName,
+                Success = false,
                 Summary = $"Error: {ex.Message}",
-                Stdout = null,
-                Stderr = ex.ToString()
+                Error = ex.ToString(),
+                StartedUtc = started,
+                FinishedUtc = DateTime.UtcNow,
             };
         }
     }
@@ -116,6 +212,4 @@ public class CopilotAdapter : IAsyncDisposable
             await d.DisposeAsync();
         GC.SuppressFinalize(this);
     }
-
-
 }
