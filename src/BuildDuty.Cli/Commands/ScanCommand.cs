@@ -82,8 +82,9 @@ internal sealed class ScanCommand : AsyncCommand<ScanSettings>
                 if (config.GitHub is not null)
                 {
                     var ghCollector = new GitHubSignalCollector(config.GitHub);
+                    var allRepos = config.GitHub.Organizations.SelectMany(o => o.Repositories);
 
-                    if (config.GitHub.Repositories.Any(r => r.Issues is not null))
+                    if (allRepos.Any(r => r.Issues is not null))
                     {
                         var issueTask = ctx.AddTask("[bold]GitHub Issues[/]", maxValue: 1);
                         tasks.Add(Task.Run(async () =>
@@ -98,7 +99,7 @@ internal sealed class ScanCommand : AsyncCommand<ScanSettings>
                         }));
                     }
 
-                    if (config.GitHub.Repositories.Any(r => r.PullRequests is not null))
+                    if (allRepos.Any(r => r.PullRequests is { Count: > 0 }))
                     {
                         var prTask = ctx.AddTask("[bold]GitHub PRs[/]", maxValue: 1);
                         tasks.Add(Task.Run(async () =>

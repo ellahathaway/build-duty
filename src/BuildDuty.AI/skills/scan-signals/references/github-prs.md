@@ -2,6 +2,8 @@
 
 Signal type: `github-pr`. Collected deterministically — the AI does not query GitHub.
 
+PRs are matched by **name patterns** configured per repository. Patterns prefixed with `*` match as substring (contains); otherwise exact match (case-insensitive). Each pattern can specify a `state` (default: `open`).
+
 ## Signal fields
 
 | Field | Format |
@@ -11,6 +13,7 @@ Signal type: `github-pr`. Collected deterministically — the AI does not query 
 | Correlation ID | `corr_gh_{owner}_{repo}_pr_{prNumber}` |
 | Signal type | `github-pr` |
 | Signal ref | `https://github.com/{owner}/{repo}/pull/{number}` |
+| Status | `open`, `closed`, or `merged` |
 
 ## Triage rules
 

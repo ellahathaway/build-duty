@@ -4,37 +4,32 @@ namespace BuildDuty.Core.Models;
 
 public sealed class GitHubConfig
 {
+    [YamlMember(Alias = "organizations")]
+    public List<GitHubOrganizationConfig> Organizations { get; set; } = [];
+}
+
+/// <summary>
+/// An organization (or owner) containing multiple repositories to scan.
+/// </summary>
+public sealed class GitHubOrganizationConfig
+{
+    [YamlMember(Alias = "organization")]
+    public string Organization { get; set; } = string.Empty;
+
     [YamlMember(Alias = "repositories")]
     public List<GitHubRepositoryConfig> Repositories { get; set; } = [];
 }
 
 public sealed class GitHubRepositoryConfig
 {
-    [YamlMember(Alias = "owner")]
-    public string Owner { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Alias for <see cref="Owner"/> — accepts "organization" in YAML as well.
-    /// </summary>
-    [YamlMember(Alias = "organization")]
-    public string? Organization
-    {
-        get => null;
-        set
-        {
-            if (!string.IsNullOrWhiteSpace(value) && string.IsNullOrWhiteSpace(Owner))
-                Owner = value;
-        }
-    }
-
     [YamlMember(Alias = "name")]
     public string Name { get; set; } = string.Empty;
 
     [YamlMember(Alias = "issues")]
     public GitHubIssueConfig? Issues { get; set; }
 
-    [YamlMember(Alias = "pullRequests")]
-    public GitHubPullRequestConfig? PullRequests { get; set; }
+    [YamlMember(Alias = "prs")]
+    public List<GitHubPullRequestPattern>? PullRequests { get; set; }
 }
 
 public sealed class GitHubIssueConfig
@@ -45,22 +40,19 @@ public sealed class GitHubIssueConfig
     [YamlMember(Alias = "state")]
     public string? State { get; set; }
 
-    /// <summary>
-    /// Returns the effective state filter, defaulting to <c>open</c>.
-    /// </summary>
     public string EffectiveState => string.IsNullOrWhiteSpace(State) ? "open" : State;
 }
 
-public sealed class GitHubPullRequestConfig
+/// <summary>
+/// A PR name pattern to match. Prefix with <c>*</c> for suffix matching.
+/// </summary>
+public sealed class GitHubPullRequestPattern
 {
-    [YamlMember(Alias = "labels")]
-    public List<string> Labels { get; set; } = [];
+    [YamlMember(Alias = "name")]
+    public string Name { get; set; } = string.Empty;
 
     [YamlMember(Alias = "state")]
     public string? State { get; set; }
 
-    /// <summary>
-    /// Returns the effective state filter, defaulting to <c>open</c>.
-    /// </summary>
     public string EffectiveState => string.IsNullOrWhiteSpace(State) ? "open" : State;
 }

@@ -24,11 +24,14 @@ public sealed class GitHubSignalCollector
 
         try
         {
-            foreach (var repo in _config.Repositories.Where(r => r.Issues is not null))
+            foreach (var org in _config.Organizations)
             {
-                ct.ThrowIfCancellationRequested();
-                var issues = await FetchIssuesAsync(repo, repo.Issues!, ct);
-                signals.AddRange(issues);
+                foreach (var repo in org.Repositories.Where(r => r.Issues is not null))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var issues = await FetchIssuesAsync(org.Organization, repo, repo.Issues!, ct);
+                    signals.AddRange(issues);
+                }
             }
 
             return new CollectionResult
@@ -59,11 +62,14 @@ public sealed class GitHubSignalCollector
 
         try
         {
-            foreach (var repo in _config.Repositories.Where(r => r.PullRequests is not null))
+            foreach (var org in _config.Organizations)
             {
-                ct.ThrowIfCancellationRequested();
-                var prs = await FetchPullRequestsAsync(repo, repo.PullRequests!, ct);
-                signals.AddRange(prs);
+                foreach (var repo in org.Repositories.Where(r => r.PullRequests is { Count: > 0 }))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var prs = await FetchPullRequestsAsync(org.Organization, repo, repo.PullRequests!, ct);
+                    signals.AddRange(prs);
+                }
             }
 
             return new CollectionResult
@@ -88,7 +94,7 @@ public sealed class GitHubSignalCollector
     }
 
     private static async Task<List<CollectedSignal>> FetchIssuesAsync(
-        GitHubRepositoryConfig repo, GitHubIssueConfig config, CancellationToken ct)
+        string owner, GitHubRepositoryConfig repo, GitHubIssueConfig config, CancellationToken ct)
     {
         var labelFilter = config.Labels.Count > 0
             ? $"--label {string.Join(",", config.Labels)}"
@@ -97,7 +103,7 @@ public sealed class GitHubSignalCollector
         var state = config.EffectiveState;
 
         var output = await RunGhAsync(
-            $"issue list --repo {repo.Owner}/{repo.Name} --state {state} {labelFilter} " +
+            $"issue list --repo {owner}/{repo.Name} --state {state} {labelFilter} " +
             "--json number,title,state,url --limit 100");
 
         if (output is null) return [];
@@ -109,13 +115,13 @@ public sealed class GitHubSignalCollector
             var number = i.GetProperty("number").GetInt32();
             var title = i.TryGetProperty("title", out var t) ? t.GetString() ?? "" : "";
             var issueState = i.TryGetProperty("state", out var s) ? s.GetString()?.ToLowerInvariant() ?? "open" : "open";
-            var url = i.TryGetProperty("url", out var u) ? u.GetString() ?? "" : $"https://github.com/{repo.Owner}/{repo.Name}/issues/{number}";
+            var url = i.TryGetProperty("url", out var u) ? u.GetString() ?? "" : $"https://github.com/{owner}/{repo.Name}/issues/{number}";
 
             return new CollectedSignal
             {
-                Id = $"wi_gh_issue_{repo.Owner}_{repo.Name}_{number}",
-                Title = $"[{repo.Owner}/{repo.Name}#{number}] {title}",
-                CorrelationId = $"corr_gh_{repo.Owner}_{repo.Name}_issue_{number}",
+                Id = $"wi_gh_issue_{owner}_{repo.Name}_{number}",
+                Title = $"[{owner}/{repo.Name}#{number}] {title}",
+                CorrelationId = $"corr_gh_{owner}_{repo.Name}_issue_{number}",
                 SignalType = "github-issue",
                 SignalRef = url,
                 Status = issueState,
@@ -124,39 +130,75 @@ public sealed class GitHubSignalCollector
     }
 
     private static async Task<List<CollectedSignal>> FetchPullRequestsAsync(
-        GitHubRepositoryConfig repo, GitHubPullRequestConfig config, CancellationToken ct)
+        string owner, GitHubRepositoryConfig repo, List<GitHubPullRequestPattern> patterns,
+        CancellationToken ct)
     {
-        var labelFilter = config.Labels.Count > 0
-            ? $"--label {string.Join(",", config.Labels)}"
-            : "";
+        var signals = new List<CollectedSignal>();
 
-        var state = config.EffectiveState;
+        // Group patterns by state to minimize API calls
+        var byState = patterns.GroupBy(p => p.EffectiveState, StringComparer.OrdinalIgnoreCase);
 
-        var output = await RunGhAsync(
-            $"pr list --repo {repo.Owner}/{repo.Name} --state {state} {labelFilter} " +
-            "--json number,title,state,url,isDraft --limit 100");
-
-        if (output is null) return [];
-
-        var items = JsonSerializer.Deserialize<List<JsonElement>>(output) ?? [];
-
-        return items.Select(i =>
+        foreach (var group in byState)
         {
-            var number = i.GetProperty("number").GetInt32();
-            var title = i.TryGetProperty("title", out var t) ? t.GetString() ?? "" : "";
-            var prState = i.TryGetProperty("state", out var s) ? s.GetString()?.ToLowerInvariant() ?? "open" : "open";
-            var url = i.TryGetProperty("url", out var u) ? u.GetString() ?? "" : $"https://github.com/{repo.Owner}/{repo.Name}/pull/{number}";
+            var state = group.Key;
+            var statePatterns = group.ToList();
 
-            return new CollectedSignal
+            var output = await RunGhAsync(
+                $"pr list --repo {owner}/{repo.Name} --state {state} " +
+                "--json number,title,state,url --limit 200");
+
+            if (output is null) continue;
+
+            var items = JsonSerializer.Deserialize<List<JsonElement>>(output) ?? [];
+
+            var matched = items
+                .Select(i => (
+                    Number: i.GetProperty("number").GetInt32(),
+                    Title: i.TryGetProperty("title", out var t) ? t.GetString() ?? "" : "",
+                    State: i.TryGetProperty("state", out var s) ? s.GetString()?.ToLowerInvariant() ?? "open" : "open",
+                    Url: i.TryGetProperty("url", out var u) ? u.GetString() ?? "" : $"https://github.com/{owner}/{repo.Name}/pull/{i.GetProperty("number").GetInt32()}"
+                ))
+                .Where(pr => MatchesAnyPattern(pr.Title, statePatterns))
+                .Select(pr => new CollectedSignal
+                {
+                    Id = $"wi_gh_pr_{owner}_{repo.Name}_{pr.Number}",
+                    Title = $"[{owner}/{repo.Name}#{pr.Number}] {pr.Title}",
+                    CorrelationId = $"corr_gh_{owner}_{repo.Name}_pr_{pr.Number}",
+                    SignalType = "github-pr",
+                    SignalRef = pr.Url,
+                    Status = pr.State,
+                });
+
+            signals.AddRange(matched);
+        }
+
+        return signals;
+    }
+
+    /// <summary>
+    /// Check if a PR title matches any of the configured name patterns.
+    /// Patterns starting with <c>*</c> match as a suffix (contains).
+    /// Exact patterns must match the full title.
+    /// </summary>
+    private static bool MatchesAnyPattern(string title, List<GitHubPullRequestPattern> patterns)
+    {
+        foreach (var p in patterns)
+        {
+            if (p.Name.StartsWith('*'))
             {
-                Id = $"wi_gh_pr_{repo.Owner}_{repo.Name}_{number}",
-                Title = $"[{repo.Owner}/{repo.Name}#{number}] {title}",
-                CorrelationId = $"corr_gh_{repo.Owner}_{repo.Name}_pr_{number}",
-                SignalType = "github-pr",
-                SignalRef = url,
-                Status = prState,
-            };
-        }).ToList();
+                // Wildcard prefix — match as "contains" on the remainder
+                var suffix = p.Name[1..];
+                if (title.Contains(suffix, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            else
+            {
+                // Exact match
+                if (title.Equals(p.Name, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+        }
+        return false;
     }
 
     private static async Task<string?> RunGhAsync(string arguments)
