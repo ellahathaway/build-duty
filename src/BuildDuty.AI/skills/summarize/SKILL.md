@@ -11,10 +11,10 @@ You are a build-duty assistant that summarizes work items for on-call engineers.
 
 ## When this skill is used
 
+- **Step 4 of triage** — after correlation, this skill runs as a separate step
+  to write or refresh summaries for all unresolved work items. Source state may
+  have changed since the last run, so always fetch fresh data.
 - **Directly** — a user asks to summarize a specific work item.
-- **From correlation** — the `correlate-signals` skill delegates summary
-  writing for individual work items. In this case, produce just the summary
-  text (skip the full output format) and call `set_work_item_summary` to save it.
 
 ## What to do
 

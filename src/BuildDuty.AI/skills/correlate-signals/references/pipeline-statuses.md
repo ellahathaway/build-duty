@@ -7,21 +7,27 @@ Signal type: `ado-pipeline-run`
 | Status | Meaning |
 |--------|---------|
 | `new` | Just created, not yet reviewed |
-| `tracked` | Acknowledged, being monitored |
+| `needs-investigation` | Failure with no linked issue or PR — needs attention |
+| `tracked` | Has a linked issue or PR addressing the failure |
 | `investigating` | Actively investigating root cause |
 | `fixed` | Issue resolved (pipeline passing again) |
 
 ## Status determination
 
-Use the build result from the signal title or the `az` CLI to determine status:
+A pipeline failure is only `tracked` when there is a linked work item (issue or PR)
+that addresses it. Without a link, it stays `needs-investigation`.
 
-| Build result | Work item status |
-|-------------|-----------------|
-| `failed` (first occurrence) | `tracked` |
-| `failed` (recurring, same correlation ID) | `investigating` |
-| `succeeded` (after prior failure) | `fixed` |
-| `canceled` | `tracked` |
-| `partiallySucceeded` | `tracked` |
+| Build result | Has linked issue/PR? | Work item status |
+|-------------|---------------------|-----------------|
+| `failed` | No | `needs-investigation` |
+| `failed` | Yes | `tracked` |
+| `failed` (recurring, same correlation ID) | No | `investigating` |
+| `failed` (recurring, same correlation ID) | Yes | `tracked` |
+| `succeeded` (after prior failure) | — | `fixed` |
+| `canceled` | No | `needs-investigation` |
+| `canceled` | Yes | `tracked` |
+| `partiallySucceeded` | No | `needs-investigation` |
+| `partiallySucceeded` | Yes | `tracked` |
 
 ## Efficiency rules
 
@@ -30,8 +36,11 @@ Use the build result from the signal title or the `az` CLI to determine status:
    **most recent** build per group. Apply findings to all items in the group.
 2. **Write as you go** — Call `update_work_item_status` after each group.
    Do NOT wait until you've analyzed all builds.
+3. **Check links** — Use `get_work_item` to check `linkedItems` before
+   deciding between `needs-investigation` and `tracked`.
 
 ## Cross-referencing
 
 - If a PR exists on the same branch, link the pipeline failure to the PR work item.
 - If a GitHub issue mentions the pipeline or failure, link them.
+- After linking, update the pipeline failure status to `tracked`.

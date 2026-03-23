@@ -16,7 +16,8 @@ Terminal statuses indicate the item is done.
 
 ### Active statuses (by signal type)
 
-**Pipeline (`ado-pipeline-run`):** `new` → `tracked` → `investigating` → `fixed`
+**Pipeline (`ado-pipeline-run`):** `new` → `needs-investigation` → `tracked` (when linked to issue/PR) → `fixed`
+Other pipeline statuses: `investigating`
 
 **Issue (`github-issue`):** `new` → `monitoring` → `in-pr` → `resolved`
 
