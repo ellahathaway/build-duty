@@ -2,8 +2,8 @@
 
 A .NET CLI tool that streamlines build-duty workflows by centralizing signal
 collection from Azure DevOps and GitHub, tracking work items through a clear
-lifecycle, and enabling AI-assisted triage and scanning — all driven by
-repository-owned YAML configuration.
+lifecycle, and enabling AI-assisted triage — all driven by repository-owned
+YAML configuration.
 
 ## Why BuildDuty?
 
@@ -11,18 +11,22 @@ Build-duty engineers juggle multiple dashboards, pipelines, and issue trackers t
 understand repository health. BuildDuty consolidates that work into a single,
 auditable workflow:
 
-- **AI-powered scanning** — scan Azure DevOps pipelines and GitHub issues/PRs
-  using AI agents backed by MCP servers.
+- **Deterministic collection** — collects pipeline runs, GitHub issues, and PRs
+  into local work items. Failed tasks (stages, jobs, log IDs) are captured
+  automatically. Passing builds auto-resolve their corresponding work items.
+- **AI-powered summarize & triage** — bundled skills summarize failures from
+  build logs, determine statuses, cross-reference related items, and suggest
+  next actions via the GitHub Copilot SDK.
+- **Correlation confirmation** — after triage, new cross-references are
+  presented for human confirmation. Rejected correlations are saved as
+  feedback so the AI learns from past mistakes.
+- **Interactive review** — select work items from a grouped table and give
+  freeform instructions to an AI agent (resolve, investigate, re-triage, etc.).
 - **Work-item lifecycle** — track incidents from `new` through type-specific
   statuses (`tracked`, `needs-review`, `investigating`, etc.) to terminal
   states (`fixed`, `merged`, `resolved`, `closed`) with full history.
-- **Auto-resolution** — AI agents automatically resolve work items when builds
-  pass, release branches are superseded, or issues are closed.
 - **Release branch discovery** — automatically discovers active .NET release
   branches from the dotnet/core releases index via a bundled Python script.
-- **AI-assisted triage** — bundled skills summarize failures, cluster related
-  incidents, diagnose root causes, and suggest next actions via the GitHub
-  Copilot SDK.
 - **Repo-owned configuration** — a `.build-duty.yml` file in your repository
   declares exactly what to monitor.
 
@@ -32,8 +36,14 @@ auditable workflow:
 # Install the CLI as a .NET global tool
 dotnet tool install -g BuildDuty
 
-# Run the full triage pipeline (collect → scan → correlate)
+# Run the full triage pipeline (collect → summarize → triage)
 build-duty triage
+
+# Run triage and enter interactive review when done
+build-duty triage --review
+
+# Review existing work items interactively
+build-duty review
 
 # List open work items
 build-duty workitems list
@@ -94,6 +104,10 @@ azureDevOps:
                 supportPhases: [active, maintenance, preview]
                 minVersion: 8
               status: [failed, partiallySucceeded]
+              stages:              # optional: only collect matching stages/jobs
+                - "Build"
+              legs:
+                - "Build Linux*"
 
 github:
   repositories:
@@ -102,6 +116,9 @@ github:
       issues:
         labels: ["Build Break"]
         state: open
+      pullRequests:
+        - namePattern: "dotnet-*"
+          labels: ["auto-merge"]
 ```
 
 ### Release branch auto-discovery
@@ -125,9 +142,21 @@ branches for released previews and superseded versions.
 
 ### `build-duty triage`
 
-Run the full triage pipeline: collect signals from configured sources, scan
-with AI to create/resolve work items, and correlate work items with summaries,
-statuses, and cross-references.
+Run the full triage pipeline: collect signals and create work items, summarize
+new items with AI, then triage with AI to determine statuses and cross-references.
+After triage, new correlations (links between items) are presented for
+confirmation. Optionally enter interactive review with `--review`.
+
+| Option | Description |
+|---|---|
+| `--config <path>` | Path to config file (default: auto-detect) |
+| `--review` | Enter interactive review mode after triage |
+
+### `build-duty review`
+
+Interactively review and act on triaged work items. Items are displayed in a
+grouped table (by type and status). Select items, type a freeform instruction,
+and an AI agent executes it.
 
 | Option | Description |
 |---|---|
@@ -169,18 +198,17 @@ SDK with bundled skills and MCP server integration.
 
 | Skill | Purpose |
 |---|---|
-| `summarize` | Concise summary with error details and next steps |
-| `correlate-signals` | Enrich work items with statuses, summaries, and cross-references |
+| `summarize` | Fetch build logs, write concise work-item summaries |
+| `triage-signals` | Determine statuses, resolve stale items, cross-reference |
 | `diagnose-build-break` | Root-cause analysis with ranked likely causes |
 | `cluster-incidents` | Group related failures across pipelines/branches |
 | `suggest-next-actions` | Recommend concrete next steps |
-| `scan-signals` | AI-powered signal scanning (used by `build-duty triage`) |
 
 ## Architecture
 
 ```
 BuildDuty.Cli          CLI entry-point, commands, rendering (Spectre.Console)
-BuildDuty.Core         Domain model, work-item store, config
+BuildDuty.Core         Domain model, work-item store, signal collectors, config
 BuildDuty.AI           Copilot SDK adapter, skills, tools
 BuildDuty.Tests        xUnit tests
 ```
@@ -190,30 +218,40 @@ BuildDuty.Tests        xUnit tests
 ```
 build-duty triage
   ├─ Step 1: Signal Collection  (deterministic, no AI)
-  │   ├─ AzureDevOpsSignalCollector  → ADO pipeline runs
+  │   ├─ AzureDevOpsSignalCollector  → ADO pipeline runs + failure details
   │   ├─ GitHubIssueCollector        → GitHub issues
   │   └─ GitHubPrCollector           → GitHub PRs
+  │   └─ WorkItemStore  ←── work items created, passing builds auto-resolved
   │
-  ├─ Step 2: AI Triage  (scan-signals skill)
-  │   ├─ CopilotAdapter     → Copilot SDK session
-  │   ├─ ScanTools           → create_work_item, resolve_work_item
-  │   │   └─ get_release_branches → bundled Python script
-  │   └─ WorkItemStore       ←── new / resolved work items
+  ├─ Step 2: AI Summarize  (summarize skill)
+  │   ├─ CopilotAdapter       → Copilot SDK session
+  │   ├─ SummarizeTools        → set_summary, get_task_log
+  │   │   └─ AzureDevOpsBuildClient → deterministic timeline/log fetching
+  │   └─ WorkItemStore         ←── summaries written
   │
-  └─ Step 3: AI Correlation  (correlate-signals + summarize skills)
-      ├─ CopilotAdapter     → Copilot SDK session + MCP servers
-      │   ├─ az CLI            → ADO pipeline timelines/logs
-      │   └─ gh CLI / MCP     → GitHub issue/PR details
-      ├─ CorrelationTools    → status, summary, links
-      └─ WorkItemStore       ←── enriched work items
+  ├─ Step 3: AI Triage  (triage-signals skill)
+  │   ├─ CopilotAdapter       → Copilot SDK session + MCP servers
+  │   │   ├─ gh CLI / MCP     → GitHub issue/PR details
+  │   │   └─ az CLI / MCP     → ADO pipeline details
+  │   ├─ SignalTriageTools     → resolve, status, links
+  │   └─ WorkItemStore         ←── statuses updated, items linked/resolved
+  │
+  ├─ Correlation Confirmation  (human-in-the-loop)
+  │   └─ Confirm/reject new links; feedback saved for AI learning
+  │
+  └─ Interactive Review  (optional, --review flag)
+      └─ Select items → freeform instruction → AI agent executes
+
+build-duty review
+  ├─ Grouped item table (type × status)
+  ├─ Multi-select → freeform instruction
+  ├─ CopilotAdapter  → agent with triage/diagnose/suggest skills
+  └─ Loop until done
 
 build-duty workitems run
   ├─ CopilotAdapter     → Copilot SDK session with all skills + MCP servers
-  │   ├─ Skills          (summarize, diagnose, cluster, suggest, correlate)
-  │   ├─ MCP: Azure DevOps  (pipeline details, timelines, logs)
-  │   └─ MCP: GitHub         (issues, PRs, commits)
   ├─ BuildDutyTools      → work item data access for AI
-  └─ TriageStore         ←── persisted result
+  └─ WorkItemStore       ←── persisted result
 ```
 
 ### Local storage
@@ -223,12 +261,11 @@ Data is stored under `~/.build-duty/<name>/`, where `<name>` comes from the
 
 ```
 ~/.build-duty/
-└── sourcebuild-monitor/     ← matches name: sourcebuild-monitor
-    ├── workitems/            # Work-item JSON files
-    └── triage-runs/          # Triage run-result JSON files
+└── sourcebuild-monitor/          ← matches name: sourcebuild-monitor
+    ├── workitems/                 # Work-item JSON files
+    ├── triage-runs/               # Triage run-result JSON files
+    └── triage-feedback.jsonl      # Rejected correlation feedback
 ```
-
-Triage results are stored alongside work-item data for incremental analysis.
 
 ## Contributing
 
