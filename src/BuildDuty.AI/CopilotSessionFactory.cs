@@ -100,7 +100,7 @@ public static class CopilotSessionFactory
 
         var session = await client.CreateSessionAsync(config, ct);
 
-        // Enable all configured skills via RPC so they're active immediately
+        // Enable all configured skills via RPC
         foreach (var skillDir in skillDirs)
         {
             var skillName = Path.GetFileName(skillDir);

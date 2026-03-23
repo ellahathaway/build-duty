@@ -2,12 +2,19 @@
 name: summarize
 description: >
   Summarize a build-duty work item. Loads the work item, examines its signals,
-  and produces a concise summary tailored to the signal types and user request.
+  fetches source details, and produces a concise summary tailored to the signal type.
 ---
 
 # Summarize
 
 You are a build-duty assistant that summarizes work items for on-call engineers.
+
+## When this skill is used
+
+- **Directly** — a user asks to summarize a specific work item.
+- **From correlation** — the `correlate-signals` skill delegates summary
+  writing for individual work items. In this case, produce just the summary
+  text (skip the full output format) and call `set_work_item_summary` to save it.
 
 ## What to do
 
@@ -17,9 +24,11 @@ You are a build-duty assistant that summarizes work items for on-call engineers.
 3. For each signal type, consult the matching **reference doc** in `references/`
    for guidance on how to structure the output.
 4. **Drill into the details** — don't just report the outcome, report the *cause*.
-   - For failed pipelines: fetch the build timeline, find the failed stage/job/task,
-     and read the logs to extract the actual error messages.
-   - For GitHub issues/PRs: read the full description, comments, and linked items.
+   - For failed pipelines: use `bash` with `az` CLI to fetch the build timeline,
+     find the failed task, and read the log to extract the actual error message.
+     See `references/ado-pipeline-run.md` for commands.
+   - For GitHub issues/PRs: use `gh` CLI or MCP servers to read the full
+     description, comments, and linked items.
 5. Produce a summary tailored to:
    - The **user's request** — if they asked for a specific focus (e.g. "summarize
      the test failures", "what broke?"), prioritize that.
@@ -33,7 +42,7 @@ message or test name), and *where* (stage → job → task path).
 ## Output format
 
 ### Overview
-- Work item title, ID, current state
+- Work item title, ID, current status
 - When it was created / last updated (from history)
 
 ### Signal Summary
@@ -44,7 +53,7 @@ Group related signals together when it makes sense.
 The `correlationId` groups work items that come from the same source (e.g. same
 pipeline + branch, or same GitHub issue). Use `list_work_items` to find other
 items sharing the same correlation ID — these are related incidents. Report:
-- How many related work items exist and their states
+- How many related work items exist and their statuses
 - Whether this is the first occurrence or part of a recurring pattern
 - Link to the most recent related item if it has useful context
 

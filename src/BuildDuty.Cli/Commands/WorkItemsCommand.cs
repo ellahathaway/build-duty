@@ -8,17 +8,13 @@ namespace BuildDuty.Cli.Commands;
 
 internal sealed class WorkItemsListSettings : CommandSettings
 {
-    [CommandOption("--state")]
-    [Description("Filter by state (unresolved, inprogress, resolved)")]
-    public string? State { get; set; }
+    [CommandOption("--limit")]
+    [Description("Maximum number of items to display")]
+    public int? Limit { get; set; }
 
     [CommandOption("--show-resolved")]
     [Description("Include resolved work items")]
     public bool ShowResolved { get; set; }
-
-    [CommandOption("--limit")]
-    [Description("Maximum number of items to display")]
-    public int? Limit { get; set; }
 }
 
 internal sealed class WorkItemsListCommand : AsyncCommand<WorkItemsListSettings>
@@ -37,20 +33,9 @@ internal sealed class WorkItemsListCommand : AsyncCommand<WorkItemsListSettings>
         var config = BuildDutyConfig.LoadFromFile(configPath);
         var store = _storeFactory(config.Name, configPath);
 
-        WorkItemState? filter = settings.State?.ToLowerInvariant() switch
-        {
-            "unresolved" => WorkItemState.Unresolved,
-            "inprogress" => WorkItemState.InProgress,
-            "resolved" => WorkItemState.Resolved,
-            null => null,
-            _ => throw new ArgumentException($"Unknown state '{settings.State}'. Use: unresolved, inprogress, resolved")
-        };
-
-        var items = await store.ListAsync(filter, settings.Limit);
-
-        // Exclude resolved by default unless --show-resolved or --state resolved
-        if (!settings.ShowResolved && filter != WorkItemState.Resolved)
-            items = items.Where(i => i.State != WorkItemState.Resolved).ToList();
+        var items = await store.ListAsync(
+            resolved: settings.ShowResolved ? null : false,
+            limit: settings.Limit);
 
         if (items.Count == 0)
         {
@@ -60,21 +45,17 @@ internal sealed class WorkItemsListCommand : AsyncCommand<WorkItemsListSettings>
 
         var table = new Table().Border(TableBorder.Rounded);
         table.AddColumn("ID");
-        table.AddColumn("State");
+        table.AddColumn("Status");
         table.AddColumn("Title");
 
         foreach (var item in items)
         {
-            var stateMarkup = item.State switch
-            {
-                WorkItemState.Unresolved => "[red]unresolved[/]",
-                WorkItemState.InProgress => "[yellow]inprogress[/]",
-                WorkItemState.Resolved => "[green]resolved[/]",
-                _ => item.State.ToString()
-            };
+            var statusMarkup = item.IsResolved
+                ? $"[green]{Markup.Escape(item.Status)}[/]"
+                : $"[red]{Markup.Escape(item.Status)}[/]";
             table.AddRow(
                 Markup.Escape(item.Id),
-                stateMarkup,
+                statusMarkup,
                 Markup.Escape(item.Title));
         }
 
@@ -124,9 +105,11 @@ internal sealed class WorkItemsShowCommand : AsyncCommand<WorkItemsShowSettings>
         var panel = new Panel(
             new Rows(
                 new Markup($"[bold]ID:[/]             {Markup.Escape(item.Id)}"),
-                new Markup($"[bold]State:[/]          {StateMarkup(item.State)}"),
+                new Markup($"[bold]Status:[/]         {Markup.Escape(item.Status)}"),
                 new Markup($"[bold]Title:[/]          {Markup.Escape(item.Title)}"),
-                new Markup($"[bold]Correlation ID:[/] {Markup.Escape(item.CorrelationId ?? "(none)")}")
+                new Markup($"[bold]Correlation ID:[/] {Markup.Escape(item.CorrelationId ?? "(none)")}"),
+                new Markup($"[bold]Summary:[/]        {Markup.Escape(item.Summary ?? "(none)")}"),
+                new Markup($"[bold]Linked:[/]         {(item.LinkedItems.Count > 0 ? Markup.Escape(string.Join(", ", item.LinkedItems)) : "(none)")}")
             ))
             .Header("[bold blue]Work Item[/]")
             .Border(BoxBorder.Rounded);
@@ -164,11 +147,4 @@ internal sealed class WorkItemsShowCommand : AsyncCommand<WorkItemsShowSettings>
         return 0;
     }
 
-    private static string StateMarkup(WorkItemState state) => state switch
-    {
-        WorkItemState.Unresolved => "[red]unresolved[/]",
-        WorkItemState.InProgress => "[yellow]inprogress[/]",
-        WorkItemState.Resolved => "[green]resolved[/]",
-        _ => state.ToString()
-    };
 }

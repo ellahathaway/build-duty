@@ -25,6 +25,8 @@ services.AddSingleton<Func<BuildDutyConfig, WorkItemStore, CopilotAdapter>>(_ =>
         var tools = BuildDutyTools.Create(wiStore)
             .Concat(TriageTools.Create(wiStore))
             .Concat(ScanTools.Create(wiStore))
+            .Concat(CorrelationTools.Create(wiStore))
+            .Concat(SummarizeTools.Create(wiStore))
             .ToList();
 
         return new CopilotAdapter(new CopilotClientOptions(), tools, config.Ai?.Model);
@@ -38,8 +40,8 @@ app.Configure(config =>
 {
     config.SetApplicationName("build-duty");
 
-    config.AddCommand<ScanCommand>("scan")
-        .WithDescription("Run AI-assisted scanning for configured sources");
+    config.AddCommand<TriageCommand>("triage")
+        .WithDescription("Collect signals, triage with AI, and correlate work items");
 
     config.AddBranch("workitems", wi =>
     {
@@ -50,10 +52,10 @@ app.Configure(config =>
 
         wi.AddCommand<WorkItemsShowCommand>("show")
             .WithDescription("Inspect a single work item");
-    });
 
-    config.AddCommand<TriageCommand>("triage")
-        .WithDescription("Run AI-assisted triage against work item(s)");
+        wi.AddCommand<WorkItemRunCommand>("run")
+            .WithDescription("Run an AI action against work item(s) (e.g. 'review this PR', 'root cause analysis')");
+    });
 });
 
 return await app.RunAsync(args);

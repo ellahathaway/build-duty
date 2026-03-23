@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.Json;
 using BuildDuty.AI;
 using BuildDuty.Core;
 using BuildDuty.Core.Models;
@@ -9,126 +10,237 @@ namespace BuildDuty.Cli.Commands;
 
 internal sealed class TriageSettings : CommandSettings
 {
-    [CommandOption("--id")]
-    [Description("Work item ID to analyze")]
-    public string? WorkItemId { get; set; }
-
-    [CommandOption("--action")]
-    [Description("Free-form description of what to do (e.g. 'summarize this failure', 'what is the root cause?')")]
-    public string? Action { get; set; }
-
-    [CommandOption("--state")]
-    [Description("Filter work items by state for batch/selection")]
-    public string? State { get; set; }
-
-    [CommandOption("--show-resolved")]
-    [Description("Include resolved work items in selection")]
-    public bool ShowResolved { get; set; }
-
-    [CommandOption("--limit")]
-    [Description("Max items to process")]
-    public int? Limit { get; set; }
-
     [CommandOption("--config")]
     [Description("Path to .build-duty.yml config file")]
     public string? Config { get; set; }
-
-    public override ValidationResult Validate()
-    {
-        if (string.IsNullOrWhiteSpace(Action))
-            return ValidationResult.Error("Specify --action to describe what you want the AI to do.");
-        return ValidationResult.Success();
-    }
 }
 
 internal sealed class TriageCommand : AsyncCommand<TriageSettings>
 {
+    private readonly Func<string, string?, WorkItemStore> _storeFactory;
     private readonly Func<BuildDutyConfig, WorkItemStore, CopilotAdapter> _adapterFactory;
-    private readonly Func<string, string?, WorkItemStore> _wiStoreFactory;
-    private readonly Func<string, string?, TriageStore> _triageStoreFactory;
 
     public TriageCommand(
-        Func<BuildDutyConfig, WorkItemStore, CopilotAdapter> adapterFactory,
-        Func<string, string?, WorkItemStore> wiStoreFactory,
-        Func<string, string?, TriageStore> triageStoreFactory)
+        Func<string, string?, WorkItemStore> storeFactory,
+        Func<BuildDutyConfig, WorkItemStore, CopilotAdapter> adapterFactory)
     {
+        _storeFactory = storeFactory;
         _adapterFactory = adapterFactory;
-        _wiStoreFactory = wiStoreFactory;
-        _triageStoreFactory = triageStoreFactory;
     }
 
     public override async Task<int> ExecuteAsync(CommandContext context, TriageSettings settings)
     {
-        var configPath = settings.Config ?? Paths.ConfigPath()
-            ?? throw new InvalidOperationException("No .build-duty.yml found. Use --config to specify a path.");
-        var config = BuildDutyConfig.LoadFromFile(configPath);
-
-        var wiStore = _wiStoreFactory(config.Name, configPath);
-        var triageStore = _triageStoreFactory(config.Name, configPath);
-        var action = settings.Action!;
-        var adoOrgName = config.AzureDevOps?.Organizations.FirstOrDefault()?.Url.TrimEnd('/').Split('/').LastOrDefault();
-
-        if (settings.WorkItemId is not null)
+        var configPath = settings.Config ?? Paths.ConfigPath();
+        if (configPath is null)
         {
-            var adapter = _adapterFactory(config, wiStore);
+            AnsiConsole.MarkupLine("[red bold]Error:[/] No .build-duty.yml found in the repository root. Use --config to specify a path.");
+            return 1;
+        }
 
-            await AnsiConsole.Status()
-                .Spinner(Spinner.Known.Dots)
-                .StartAsync($"Running on {Markup.Escape(settings.WorkItemId)}...", async _ =>
+        if (!File.Exists(configPath))
+        {
+            AnsiConsole.MarkupLine($"[red bold]Error:[/] Config file not found: {configPath}");
+            return 1;
+        }
+
+        var config = BuildDutyConfig.LoadFromFile(configPath);
+        AnsiConsole.MarkupLine($"Using config: [bold]{configPath}[/] (name: [bold]{Markup.Escape(config.Name)}[/])");
+
+        var store = _storeFactory(config.Name, configPath);
+
+        // === Step 1: Collect signals ===
+        AnsiConsole.MarkupLine("\n[bold]Step 1:[/] Collecting signals...");
+
+        var collectionResults = new List<CollectionResult>();
+
+        await AnsiConsole.Progress()
+            .AutoClear(false)
+            .Columns(
+                new TaskDescriptionColumn(),
+                new SpinnerColumn(),
+                new ElapsedTimeColumn())
+            .StartAsync(async ctx =>
+            {
+                var tasks = new List<Task<CollectionResult>>();
+
+                if (config.AzureDevOps is not null)
                 {
-                    var result = await RunTriageAsync(adapter, wiStore, triageStore, settings.WorkItemId, action, adoOrgName);
-                    PrintResult(result);
-                });
+                    var adoTask = ctx.AddTask("[bold]AzureDevOps[/]", maxValue: 1);
+                    tasks.Add(Task.Run(async () =>
+                    {
+                        var collector = new AzureDevOpsSignalCollector(config.AzureDevOps);
+                        var result = await collector.CollectAsync(store, default);
+                        adoTask.Description = result.Success
+                            ? $"[green]✓[/] AzureDevOps ({result.Signals.Count} signals)"
+                            : $"[red]✗[/] AzureDevOps";
+                        adoTask.Increment(1);
+                        adoTask.StopTask();
+                        return result;
+                    }));
+                }
+
+                if (config.GitHub is not null)
+                {
+                    var ghCollector = new GitHubSignalCollector(config.GitHub);
+                    var allRepos = config.GitHub.Organizations.SelectMany(o => o.Repositories);
+
+                    if (allRepos.Any(r => r.Issues is not null))
+                    {
+                        var issueTask = ctx.AddTask("[bold]GitHub Issues[/]", maxValue: 1);
+                        tasks.Add(Task.Run(async () =>
+                        {
+                            var result = await ghCollector.CollectIssuesAsync(default);
+                            issueTask.Description = result.Success
+                                ? $"[green]✓[/] GitHub Issues ({result.Signals.Count} signals)"
+                                : $"[red]✗[/] GitHub Issues";
+                            issueTask.Increment(1);
+                            issueTask.StopTask();
+                            return result;
+                        }));
+                    }
+
+                    if (allRepos.Any(r => r.PullRequests is { Count: > 0 }))
+                    {
+                        var prTask = ctx.AddTask("[bold]GitHub PRs[/]", maxValue: 1);
+                        tasks.Add(Task.Run(async () =>
+                        {
+                            var result = await ghCollector.CollectPullRequestsAsync(default);
+                            prTask.Description = result.Success
+                                ? $"[green]✓[/] GitHub PRs ({result.Signals.Count} signals)"
+                                : $"[red]✗[/] GitHub PRs";
+                            prTask.Increment(1);
+                            prTask.StopTask();
+                            return result;
+                        }));
+                    }
+                }
+
+                collectionResults.AddRange(await Task.WhenAll(tasks));
+            });
+
+        // Show collection summary
+        var allSignals = collectionResults.SelectMany(r => r.Signals).ToList();
+        var failedCollections = collectionResults.Where(r => !r.Success).ToList();
+
+        AnsiConsole.MarkupLine($"Collected [bold]{allSignals.Count}[/] signals.");
+
+        foreach (var failure in failedCollections)
+            AnsiConsole.MarkupLine($"  [red]✗[/] {failure.Source}: {Markup.Escape(failure.Error ?? "unknown error")}");
+
+        if (allSignals.Count == 0 && failedCollections.Count == 0)
+        {
+            AnsiConsole.MarkupLine("[green]No failures found.[/]");
+            return 0;
+        }
+
+        // === Step 2: AI-powered triage ===
+        AnsiConsole.MarkupLine("\n[bold]Step 2:[/] Triaging signals...");
+
+        var beforeItems = await store.ListAsync();
+        var beforeIds = beforeItems.ToDictionary(i => i.Id, i => i.IsResolved);
+
+        var signalsJson = JsonSerializer.Serialize(allSignals, new JsonSerializerOptions { WriteIndented = true });
+
+        var prompt = $"""
+            Use the scan-signals skill to triage the following collected signals.
+            
+            **Collected signals:**
+            ```json
+            {signalsJson}
+            ```
+            """;
+
+        var scanResults = new List<ScanResult>();
+
+        await AnsiConsole.Progress()
+            .AutoClear(false)
+            .Columns(
+                new TaskDescriptionColumn(),
+                new SpinnerColumn(),
+                new ElapsedTimeColumn())
+            .StartAsync(async ctx =>
+            {
+                var progressTask = ctx.AddTask("[bold]AI triage[/]", maxValue: 1);
+
+                await using var adapter = _adapterFactory(config, store);
+                try
+                {
+                    var result = await adapter.ScanSourceAsync(
+                        prompt, "triage", ScanTools.Skills,
+                        CopilotSessionFactory.NoExtraServers(), ct: default);
+
+                    progressTask.Description = result.Success
+                        ? "[green]✓[/] AI triage"
+                        : "[red]✗[/] AI triage";
+
+                    scanResults.Add(result);
+                }
+                catch (Exception ex)
+                {
+                    progressTask.Description = "[red]✗[/] AI triage";
+                    scanResults.Add(new ScanResult
+                    {
+                        Source = "triage",
+                        Success = false,
+                        Summary = $"Error: {ex.Message}",
+                        Error = ex.ToString(),
+                    });
+                }
+                finally
+                {
+                    progressTask.Increment(1);
+                    progressTask.StopTask();
+                }
+            });
+
+        // Report Step 2 errors
+        foreach (var r in scanResults.Where(r => !r.Success))
+            AnsiConsole.MarkupLine($"\n[red bold]Triage error:[/] {Markup.Escape(r.Summary)}");
+
+        // === Step 3: AI-powered summarization ===
+        AnsiConsole.MarkupLine("\n[bold]Step 3:[/] Summarizing work items...");
+
+        // Summarize ALL unresolved items — source state may have changed since
+        // the last run (PRs merged, builds re-run, issues updated).
+        var toSummarize = (await store.ListAsync(resolved: false)).ToList();
+
+        var summarizeResults = new List<ScanResult>();
+
+        if (toSummarize.Count == 0)
+        {
+            AnsiConsole.MarkupLine("[dim]No unresolved work items to summarize.[/]");
         }
         else
         {
-            WorkItemState? stateFilter = settings.State?.ToLowerInvariant() switch
+            var itemsList = string.Join("\n", toSummarize.Select(i =>
             {
-                "unresolved" => WorkItemState.Unresolved,
-                "inprogress" => WorkItemState.InProgress,
-                "resolved" => WorkItemState.Resolved,
-                null => null,
-                _ => throw new ArgumentException($"Unknown state '{settings.State}'")
-            };
+                var signalRef = i.Signals.FirstOrDefault()?.Ref ?? "(none)";
+                var signalType = i.Signals.FirstOrDefault()?.Type ?? "(none)";
+                var existing = string.IsNullOrWhiteSpace(i.Summary) ? "none" : "exists";
+                return $"- {i.Id} | status={i.Status} | type={signalType} | ref={signalRef} | summary={existing} | title={i.Title}";
+            }));
 
-            var items = await wiStore.ListAsync(stateFilter, settings.Limit);
+            var summarizePrompt = $"""
+                Use the summarize skill to write or refresh summaries for the following
+                unresolved work items.
 
-            // Exclude resolved by default unless --show-resolved or --state resolved
-            if (!settings.ShowResolved && stateFilter != WorkItemState.Resolved)
-                items = items.Where(i => i.State != WorkItemState.Resolved).ToList();
+                For each item, fetch current details from the source (build logs via
+                az CLI for pipelines, gh CLI for GitHub items) and call
+                set_work_item_summary with an up-to-date summary.
 
-            if (items.Count == 0)
-            {
-                var scope = stateFilter.HasValue ? $" in state '{Markup.Escape(settings.State!)}'" : "";
-                AnsiConsole.MarkupLine($"[yellow]No work items found{scope}.[/]");
-                return 0;
-            }
+                Items marked summary=exists may have stale summaries — always fetch
+                fresh data and update if the source state has changed.
 
-            var selected = AnsiConsole.Prompt(
-                new MultiSelectionPrompt<string>()
-                    .Title("Select work items to run against:")
-                    .PageSize(15)
-                    .InstructionsText("[grey](Press [blue]<space>[/] to toggle, [green]<enter>[/] to accept)[/]")
-                    .AddChoices(items.Select(i =>
-                    {
-                        var state = i.State.ToString().ToLowerInvariant();
-                        var stateColor = state switch
-                        {
-                            "unresolved" => "red",
-                            "inprogress" => "yellow",
-                            "resolved" => "green",
-                            _ => "grey"
-                        };
-                        return $"{i.Id}  [{stateColor}]{state}[/]  {Markup.Escape(i.Title)}";
-                    })));
+                Keep summaries to 1-3 sentences focusing on what failed/changed and why.
 
-            if (selected.Count == 0)
-            {
-                AnsiConsole.MarkupLine("[yellow]No work items selected.[/]");
-                return 0;
-            }
+                **Unresolved work items ({toSummarize.Count}):**
+                {itemsList}
+                """;
 
-            var ids = selected.Select(s => s.Split("  ", 2)[0]).ToList();
+            var adoOrgUrl = config.AzureDevOps?.Organizations.FirstOrDefault()?.Url;
+            var mcpServers = adoOrgUrl is not null
+                ? CopilotSessionFactory.AdoPipelineServers(ExtractOrgName(adoOrgUrl))
+                : CopilotSessionFactory.NoExtraServers();
 
             await AnsiConsole.Progress()
                 .AutoClear(false)
@@ -138,92 +250,182 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
                     new ElapsedTimeColumn())
                 .StartAsync(async ctx =>
                 {
-                    var tasks = ids.Select(id =>
+                    var progressTask = ctx.AddTask("[bold]AI summarization[/]", maxValue: 1);
+
+                    await using var adapter = _adapterFactory(config, store);
+                    try
                     {
-                        var progressTask = ctx.AddTask(Markup.Escape(id), maxValue: 1);
-                        return Task.Run(async () =>
+                        var result = await adapter.ScanSourceAsync(
+                            summarizePrompt, "summarize", SummarizeTools.Skills,
+                            mcpServers, ct: default);
+
+                        progressTask.Description = result.Success
+                            ? "[green]✓[/] AI summarization"
+                            : "[red]✗[/] AI summarization";
+
+                        summarizeResults.Add(result);
+                    }
+                    catch (Exception ex)
+                    {
+                        progressTask.Description = "[red]✗[/] AI summarization";
+                        summarizeResults.Add(new ScanResult
                         {
-                            var adapter = _adapterFactory(config, wiStore);
-                            try
-                            {
-                                var result = await RunTriageAsync(adapter, wiStore, triageStore, id, action, adoOrgName);
-                                progressTask.Description = result.Success
-                                    ? $"[green]✓[/] {Markup.Escape(id)}"
-                                    : $"[red]✗[/] {Markup.Escape(id)}";
-                                return result;
-                            }
-                            catch (Exception ex)
-                            {
-                                progressTask.Description = $"[red]✗[/] {Markup.Escape(id)}: {Markup.Escape(ex.Message)}";
-                                return (TriageResult?)null;
-                            }
-                            finally
-                            {
-                                progressTask.Increment(1);
-                            }
+                            Source = "summarize",
+                            Success = false,
+                            Summary = $"Error: {ex.Message}",
+                            Error = ex.ToString(),
                         });
-                    }).ToList();
-
-                    var results = await Task.WhenAll(tasks);
-
-                    foreach (var result in results)
+                    }
+                    finally
                     {
-                        if (result is not null)
-                            PrintResult(result);
+                        progressTask.Increment(1);
+                        progressTask.StopTask();
                     }
                 });
         }
 
-        return 0;
-    }
+        // === Step 4: AI-powered correlation ===
+        AnsiConsole.MarkupLine("\n[bold]Step 4:[/] Correlating work items...");
 
-    /// <summary>
-    /// Run triage for a single work item: transition state, look up prior run,
-    /// invoke the AI, and persist the result.
-    /// </summary>
-    private static async Task<TriageResult> RunTriageAsync(
-        CopilotAdapter adapter,
-        WorkItemStore wiStore,
-        TriageStore triageStore,
-        string workItemId,
-        string action,
-        string? adoOrgName = null,
-        CancellationToken ct = default)
-    {
-        var workItem = await wiStore.LoadAsync(workItemId, ct)
-            ?? throw new InvalidOperationException($"Work item '{workItemId}' not found.");
+        // Re-fetch — summaries were written in step 3
+        var unresolvedItems = (await store.ListAsync(resolved: false)).ToList();
 
-        // Look up prior run so the AI can build on previous analysis
-        TriageResult? priorRun = null;
-        if (workItem.State == WorkItemState.InProgress)
-            priorRun = await triageStore.FindLatestForWorkItemAsync(workItemId, ct);
+        var correlationResults = new List<ScanResult>();
 
-        // Transition to InProgress
-        if (workItem.State == WorkItemState.Unresolved)
+        if (unresolvedItems.Count == 0)
         {
-            workItem.TransitionTo(WorkItemState.InProgress, $"Triage: {action}");
-            await wiStore.SaveAsync(workItem, ct);
+            AnsiConsole.MarkupLine("[dim]No unresolved work items to correlate.[/]");
+        }
+        else
+        {
+            var itemsList = string.Join("\n", unresolvedItems.Select(i =>
+            {
+                var signalRef = i.Signals.FirstOrDefault()?.Ref ?? "(none)";
+                var signalType = i.Signals.FirstOrDefault()?.Type ?? "(none)";
+                var summary = string.IsNullOrWhiteSpace(i.Summary) ? "(none)" : i.Summary;
+                return $"- {i.Id} | status={i.Status} | type={signalType} | ref={signalRef} | summary={summary} | title={i.Title}";
+            }));
+
+            var correlationPrompt = $"""
+                Use the correlate-signals skill to update statuses and cross-reference
+                the following unresolved work items.
+
+                Each item includes its current summary — use it to understand what the
+                item is about when determining statuses and cross-references.
+
+                For all items, determine and update the type-specific status.
+                Cross-reference related items where applicable.
+
+                **Unresolved work items ({unresolvedItems.Count}):**
+                {itemsList}
+                """;
+
+            // Add AzDO MCP server if configured — GitHub MCP is built-in
+            var adoOrgUrl = config.AzureDevOps?.Organizations.FirstOrDefault()?.Url;
+            var mcpServers = adoOrgUrl is not null
+                ? CopilotSessionFactory.AdoPipelineServers(ExtractOrgName(adoOrgUrl))
+                : CopilotSessionFactory.NoExtraServers();
+
+            await AnsiConsole.Progress()
+                .AutoClear(false)
+                .Columns(
+                    new TaskDescriptionColumn(),
+                    new SpinnerColumn(),
+                    new ElapsedTimeColumn())
+                .StartAsync(async ctx =>
+                {
+                    var progressTask = ctx.AddTask("[bold]AI correlation[/]", maxValue: 1);
+
+                    await using var adapter = _adapterFactory(config, store);
+                    try
+                    {
+                        var result = await adapter.ScanSourceAsync(
+                            correlationPrompt, "correlation", CorrelationTools.Skills,
+                            mcpServers, ct: default);
+
+                        progressTask.Description = result.Success
+                            ? "[green]✓[/] AI correlation"
+                            : "[red]✗[/] AI correlation";
+
+                        correlationResults.Add(result);
+                    }
+                    catch (Exception ex)
+                    {
+                        progressTask.Description = "[red]✗[/] AI correlation";
+                        correlationResults.Add(new ScanResult
+                        {
+                            Source = "correlation",
+                            Success = false,
+                            Summary = $"Error: {ex.Message}",
+                            Error = ex.ToString(),
+                        });
+                    }
+                    finally
+                    {
+                        progressTask.Increment(1);
+                        progressTask.StopTask();
+                    }
+                });
         }
 
-        var runId = IdGenerator.NewTriageRunId();
-        var mcpServers = CopilotSessionFactory.AllServers(adoOrgName);
-        var result = await adapter.TriageAsync(workItem, action, runId, TriageTools.Skills, mcpServers, priorRun, ct);
+        // Report what changed
+        var afterItems = await store.ListAsync();
+        var afterIds = afterItems.ToDictionary(i => i.Id, i => i.IsResolved);
+        var newCount = afterIds.Keys.Except(beforeIds.Keys).Count();
+        var resolvedCount = afterIds.Count(a =>
+            a.Value &&
+            beforeIds.TryGetValue(a.Key, out var wasBefore) &&
+            !wasBefore);
 
-        await triageStore.SaveAsync(result, ct);
-        return result;
+        // Summary table
+        var table = new Table().Border(TableBorder.Rounded);
+        table.AddColumn("Step");
+        table.AddColumn("Source");
+        table.AddColumn("Status");
+        table.AddColumn("Duration");
+
+        foreach (var r in collectionResults)
+            table.AddRow(
+                "Collection",
+                Markup.Escape(r.Source),
+                r.Success ? $"[green]✓[/] {r.Signals.Count} signals" : "[red]✗[/] failed",
+                $"{r.Duration.TotalSeconds:F1}s");
+
+        foreach (var r in scanResults)
+            table.AddRow(
+                "Triage",
+                Markup.Escape(r.Source),
+                r.Success ? "[green]✓[/] complete" : "[red]✗[/] failed",
+                $"{r.Duration.TotalSeconds:F1}s");
+
+        foreach (var r in summarizeResults)
+            table.AddRow(
+                "Summarize",
+                Markup.Escape(r.Source),
+                r.Success ? "[green]✓[/] complete" : "[red]✗[/] failed",
+                $"{r.Duration.TotalSeconds:F1}s");
+
+        foreach (var r in correlationResults)
+            table.AddRow(
+                "Correlation",
+                Markup.Escape(r.Source),
+                r.Success ? "[green]✓[/] complete" : "[red]✗[/] failed",
+                $"{r.Duration.TotalSeconds:F1}s");
+
+        AnsiConsole.Write(table);
+
+        foreach (var r in scanResults.Concat(summarizeResults).Concat(correlationResults).Where(r => !r.Success))
+            AnsiConsole.MarkupLine($"\n[red bold]Error ({Markup.Escape(r.Source)}):[/] {Markup.Escape(r.Summary)}");
+
+        AnsiConsole.MarkupLine($"\n[bold]Scan complete.[/] New items: [green]{newCount}[/] | Resolved: [blue]{resolvedCount}[/] | Total tracked: {afterIds.Count}");
+        return collectionResults.All(r => r.Success) && scanResults.All(r => r.Success) && correlationResults.All(r => r.Success) && summarizeResults.All(r => r.Success) ? 0 : 1;
     }
 
-    private static void PrintResult(TriageResult result)
+    /// <summary>Extract org name from an AzDO URL like "https://dev.azure.com/dnceng".</summary>
+    private static string ExtractOrgName(string url)
     {
-        AnsiConsole.WriteLine();
-        var table = new Table().Border(TableBorder.Rounded).Title($"[bold blue]Triage Result[/]");
-        table.AddColumn("Field");
-        table.AddColumn("Value");
-        table.AddRow("Work Item", Markup.Escape(result.WorkItemId));
-        table.AddRow("Action", Markup.Escape(result.Action));
-        table.AddRow("Status", result.Success ? "[green]success[/]" : "[red]failed[/]");
-        table.AddRow("Summary", Markup.Escape(result.Summary ?? "(none)"));
-        table.AddRow("Duration", $"{result.Duration.TotalSeconds:F1}s");
-        AnsiConsole.Write(table);
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            return uri.AbsolutePath.Trim('/').Split('/')[0];
+        return url;
     }
 }

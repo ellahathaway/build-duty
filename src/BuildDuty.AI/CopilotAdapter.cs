@@ -168,17 +168,9 @@ public class CopilotAdapter : IAsyncDisposable
                 }
             });
 
-            // Temporary: ask agent what skills and MCP servers it has
-            logWriter.WriteLine("=== DEBUG: Querying agent for skills and MCP servers ===\n");
-            var debugResponse = await session.SendAndWaitAsync(
-                new MessageOptions { Prompt = "List all your available skills and MCP servers. Be brief." },
-                timeout: TimeSpan.FromSeconds(30),
-                cancellationToken: ct);
-            logWriter.WriteLine($"\n=== DEBUG RESPONSE ===\n{debugResponse?.Data?.Content}\n=== END DEBUG ===\n");
-
             var response = await session.SendAndWaitAsync(
                 new MessageOptions { Prompt = prompt },
-                timeout: TimeSpan.FromMinutes(5),
+                timeout: TimeSpan.FromMinutes(10),
                 cancellationToken: ct);
 
             var content = response?.Data?.Content ?? "(no response)";

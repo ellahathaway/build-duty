@@ -40,7 +40,8 @@ Signal collection uses AI agents through the GitHub Copilot SDK. Each source typ
 ### In Scope
 - AI-powered signal scanning from Azure DevOps pipelines and GitHub issues/PRs.
 - Release branch auto-discovery from the dotnet/core releases index via bundled script.
-- Work item creation and lifecycle tracking (`Unresolved`, `InProgress`, `Resolved`).
+- Work item creation and lifecycle tracking with type-specific statuses
+  (e.g. `new` → `tracked` → `fixed` for pipelines, `new` → `needs-review` → `merged` for PRs).
 - Auto-resolution of work items when builds pass, release branches are superseded, or issues are closed.
 - AI-assisted triage via GitHub Copilot SDK with bundled skills.
 - MCP server integration (Azure DevOps, GitHub) for AI scanning and investigation.
@@ -83,16 +84,14 @@ sequenceDiagram
   participant M as MCP Servers
   participant S as Local Store
 
-  U->>B: build-duty scan
-  B->>C: Create ADO agent session
-  C->>M: Query pipeline builds
-  M-->>C: Build results
+  U->>B: build-duty triage
+  B->>B: Step 1: Collect signals (deterministic)
+  B->>C: Step 2: Create scan agent session
   C->>S: create_work_item / resolve_work_item
-  B->>C: Create GitHub issues agent session
-  C->>M: Search issues
-  M-->>C: Matching issues
-  C->>S: create_work_item / resolve_work_item
-  B-->>U: Scan summary
+  B->>C: Step 3: Create correlation agent session
+  C->>M: az CLI / gh CLI (build logs, PR details)
+  C->>S: set_work_item_summary / update_work_item_status
+  B-->>U: Triage summary
 ```
 
 ## Repository Layout
@@ -106,9 +105,9 @@ build-duty/
 ├─ src/
 │  ├─ BuildDuty.Cli/
 │  │  ├─ Commands/
-│  │  │  ├─ ScanCommand.cs
+│  │  │  ├─ TriageCommand.cs          (3-step triage pipeline)
 │  │  │  ├─ WorkItemsCommand.cs
-│  │  │  └─ TriageCommand.cs
+│  │  │  └─ WorkItemRunCommand.cs     (interactive AI actions)
 │  │  ├─ Paths.cs
 │  │  └─ Program.cs
 │  ├─ BuildDuty.Core/
@@ -119,6 +118,7 @@ build-duty/
 │  ├─ BuildDuty.AI/
 │  │  ├─ skills/
 │  │  │  ├─ summarize/
+│  │  │  ├─ correlate-signals/
 │  │  │  ├─ diagnose-build-break/
 │  │  │  ├─ cluster-incidents/
 │  │  │  ├─ suggest-next-actions/
@@ -130,6 +130,7 @@ build-duty/
 │  │  ├─ CopilotAdapter.cs
 │  │  ├─ CopilotSessionFactory.cs
 │  │  ├─ BuildDutyTools.cs       (shared read-only tools)
+│  │  ├─ CorrelationTools.cs     (correlation: status, summary, links)
 │  │  ├─ TriageTools.cs          (triage-only tools + skills)
 │  │  ├─ ScanTools.cs            (scan-only tools + skills)
 │  │  ├─ TriageResult.cs
@@ -202,33 +203,42 @@ BuildDuty exposes a small set of composable CLI commands for signal collection, 
 
 | Command | Purpose | Key Options | Output |
 |---|---|---|---|
-| `build-duty scan` | AI-assisted scanning for configured sources | `--config` | New/updated/resolved work items |
-| `build-duty workitems list` | List tracked work items | `--state`, `--show-resolved`, `--limit` | Tabular list |
-| `build-duty workitems show` | Inspect one work item | `--id` | Full detail and history |
-| `build-duty triage` | AI-assisted triage | `--id`, `--action`, `--state`, `--show-resolved`, `--limit` | AI analysis result |
+| `build-duty triage` | 3-step pipeline: collect → scan → correlate | `--config` | New/updated/enriched work items |
+| `build-duty workitems list` | List tracked work items | `--status`, `--show-resolved`, `--limit` | Tabular list |
+| `build-duty workitems show` | Inspect one work item | `--id` | Full detail, summary, and history |
+| `build-duty workitems run` | AI-assisted action on work item(s) | `--id`, `--action`, `--status`, `--show-resolved`, `--limit` | AI analysis result |
 
 ### Credential handling
 BuildDuty authenticates using the GitHub Copilot SDK's default credential resolution. MCP servers handle their own authentication independently.
 
 ## Signal Collection
-Signal collection uses AI agents powered by the GitHub Copilot SDK and MCP servers. The `build-duty scan` command spawns separate AI sessions for each configured source type, all using the `scan-signals` skill.
+Signal collection is the first step of the `build-duty triage` command. It deterministically collects signals from configured sources without AI, then passes them to AI agents for triage and correlation.
 
-### Scanning Architecture
-The `ScanCommand` reads `.build-duty.yml`, builds a prompt for each source type (ADO pipelines, GitHub issues, GitHub PRs), and creates a Copilot session for each. Sessions run in parallel and share access to the work item store via `ScanTools`.
+### Collection Architecture
+The `TriageCommand` reads `.build-duty.yml` and runs deterministic collectors for each source type (ADO pipelines, GitHub issues, GitHub PRs) in parallel. Collected signals are passed to AI agents in subsequent steps.
 
-Each AI agent:
-1. Receives the source configuration as a YAML fragment in its prompt.
-2. Consults the `scan-signals` skill and its reference docs for scanning procedures.
-3. Uses MCP server tools to query the configured sources.
-4. Calls `ScanTools` to create new work items and resolve existing ones.
+### Step 2: AI Triage (scan-signals skill)
+The AI agent receives collected signals as JSON, consults the `scan-signals` skill, and uses `ScanTools` to create/resolve work items.
+
+### Step 3: AI Correlation (correlate-signals + summarize skills)
+The correlation agent enriches unresolved work items:
+- **Summaries** — delegates to the `summarize` skill, which uses `az` CLI / `gh` CLI to fetch source details
+- **Statuses** — determines type-specific status using reference docs (pipeline-statuses, issue-statuses, pr-statuses)
+- **Cross-references** — links related work items (e.g. pipeline failure ↔ PR on same branch)
 
 ### ScanTools
 Write tools exposed to AI agents during scanning:
 - **`create_work_item`** — Creates a new work item with ID, title, correlation ID, signal type, and signal reference URL. Skips duplicates.
 - **`work_item_exists`** — Checks whether a work item ID is already tracked.
-- **`resolve_work_item`** — Resolves a work item by transitioning it through `InProgress` → `Resolved` with a reason.
-- **`list_work_items`** — Lists existing work items, optionally filtered by state.
+- **`resolve_work_item`** — Resolves a work item by setting status to "resolved" with a reason.
+- **`list_work_items`** — Lists existing work items, optionally filtered by status.
 - **`get_release_branches`** — Runs the bundled Python script to resolve active .NET release branches.
+
+### CorrelationTools
+Write tools exposed to AI agents during correlation:
+- **`update_work_item_status`** — Sets the type-specific status (e.g. "tracked", "needs-review").
+- **`set_work_item_summary`** — Sets a brief AI-generated summary.
+- **`link_work_items`** — Creates a bidirectional link between related work items.
 
 ### ADO Pipeline Scanning
 For each configured pipeline and branch combination:

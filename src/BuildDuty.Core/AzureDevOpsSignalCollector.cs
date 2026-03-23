@@ -59,7 +59,7 @@ public sealed class AzureDevOpsSignalCollector
                                 var existingItems = await store.ListAsync();
                                 if (existingItems.Any(i =>
                                     i.CorrelationId == signal.CorrelationId &&
-                                    i.State != WorkItemState.Resolved))
+                                    !i.IsResolved))
                                 {
                                     signals.Add(signal);
                                 }

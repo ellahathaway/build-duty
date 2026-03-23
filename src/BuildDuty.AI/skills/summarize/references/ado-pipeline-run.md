@@ -11,6 +11,42 @@ ADO build URLs follow these patterns:
 
 Extract the **org name**, **project name**, and **build ID** from the URL.
 
+## Fetching build data with `az` CLI
+
+Use `bash` to run these commands. Do NOT scrape HTML.
+
+### Get build result
+
+```bash
+az pipelines runs show --id {buildId} \
+  --org https://dev.azure.com/{org} --project {project} \
+  --query "{result:result, status:status, reason:reason}" -o json
+```
+
+### Get timeline (find failed tasks)
+
+```bash
+az devops invoke \
+  --area build --resource timeline \
+  --route-parameters project={project} buildId={buildId} \
+  --org https://dev.azure.com/{org} \
+  --query "records[?result=='failed' && type=='Task'].{name:name, logId:log.id, parentId:parentId}" \
+  -o table
+```
+
+### Fetch a task log
+
+```bash
+az devops invoke \
+  --area build --resource logs \
+  --route-parameters project={project} buildId={buildId} logId={logId} \
+  --org https://dev.azure.com/{org} \
+  -o json | jq -r '.value[]' | tail -50
+```
+
+Use `tail -50` to get the error at the end. Filter with
+`grep -i 'error\|fail' | head -20` for verbose logs.
+
 ## Pipeline hierarchy
 
 ```

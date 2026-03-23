@@ -13,8 +13,9 @@ auditable workflow:
 
 - **AI-powered scanning** — scan Azure DevOps pipelines and GitHub issues/PRs
   using AI agents backed by MCP servers.
-- **Work-item lifecycle** — track incidents from `Unresolved` → `InProgress` →
-  `Resolved` with full history.
+- **Work-item lifecycle** — track incidents from `new` through type-specific
+  statuses (`tracked`, `needs-review`, `investigating`, etc.) to terminal
+  states (`fixed`, `merged`, `resolved`, `closed`) with full history.
 - **Auto-resolution** — AI agents automatically resolve work items when builds
   pass, release branches are superseded, or issues are closed.
 - **Release branch discovery** — automatically discovers active .NET release
@@ -31,14 +32,14 @@ auditable workflow:
 # Install the CLI as a .NET global tool
 dotnet tool install -g BuildDuty
 
-# Scan configured pipelines and issues
-build-duty scan
+# Run the full triage pipeline (collect → scan → correlate)
+build-duty triage
 
 # List open work items
 build-duty workitems list
 
-# AI-assisted triage
-build-duty triage --id wi_ado_12345 --action "summarize this failure"
+# Run an AI action against a specific work item
+build-duty workitems run --id wi_ado_12345 --action "summarize this failure"
 ```
 
 ## Prerequisites
@@ -122,11 +123,11 @@ branches for released previews and superseded versions.
 
 ## CLI commands
 
-### `build-duty scan`
+### `build-duty triage`
 
-Run AI-assisted scanning for configured sources, creating work items
-for failures and auto-resolving work items when builds pass or branches are
-superseded.
+Run the full triage pipeline: collect signals from configured sources, scan
+with AI to create/resolve work items, and correlate work items with summaries,
+statuses, and cross-references.
 
 | Option | Description |
 |---|---|
@@ -138,28 +139,28 @@ List tracked work items. Resolved items are hidden by default.
 
 | Option | Description |
 |---|---|
-| `--state <state>` | Filter: `unresolved`, `inprogress`, `resolved` |
+| `--status <status>` | Filter: `unresolved` or `resolved` |
 | `--show-resolved` | Include resolved work items in output |
 | `--limit <n>` | Max items to display |
 
 ### `build-duty workitems show`
 
-Show full details for a single work item, including signals and history.
+Show full details for a single work item, including signals, summary, and history.
 
 | Option | Description |
 |---|---|
 | `--id <id>` | Work item ID (required) |
 
-### `build-duty triage`
+### `build-duty workitems run`
 
-Run AI-assisted triage against one or more work items using the GitHub Copilot
+Run an AI action against one or more work items using the GitHub Copilot
 SDK with bundled skills and MCP server integration.
 
 | Option | Description |
 |---|---|
 | `--id <id>` | Single work item ID |
 | `--action <text>` | AI action to perform (required) |
-| `--state <state>` | Batch: select items in this state |
+| `--status <status>` | Batch: select items by status |
 | `--show-resolved` | Batch: include resolved items |
 | `--limit <n>` | Batch: max items to process |
 | `--config <path>` | Path to config file (default: auto-detect) |
@@ -168,11 +169,12 @@ SDK with bundled skills and MCP server integration.
 
 | Skill | Purpose |
 |---|---|
-| `summarize` | Concise failure summary with impact and next steps |
+| `summarize` | Concise summary with error details and next steps |
+| `correlate-signals` | Enrich work items with statuses, summaries, and cross-references |
 | `diagnose-build-break` | Root-cause analysis with ranked likely causes |
 | `cluster-incidents` | Group related failures across pipelines/branches |
 | `suggest-next-actions` | Recommend concrete next steps |
-| `scan-signals` | AI-powered signal scanning (used by `build-duty scan`) |
+| `scan-signals` | AI-powered signal scanning (used by `build-duty triage`) |
 
 ## Architecture
 
@@ -186,22 +188,32 @@ BuildDuty.Tests        xUnit tests
 ### Data flow
 
 ```
-build-duty scan
-  ├─ CopilotAdapter     → Copilot SDK sessions with scan-signals skill
-  │   ├─ ADO agent       → scans pipelines via Azure DevOps MCP server
-  │   ├─ Issues agent    → scans GitHub issues via GitHub MCP server
-  │   └─ PRs agent       → scans GitHub PRs via GitHub MCP server
-  ├─ ScanTools           → create_work_item, resolve_work_item, list_work_items
-  │   └─ get_release_branches → bundled Python script
-  └─ WorkItemStore       ←── new / updated / resolved work items
-
 build-duty triage
-  ├─ CopilotAdapter     → Copilot SDK session with triage skills + MCP servers
-  │   ├─ Skills          (summarize, diagnose, cluster, suggest)
+  ├─ Step 1: Signal Collection  (deterministic, no AI)
+  │   ├─ AzureDevOpsSignalCollector  → ADO pipeline runs
+  │   ├─ GitHubIssueCollector        → GitHub issues
+  │   └─ GitHubPrCollector           → GitHub PRs
+  │
+  ├─ Step 2: AI Triage  (scan-signals skill)
+  │   ├─ CopilotAdapter     → Copilot SDK session
+  │   ├─ ScanTools           → create_work_item, resolve_work_item
+  │   │   └─ get_release_branches → bundled Python script
+  │   └─ WorkItemStore       ←── new / resolved work items
+  │
+  └─ Step 3: AI Correlation  (correlate-signals + summarize skills)
+      ├─ CopilotAdapter     → Copilot SDK session + MCP servers
+      │   ├─ az CLI            → ADO pipeline timelines/logs
+      │   └─ gh CLI / MCP     → GitHub issue/PR details
+      ├─ CorrelationTools    → status, summary, links
+      └─ WorkItemStore       ←── enriched work items
+
+build-duty workitems run
+  ├─ CopilotAdapter     → Copilot SDK session with all skills + MCP servers
+  │   ├─ Skills          (summarize, diagnose, cluster, suggest, correlate)
   │   ├─ MCP: Azure DevOps  (pipeline details, timelines, logs)
   │   └─ MCP: GitHub         (issues, PRs, commits)
   ├─ BuildDutyTools      → work item data access for AI
-  └─ TriageStore      ←── persisted result
+  └─ TriageStore         ←── persisted result
 ```
 
 ### Local storage
