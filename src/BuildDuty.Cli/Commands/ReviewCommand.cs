@@ -37,19 +37,15 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
         return await RunReviewAsync(config, store, _adapterFactory);
     }
 
-    /// <summary>
-    /// Interactive review loop — callable from both the standalone command
-    /// and from the end of the triage command.
-    /// </summary>
     public static async Task<int> RunReviewAsync(
         BuildDutyConfig config,
         WorkItemStore store,
         Func<BuildDutyConfig, WorkItemStore, CopilotAdapter>? adapterFactory = null)
     {
-        var firstPass = true;
-
         while (true)
         {
+            AnsiConsole.Clear();
+
             var items = await store.ListAsync(resolved: false);
             if (items.Count == 0)
             {
@@ -57,11 +53,7 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                 return 0;
             }
 
-            if (!firstPass)
-                AnsiConsole.Clear();
-            firstPass = false;
-
-            // Group by type → status
+            // Group by type then status
             var groups = items
                 .GroupBy(i => i.Signals.FirstOrDefault()?.Type ?? "(unknown)")
                 .OrderBy(g => g.Key)
@@ -72,84 +64,70 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                 .Where(g => g.Items.Count > 0)
                 .ToList();
 
-            // Render summary table
-            var rule = new Rule($"[bold]Review[/] — {items.Count} unresolved item(s)") { Justification = Justify.Left };
-            AnsiConsole.Write(rule);
-            AnsiConsole.WriteLine();
+            // Step 1: Pick a group
+            var exitLabel = "Done reviewing";
+            var groupChoices = groups
+                .Select(g => $"{FormatType(g.Type)} / {g.Status} ({g.Items.Count})")
+                .Append(exitLabel)
+                .ToList();
 
-            var table = new Table().Border(TableBorder.Rounded).Expand();
-            table.AddColumn("Group");
-            table.AddColumn("ID");
-            table.AddColumn("Summary");
+            var selectedGroup = AnsiConsole.Prompt(
+                new SelectionPrompt<string>()
+                    .Title($"[bold]Review[/] — {items.Count} unresolved item(s). Select a group:")
+                    .HighlightStyle(new Style(Color.Cyan1))
+                    .PageSize(15)
+                    .AddChoices(groupChoices));
 
-            var allChoices = new List<(string Label, WorkItem Item)>();
-            foreach (var group in groups)
+            if (selectedGroup == exitLabel)
             {
-                var groupTag = $"{FormatType(group.Type)} / {group.Status}";
-                var isFirst = true;
-
-                foreach (var item in group.Items)
-                {
-                    var summary = Truncate(item.Summary ?? item.Title, 80);
-                    var choiceLabel = $"{Markup.Escape(item.Id)}: {Markup.Escape(summary)}";
-                    allChoices.Add((choiceLabel, item));
-
-                    table.AddRow(
-                        isFirst ? Markup.Escape(groupTag) : "",
-                        Markup.Escape(item.Id),
-                        Markup.Escape(summary));
-                    isFirst = false;
-                }
-
-                table.AddEmptyRow();
-            }
-
-            AnsiConsole.Write(table);
-
-            // Multi-select
-            var selectLabels = allChoices.Select(c => c.Label).ToList();
-            var selected = AnsiConsole.Prompt(
-                new MultiSelectionPrompt<string>()
-                    .Title("[bold]Select items[/] (space = toggle, enter = confirm, none = exit):")
-                    .NotRequired()
-                    .PageSize(20)
-                    .UseConverter(s => s)  // labels are already escaped
-                    .AddChoices(selectLabels));
-
-            if (selected.Count == 0)
-            {
-                AnsiConsole.MarkupLine("\n[dim]Review complete.[/]");
+                AnsiConsole.MarkupLine("[dim]Review complete.[/]");
                 return 0;
             }
 
-            // Map selections back to work items
-            var selectedSet = selected.ToHashSet();
-            var selectedItems = allChoices
-                .Where(c => selectedSet.Contains(c.Label))
-                .Select(c => c.Item)
+            var groupIndex = groupChoices.IndexOf(selectedGroup);
+            var group = groups[groupIndex];
+
+            // Step 2: Pick items within the group
+            AnsiConsole.Clear();
+            AnsiConsole.Write(new Rule($"[bold]{Markup.Escape(FormatType(group.Type))} / {Markup.Escape(group.Status)}[/]")
+            {
+                Justification = Justify.Left,
+            });
+            AnsiConsole.WriteLine();
+
+            var itemChoices = group.Items
+                .Select(i => $"{Markup.Escape(i.Id)}: {Markup.Escape(Truncate(i.Summary ?? i.Title, 90))}")
                 .ToList();
 
-            // Show selected
-            AnsiConsole.WriteLine();
-            var selectedPanel = new Panel(
-                string.Join("\n", selectedItems.Select(i =>
-                    $"• {i.Id}: {Truncate(i.Summary ?? i.Title, 70)}")))
-            {
-                Header = new PanelHeader($"{selectedItems.Count} item(s) selected"),
-                Border = BoxBorder.Rounded,
-            };
-            AnsiConsole.Write(selectedPanel);
+            var selectedLabels = AnsiConsole.Prompt(
+                new MultiSelectionPrompt<string>()
+                    .Title("Select items (space = toggle, enter = confirm, none = go back):")
+                    .NotRequired()
+                    .HighlightStyle(new Style(Color.Cyan1))
+                    .PageSize(20)
+                    .AddChoices(itemChoices));
 
-            // Freeform instruction
-            var instruction = AnsiConsole.Ask<string>("\n[bold]What should I do with these?[/]");
+            if (selectedLabels.Count == 0)
+                continue;
+
+            var selectedSet = selectedLabels.ToHashSet();
+            var selectedItems = group.Items
+                .Where((_, idx) => selectedSet.Contains(itemChoices[idx]))
+                .ToList();
+
+            // Show selected and ask for instruction
+            AnsiConsole.WriteLine();
+            foreach (var item in selectedItems)
+                AnsiConsole.MarkupLine($"  [bold]•[/] {Markup.Escape(item.Id)}: {Markup.Escape(Truncate(item.Summary ?? item.Title, 80))}");
+            AnsiConsole.WriteLine();
+
+            var instruction = AnsiConsole.Ask<string>("[bold]What should I do with these?[/]");
 
             if (string.IsNullOrWhiteSpace(instruction))
                 continue;
 
-            // Execute via agent
             await ExecuteInstructionAsync(config, store, selectedItems, instruction, adapterFactory);
 
-            // Pause before clearing
             AnsiConsole.MarkupLine("\n[dim]Press enter to continue...[/]");
             Console.ReadLine();
         }
