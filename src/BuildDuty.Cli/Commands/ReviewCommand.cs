@@ -12,6 +12,10 @@ internal sealed class ReviewSettings : CommandSettings
     [CommandOption("--config")]
     [Description("Path to .build-duty.yml config file")]
     public string? Config { get; set; }
+
+    [CommandOption("--include-acknowledged")]
+    [Description("Include acknowledged items in the review list")]
+    public bool IncludeAcknowledged { get; set; }
 }
 
 internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
@@ -34,19 +38,23 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
         var config = BuildDutyConfig.LoadFromFile(configPath);
         var store = _storeFactory(config.Name, configPath);
 
-        return await RunReviewAsync(config, store, _adapterFactory);
+        return await RunReviewAsync(config, store, _adapterFactory,
+            includeAcknowledged: settings.IncludeAcknowledged);
     }
 
     public static async Task<int> RunReviewAsync(
         BuildDutyConfig config,
         WorkItemStore store,
-        Func<BuildDutyConfig, WorkItemStore, CopilotAdapter>? adapterFactory = null)
+        Func<BuildDutyConfig, WorkItemStore, CopilotAdapter>? adapterFactory = null,
+        bool includeAcknowledged = false)
     {
         while (true)
         {
             AnsiConsole.Clear();
 
-            var items = await store.ListAsync(resolved: false);
+            var items = (await store.ListAsync(resolved: false))
+                .Where(i => includeAcknowledged || i.Status != "acknowledged")
+                .ToList();
             if (items.Count == 0)
             {
                 AnsiConsole.MarkupLine("[dim]No unresolved work items to review.[/]");

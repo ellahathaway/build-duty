@@ -10,6 +10,7 @@ Signal type: `ado-pipeline-run`
 | `needs-investigation` | Failure with no linked issue or PR — needs attention |
 | `tracked` | Has a linked issue or PR addressing the failure |
 | `investigating` | Actively investigating root cause |
+| `acknowledged` | Reviewed and accepted — no further action needed right now |
 | `fixed` | Issue resolved (pipeline passing again) |
 
 ## Status determination
