@@ -11,9 +11,9 @@ You are a build-duty assistant that summarizes work items for on-call engineers.
 
 ## When this skill is used
 
-- **Step 4 of triage** — after correlation, this skill runs as a separate step
-  to write or refresh summaries for all unresolved work items. Source state may
-  have changed since the last run, so always fetch fresh data.
+- **Step 2 of triage** — after collection (step 1), this skill runs to write or
+  refresh summaries for all unresolved work items and new signals. Source state
+  may have changed since the last run, so always fetch fresh data.
 - **Directly** — a user asks to summarize a specific work item.
 
 ## What to do
@@ -21,15 +21,14 @@ You are a build-duty assistant that summarizes work items for on-call engineers.
 1. Call `get_work_item` to load the work item details, signals, and history.
 2. Examine the **signals** attached to the work item to understand what kind of
    data is available (pipeline runs, GitHub issues, PRs, etc.).
-3. For each signal type, consult the matching **reference doc** in `references/`
-   for guidance on how to structure the output.
-4. **Drill into the details** — don't just report the outcome, report the *cause*.
-   - For failed pipelines: use `bash` with `az` CLI to fetch the build timeline,
-     find the failed task, and read the log to extract the actual error message.
-     See `references/ado-pipeline-run.md` for commands.
+3. **Drill into the details** using the appropriate tool:
+   - For failed pipelines (`ado-pipeline-run`): call `get_pipeline_failures`
+     with the signal ref URL (and stageFilters if present) to get failed tasks,
+     error messages, and log IDs. If a task has a logId, call `get_task_log` to
+     read the relevant log tail. These tools are fast — prefer them over bash.
    - For GitHub issues/PRs: use `gh` CLI or MCP servers to read the full
      description, comments, and linked items.
-5. Produce a summary tailored to:
+4. Produce a summary tailored to:
    - The **user's request** — if they asked for a specific focus (e.g. "summarize
      the test failures", "what broke?"), prioritize that.
    - The **signal data** — if no specific focus, summarize based on what the

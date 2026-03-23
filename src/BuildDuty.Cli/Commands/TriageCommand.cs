@@ -133,114 +133,78 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
             return 0;
         }
 
-        // === Step 2: AI-powered triage ===
-        AnsiConsole.MarkupLine("\n[bold]Step 2:[/] Triaging signals...");
+        // === Step 2: AI-powered summarization ===
+        AnsiConsole.MarkupLine("\n[bold]Step 2:[/] Summarizing signals...");
 
         var beforeItems = await store.ListAsync();
         var beforeIds = beforeItems.ToDictionary(i => i.Id, i => i.IsResolved);
 
-        var signalsJson = JsonSerializer.Serialize(allSignals, new JsonSerializerOptions { WriteIndented = true });
-
-        var prompt = $"""
-            Use the scan-signals skill to triage the following collected signals.
-            
-            **Collected signals:**
-            ```json
-            {signalsJson}
-            ```
-            """;
-
-        var scanResults = new List<ScanResult>();
-
-        await AnsiConsole.Progress()
-            .AutoClear(false)
-            .Columns(
-                new TaskDescriptionColumn(),
-                new SpinnerColumn(),
-                new ElapsedTimeColumn())
-            .StartAsync(async ctx =>
-            {
-                var progressTask = ctx.AddTask("[bold]AI triage[/]", maxValue: 1);
-
-                await using var adapter = _adapterFactory(config, store);
-                try
-                {
-                    var result = await adapter.ScanSourceAsync(
-                        prompt, "triage", ScanTools.Skills,
-                        CopilotSessionFactory.NoExtraServers(), ct: default);
-
-                    progressTask.Description = result.Success
-                        ? "[green]✓[/] AI triage"
-                        : "[red]✗[/] AI triage";
-
-                    scanResults.Add(result);
-                }
-                catch (Exception ex)
-                {
-                    progressTask.Description = "[red]✗[/] AI triage";
-                    scanResults.Add(new ScanResult
-                    {
-                        Source = "triage",
-                        Success = false,
-                        Summary = $"Error: {ex.Message}",
-                        Error = ex.ToString(),
-                    });
-                }
-                finally
-                {
-                    progressTask.Increment(1);
-                    progressTask.StopTask();
-                }
-            });
-
-        // Report Step 2 errors
-        foreach (var r in scanResults.Where(r => !r.Success))
-            AnsiConsole.MarkupLine($"\n[red bold]Triage error:[/] {Markup.Escape(r.Summary)}");
-
-        // === Step 3: AI-powered summarization ===
-        AnsiConsole.MarkupLine("\n[bold]Step 3:[/] Summarizing work items...");
-
         // Summarize ALL unresolved items — source state may have changed since
         // the last run (PRs merged, builds re-run, issues updated).
+        // Also summarize new signals so triage has context.
         var toSummarize = (await store.ListAsync(resolved: false)).ToList();
+
+        // Add AzDO MCP server if configured — GitHub MCP is built-in
+        var adoOrgUrl = config.AzureDevOps?.Organizations.FirstOrDefault()?.Url;
+        var mcpServers = adoOrgUrl is not null
+            ? CopilotSessionFactory.AdoPipelineServers(ExtractOrgName(adoOrgUrl))
+            : CopilotSessionFactory.NoExtraServers();
 
         var summarizeResults = new List<ScanResult>();
 
-        if (toSummarize.Count == 0)
+        if (toSummarize.Count == 0 && allSignals.Count == 0)
         {
-            AnsiConsole.MarkupLine("[dim]No unresolved work items to summarize.[/]");
+            AnsiConsole.MarkupLine("[dim]No items to summarize.[/]");
         }
         else
         {
-            var itemsList = string.Join("\n", toSummarize.Select(i =>
-            {
-                var signalRef = i.Signals.FirstOrDefault()?.Ref ?? "(none)";
-                var signalType = i.Signals.FirstOrDefault()?.Type ?? "(none)";
-                var existing = string.IsNullOrWhiteSpace(i.Summary) ? "none" : "exists";
-                return $"- {i.Id} | status={i.Status} | type={signalType} | ref={signalRef} | summary={existing} | title={i.Title}";
-            }));
+            var itemsList = toSummarize.Count > 0
+                ? string.Join("\n", toSummarize.Select(i =>
+                {
+                    var signalRef = i.Signals.FirstOrDefault()?.Ref ?? "(none)";
+                    var signalType = i.Signals.FirstOrDefault()?.Type ?? "(none)";
+                    var stageFilters = i.Signals.FirstOrDefault()?.Metadata?.GetValueOrDefault("stageFilters") ?? "";
+                    var existing = string.IsNullOrWhiteSpace(i.Summary) ? "none" : "exists";
+                    return $"- {i.Id} | type={signalType} | ref={signalRef} | summary={existing} | stageFilters={stageFilters} | title={i.Title}";
+                }))
+                : "(none)";
+
+            // Include new signals that don't have work items yet — the AI can
+            // use get_pipeline_failures to pre-fetch failure info and include it
+            // in the summary when the triage step creates work items.
+            var newSignalsList = allSignals.Count > 0
+                ? string.Join("\n", allSignals
+                    .Where(s => !toSummarize.Any(i => i.Id == s.Id))
+                    .Select(s =>
+                    {
+                        var stageFilters = s.Metadata.GetValueOrDefault("stageFilters") ?? "";
+                        return $"- {s.Id} | type={s.SignalType} | ref={s.SignalRef} | stageFilters={stageFilters} | title={s.Title}";
+                    }))
+                : "(none)";
 
             var summarizePrompt = $"""
                 Use the summarize skill to write or refresh summaries for the following
-                unresolved work items.
+                work items and new signals.
 
-                For each item, fetch current details from the source (build logs via
-                az CLI for pipelines, gh CLI for GitHub items) and call
-                set_work_item_summary with an up-to-date summary.
+                For pipeline failures (ado-pipeline-run), use `get_pipeline_failures`
+                with the signal ref URL to get the failed tasks and error messages.
+                If a task has a logId, use `get_task_log` to read the relevant log
+                tail. Pass stageFilters if present.
+
+                For GitHub items, use `gh` CLI or MCP servers to read details.
+
+                Then call `set_work_item_summary` for each item with a 1-3 sentence
+                summary focusing on what failed/changed and why.
 
                 Items marked summary=exists may have stale summaries — always fetch
                 fresh data and update if the source state has changed.
 
-                Keep summaries to 1-3 sentences focusing on what failed/changed and why.
-
-                **Unresolved work items ({toSummarize.Count}):**
+                **Existing unresolved work items ({toSummarize.Count}):**
                 {itemsList}
-                """;
 
-            var adoOrgUrl = config.AzureDevOps?.Organizations.FirstOrDefault()?.Url;
-            var mcpServers = adoOrgUrl is not null
-                ? CopilotSessionFactory.AdoPipelineServers(ExtractOrgName(adoOrgUrl))
-                : CopilotSessionFactory.NoExtraServers();
+                **New signals (not yet work items):**
+                {newSignalsList}
+                """;
 
             await AnsiConsole.Progress()
                 .AutoClear(false)
@@ -284,89 +248,93 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
                 });
         }
 
-        // === Step 4: AI-powered correlation ===
-        AnsiConsole.MarkupLine("\n[bold]Step 4:[/] Correlating work items...");
+        // Report Step 2 errors
+        foreach (var r in summarizeResults.Where(r => !r.Success))
+            AnsiConsole.MarkupLine($"\n[red bold]Summarize error:[/] {Markup.Escape(r.Summary)}");
 
-        // Re-fetch — summaries were written in step 3
-        var unresolvedItems = (await store.ListAsync(resolved: false)).ToList();
+        // === Step 3: AI-powered triage ===
+        AnsiConsole.MarkupLine("\n[bold]Step 3:[/] Triaging signals...");
 
-        var correlationResults = new List<ScanResult>();
+        var signalsJson = JsonSerializer.Serialize(allSignals, new JsonSerializerOptions { WriteIndented = true });
 
-        if (unresolvedItems.Count == 0)
-        {
-            AnsiConsole.MarkupLine("[dim]No unresolved work items to correlate.[/]");
-        }
-        else
-        {
-            var itemsList = string.Join("\n", unresolvedItems.Select(i =>
+        // Build the list of existing unresolved items with their summaries
+        // so the triage agent can make informed status/cross-ref decisions.
+        var existingUnresolved = (await store.ListAsync(resolved: false)).ToList();
+        var existingList = existingUnresolved.Count > 0
+            ? string.Join("\n", existingUnresolved.Select(i =>
             {
                 var signalRef = i.Signals.FirstOrDefault()?.Ref ?? "(none)";
                 var signalType = i.Signals.FirstOrDefault()?.Type ?? "(none)";
                 var summary = string.IsNullOrWhiteSpace(i.Summary) ? "(none)" : i.Summary;
                 return $"- {i.Id} | status={i.Status} | type={signalType} | ref={signalRef} | summary={summary} | title={i.Title}";
-            }));
+            }))
+            : "(none)";
 
-            var correlationPrompt = $"""
-                Use the correlate-signals skill to update statuses and cross-reference
-                the following unresolved work items.
+        var triagePrompt = $"""
+            Use the triage-signals skill to process the following collected signals
+            and existing work items.
 
-                Each item includes its current summary — use it to understand what the
-                item is about when determining statuses and cross-references.
+            Phase 1: Create work items for new failure signals. Resolve work items
+            whose correlation ID now has a successful signal.
 
-                For all items, determine and update the type-specific status.
-                Cross-reference related items where applicable.
+            Phase 2: For all unresolved work items (including newly created ones),
+            determine and update the type-specific status. Cross-reference related
+            items where applicable.
 
-                **Unresolved work items ({unresolvedItems.Count}):**
-                {itemsList}
-                """;
+            Each item includes its current summary — use it to understand what the
+            item is about when determining statuses and cross-references.
 
-            // Add AzDO MCP server if configured — GitHub MCP is built-in
-            var adoOrgUrl = config.AzureDevOps?.Organizations.FirstOrDefault()?.Url;
-            var mcpServers = adoOrgUrl is not null
-                ? CopilotSessionFactory.AdoPipelineServers(ExtractOrgName(adoOrgUrl))
-                : CopilotSessionFactory.NoExtraServers();
+            **Collected signals:**
+            ```json
+            {signalsJson}
+            ```
 
-            await AnsiConsole.Progress()
-                .AutoClear(false)
-                .Columns(
-                    new TaskDescriptionColumn(),
-                    new SpinnerColumn(),
-                    new ElapsedTimeColumn())
-                .StartAsync(async ctx =>
+            **Existing unresolved work items ({existingUnresolved.Count}):**
+            {existingList}
+            """;
+
+        var triageResults = new List<ScanResult>();
+
+        await AnsiConsole.Progress()
+            .AutoClear(false)
+            .Columns(
+                new TaskDescriptionColumn(),
+                new SpinnerColumn(),
+                new ElapsedTimeColumn())
+            .StartAsync(async ctx =>
+            {
+                var progressTask = ctx.AddTask("[bold]AI triage[/]", maxValue: 1);
+
+                await using var adapter = _adapterFactory(config, store);
+                try
                 {
-                    var progressTask = ctx.AddTask("[bold]AI correlation[/]", maxValue: 1);
+                    var result = await adapter.ScanSourceAsync(
+                        triagePrompt, "triage", SignalTriageTools.Skills,
+                        mcpServers, ct: default);
 
-                    await using var adapter = _adapterFactory(config, store);
-                    try
-                    {
-                        var result = await adapter.ScanSourceAsync(
-                            correlationPrompt, "correlation", CorrelationTools.Skills,
-                            mcpServers, ct: default);
+                    progressTask.Description = result.Success
+                        ? "[green]✓[/] AI triage"
+                        : "[red]✗[/] AI triage";
 
-                        progressTask.Description = result.Success
-                            ? "[green]✓[/] AI correlation"
-                            : "[red]✗[/] AI correlation";
-
-                        correlationResults.Add(result);
-                    }
-                    catch (Exception ex)
+                    triageResults.Add(result);
+                }
+                catch (Exception ex)
+                {
+                    progressTask.Description = "[red]✗[/] AI triage";
+                    triageResults.Add(new ScanResult
                     {
-                        progressTask.Description = "[red]✗[/] AI correlation";
-                        correlationResults.Add(new ScanResult
-                        {
-                            Source = "correlation",
-                            Success = false,
-                            Summary = $"Error: {ex.Message}",
-                            Error = ex.ToString(),
-                        });
-                    }
-                    finally
-                    {
-                        progressTask.Increment(1);
-                        progressTask.StopTask();
-                    }
-                });
-        }
+                        Source = "triage",
+                        Success = false,
+                        Summary = $"Error: {ex.Message}",
+                        Error = ex.ToString(),
+                    });
+                }
+                finally
+                {
+                    progressTask.Increment(1);
+                    progressTask.StopTask();
+                }
+            });
 
         // Report what changed
         var afterItems = await store.ListAsync();
@@ -391,13 +359,6 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
                 r.Success ? $"[green]✓[/] {r.Signals.Count} signals" : "[red]✗[/] failed",
                 $"{r.Duration.TotalSeconds:F1}s");
 
-        foreach (var r in scanResults)
-            table.AddRow(
-                "Triage",
-                Markup.Escape(r.Source),
-                r.Success ? "[green]✓[/] complete" : "[red]✗[/] failed",
-                $"{r.Duration.TotalSeconds:F1}s");
-
         foreach (var r in summarizeResults)
             table.AddRow(
                 "Summarize",
@@ -405,20 +366,20 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
                 r.Success ? "[green]✓[/] complete" : "[red]✗[/] failed",
                 $"{r.Duration.TotalSeconds:F1}s");
 
-        foreach (var r in correlationResults)
+        foreach (var r in triageResults)
             table.AddRow(
-                "Correlation",
+                "Triage",
                 Markup.Escape(r.Source),
                 r.Success ? "[green]✓[/] complete" : "[red]✗[/] failed",
                 $"{r.Duration.TotalSeconds:F1}s");
 
         AnsiConsole.Write(table);
 
-        foreach (var r in scanResults.Concat(summarizeResults).Concat(correlationResults).Where(r => !r.Success))
+        foreach (var r in summarizeResults.Concat(triageResults).Where(r => !r.Success))
             AnsiConsole.MarkupLine($"\n[red bold]Error ({Markup.Escape(r.Source)}):[/] {Markup.Escape(r.Summary)}");
 
-        AnsiConsole.MarkupLine($"\n[bold]Scan complete.[/] New items: [green]{newCount}[/] | Resolved: [blue]{resolvedCount}[/] | Total tracked: {afterIds.Count}");
-        return collectionResults.All(r => r.Success) && scanResults.All(r => r.Success) && correlationResults.All(r => r.Success) && summarizeResults.All(r => r.Success) ? 0 : 1;
+        AnsiConsole.MarkupLine($"\n[bold]Triage complete.[/] New items: [green]{newCount}[/] | Resolved: [blue]{resolvedCount}[/] | Total tracked: {afterIds.Count}");
+        return collectionResults.All(r => r.Success) && summarizeResults.All(r => r.Success) && triageResults.All(r => r.Success) ? 0 : 1;
     }
 
     /// <summary>Extract org name from an AzDO URL like "https://dev.azure.com/dnceng".</summary>

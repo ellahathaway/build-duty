@@ -26,14 +26,16 @@ public class ScanToolsTests : IDisposable
         new(pairs.ToDictionary(p => p.Key, p => (object?)p.Value));
 
     [Fact]
-    public void ScanTools_ReturnsExpectedToolNames()
+    public void SignalTriageTools_ReturnsExpectedToolNames()
     {
-        var tools = ScanTools.Create(_store);
+        var tools = SignalTriageTools.Create(_store);
         var names = tools.Select(t => t.Name).ToHashSet();
 
         Assert.Contains("create_work_item", names);
         Assert.Contains("resolve_work_item", names);
-        Assert.Equal(2, names.Count);
+        Assert.Contains("update_work_item_status", names);
+        Assert.Contains("link_work_items", names);
+        Assert.Equal(4, names.Count);
     }
 
     [Fact]
@@ -48,6 +50,18 @@ public class ScanToolsTests : IDisposable
     }
 
     [Fact]
+    public void SummarizeTools_ReturnsExpectedToolNames()
+    {
+        var tools = SummarizeTools.Create(_store);
+        var names = tools.Select(t => t.Name).ToHashSet();
+
+        Assert.Contains("set_work_item_summary", names);
+        Assert.Contains("get_pipeline_failures", names);
+        Assert.Contains("get_task_log", names);
+        Assert.Equal(3, names.Count);
+    }
+
+    [Fact]
     public void TriageTools_ReturnsExpectedToolNames()
     {
         var tools = TriageTools.Create(_store);
@@ -59,7 +73,7 @@ public class ScanToolsTests : IDisposable
     [Fact]
     public async Task CreateWorkItem_SavesNewItem()
     {
-        var tools = ScanTools.Create(_store);
+        var tools = SignalTriageTools.Create(_store);
         var createTool = tools.First(t => t.Name == "create_work_item");
 
         var result = await createTool.InvokeAsync(Args(
@@ -90,7 +104,7 @@ public class ScanToolsTests : IDisposable
             CorrelationId = "corr_dup_1"
         });
 
-        var tools = ScanTools.Create(_store);
+        var tools = SignalTriageTools.Create(_store);
         var createTool = tools.First(t => t.Name == "create_work_item");
 
         var result = await createTool.InvokeAsync(Args(
@@ -142,7 +156,7 @@ public class ScanToolsTests : IDisposable
             CorrelationId = "corr_resolve_1"
         });
 
-        var tools = ScanTools.Create(_store);
+        var tools = SignalTriageTools.Create(_store);
         var resolveTool = tools.First(t => t.Name == "resolve_work_item");
 
         var result = await resolveTool.InvokeAsync(Args(
@@ -169,7 +183,7 @@ public class ScanToolsTests : IDisposable
         item.SetStatus("resolved", "test");
         await _store.SaveAsync(item);
 
-        var tools = ScanTools.Create(_store);
+        var tools = SignalTriageTools.Create(_store);
         var resolveTool = tools.First(t => t.Name == "resolve_work_item");
 
         var result = await resolveTool.InvokeAsync(Args(
@@ -210,5 +224,25 @@ public class ScanToolsTests : IDisposable
         var text = result?.ToString()!;
         Assert.Contains("wi_list_1", text);
         Assert.DoesNotContain("wi_list_2", text);
+    }
+
+    [Theory]
+    [InlineData("https://dev.azure.com/dnceng/internal/_build/results?buildId=12345",
+        "https://dev.azure.com/dnceng", "internal", 12345)]
+    [InlineData("https://dnceng.visualstudio.com/internal/_build/results?buildId=99",
+        "https://dev.azure.com/dnceng", "internal", 99)]
+    public void ParseBuildUrl_ExtractsComponents(string url, string expectedOrg, string expectedProject, int expectedBuildId)
+    {
+        var result = AzureDevOpsBuildClient.ParseBuildUrl(url);
+        Assert.NotNull(result);
+        Assert.Equal(expectedOrg, result.Value.OrgUrl);
+        Assert.Equal(expectedProject, result.Value.Project);
+        Assert.Equal(expectedBuildId, result.Value.BuildId);
+    }
+
+    [Fact]
+    public void ParseBuildUrl_ReturnsNullForInvalid()
+    {
+        Assert.Null(AzureDevOpsBuildClient.ParseBuildUrl("https://github.com/dotnet/runtime"));
     }
 }
