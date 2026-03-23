@@ -25,6 +25,9 @@ public sealed class CollectedSignal
     /// <summary>Current status of the source (e.g. "failed", "open", "merged").</summary>
     public required string Status { get; init; }
 
+    /// <summary>When the source was last modified (build finish, issue/PR updated_at).</summary>
+    public DateTime? SourceUpdatedAtUtc { get; init; }
+
     /// <summary>Additional metadata for AI context.</summary>
     public Dictionary<string, string> Metadata { get; init; } = [];
 }
@@ -38,6 +41,8 @@ public sealed class CollectionResult
     public bool Success { get; init; } = true;
     public string? Error { get; init; }
     public List<CollectedSignal> Signals { get; init; } = [];
+    public int Created { get; set; }
+    public int Resolved { get; set; }
     public TimeSpan Duration { get; set; }
 
     public string ToJson() => JsonSerializer.Serialize(Signals, new JsonSerializerOptions { WriteIndented = true });

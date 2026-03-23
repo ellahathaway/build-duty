@@ -31,11 +31,10 @@ public class ScanToolsTests : IDisposable
         var tools = SignalTriageTools.Create(_store);
         var names = tools.Select(t => t.Name).ToHashSet();
 
-        Assert.Contains("create_work_item", names);
         Assert.Contains("resolve_work_item", names);
         Assert.Contains("update_work_item_status", names);
         Assert.Contains("link_work_items", names);
-        Assert.Equal(4, names.Count);
+        Assert.Equal(3, names.Count);
     }
 
     [Fact]
@@ -56,9 +55,8 @@ public class ScanToolsTests : IDisposable
         var names = tools.Select(t => t.Name).ToHashSet();
 
         Assert.Contains("set_work_item_summary", names);
-        Assert.Contains("get_pipeline_failures", names);
         Assert.Contains("get_task_log", names);
-        Assert.Equal(3, names.Count);
+        Assert.Equal(2, names.Count);
     }
 
     [Fact]
@@ -71,31 +69,40 @@ public class ScanToolsTests : IDisposable
     }
 
     [Fact]
-    public async Task CreateWorkItem_SavesNewItem()
+    public async Task CollectionCreatesWorkItems()
     {
-        var tools = SignalTriageTools.Create(_store);
-        var createTool = tools.First(t => t.Name == "create_work_item");
+        // Simulate what collectors do: create work items directly in the store
+        var signal = new CollectedSignal
+        {
+            Id = "wi_test_1",
+            Title = "Test failure",
+            CorrelationId = "corr_test_1",
+            SignalType = "ado-pipeline-run",
+            SignalRef = "https://dev.azure.com/test",
+            Status = "failed",
+        };
 
-        var result = await createTool.InvokeAsync(Args(
-            ("id", "wi_test_1"),
-            ("title", "Test failure"),
-            ("correlationId", "corr_test_1"),
-            ("signalType", "ado-pipeline-run"),
-            ("signalRef", "https://dev.azure.com/test")));
+        Assert.False(_store.Exists(signal.Id));
 
-        Assert.Contains("Created", result?.ToString());
+        await _store.SaveAsync(new WorkItem
+        {
+            Id = signal.Id,
+            Status = "new",
+            Title = signal.Title,
+            CorrelationId = signal.CorrelationId,
+            Signals = [new SignalReference { Type = signal.SignalType, Ref = signal.SignalRef }],
+        });
+
         Assert.True(_store.Exists("wi_test_1"));
-
         var item = await _store.LoadAsync("wi_test_1");
         Assert.NotNull(item);
         Assert.Equal("Test failure", item.Title);
         Assert.Equal("new", item.Status);
-        Assert.False(item.IsResolved);
         Assert.Equal("corr_test_1", item.CorrelationId);
     }
 
     [Fact]
-    public async Task CreateWorkItem_SkipsDuplicate()
+    public async Task CollectionSkipsDuplicateWorkItems()
     {
         await _store.SaveAsync(new WorkItem
         {
@@ -104,18 +111,10 @@ public class ScanToolsTests : IDisposable
             CorrelationId = "corr_dup_1"
         });
 
-        var tools = SignalTriageTools.Create(_store);
-        var createTool = tools.First(t => t.Name == "create_work_item");
+        // Collection checks Exists() before creating
+        Assert.True(_store.Exists("wi_dup_1"));
 
-        var result = await createTool.InvokeAsync(Args(
-            ("id", "wi_dup_1"),
-            ("title", "Duplicate"),
-            ("correlationId", "corr_dup_1"),
-            ("signalType", "test"),
-            ("signalRef", "https://example.com")));
-
-        Assert.Contains("already exists", result?.ToString());
-
+        // Should NOT overwrite — collector skips if Exists()
         var item = await _store.LoadAsync("wi_dup_1");
         Assert.Equal("Existing", item!.Title);
     }

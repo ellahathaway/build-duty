@@ -27,6 +27,20 @@ public sealed class WorkItem
     [JsonPropertyName("summary")]
     public string? Summary { get; set; }
 
+    /// <summary>
+    /// When the summary was last written. Used to detect stale summaries —
+    /// if the source has been updated since this timestamp, re-summarize.
+    /// </summary>
+    [JsonPropertyName("summarizedAtUtc")]
+    public DateTime? SummarizedAtUtc { get; set; }
+
+    /// <summary>
+    /// When the item was last triaged (status/links updated). Used to skip
+    /// items that haven't changed since the last triage run.
+    /// </summary>
+    [JsonPropertyName("triagedAtUtc")]
+    public DateTime? TriagedAtUtc { get; set; }
+
     [JsonPropertyName("title")]
     public string Title { get; set; } = string.Empty;
 
@@ -48,6 +62,45 @@ public sealed class WorkItem
     /// <summary>Whether the item is in a terminal status.</summary>
     [JsonIgnore]
     public bool IsResolved => TerminalStatuses.Contains(Status);
+
+    /// <summary>
+    /// Whether the summary needs to be written or refreshed.
+    /// True if there's no summary, or if the source has been updated since the last summary.
+    /// </summary>
+    [JsonIgnore]
+    public bool NeedsSummary
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(Summary))
+                return true;
+
+            if (!SummarizedAtUtc.HasValue)
+                return true;
+
+            // Check if any signal source has been updated since the last summary
+            return Signals.Any(s =>
+                s.SourceUpdatedAtUtc.HasValue &&
+                s.SourceUpdatedAtUtc.Value > SummarizedAtUtc.Value);
+        }
+    }
+
+    /// <summary>
+    /// Whether the item needs triage. True if never triaged, or if the
+    /// summary has been written/refreshed since the last triage.
+    /// </summary>
+    [JsonIgnore]
+    public bool NeedsTriage
+    {
+        get
+        {
+            if (!TriagedAtUtc.HasValue)
+                return true;
+
+            // Re-triage if the summary was updated since the last triage
+            return SummarizedAtUtc.HasValue && SummarizedAtUtc.Value > TriagedAtUtc.Value;
+        }
+    }
 
     /// <summary>
     /// Update the status and append a history entry.

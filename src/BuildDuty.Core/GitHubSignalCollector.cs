@@ -17,10 +17,11 @@ public sealed class GitHubSignalCollector
         _config = config;
     }
 
-    public async Task<CollectionResult> CollectIssuesAsync(CancellationToken ct = default)
+    public async Task<CollectionResult> CollectIssuesAsync(WorkItemStore? store = null, CancellationToken ct = default)
     {
         var started = Stopwatch.StartNew();
         var signals = new List<CollectedSignal>();
+        int created = 0;
 
         try
         {
@@ -31,6 +32,45 @@ public sealed class GitHubSignalCollector
                     ct.ThrowIfCancellationRequested();
                     var issues = await FetchIssuesAsync(org.Organization, repo, repo.Issues!, ct);
                     signals.AddRange(issues);
+
+                    if (store is not null)
+                    {
+                        foreach (var signal in issues)
+                        {
+                            if (!store.Exists(signal.Id))
+                            {
+                                await store.SaveAsync(new WorkItem
+                                {
+                                    Id = signal.Id,
+                                    Status = "new",
+                                    Title = signal.Title,
+                                    CorrelationId = signal.CorrelationId,
+                                    Signals = [new SignalReference
+                                    {
+                                        Type = signal.SignalType,
+                                        Ref = signal.SignalRef,
+                                        SourceUpdatedAtUtc = signal.SourceUpdatedAtUtc,
+                                    }],
+                                });
+                                created++;
+                            }
+                            else if (signal.SourceUpdatedAtUtc.HasValue)
+                            {
+                                // Refresh SourceUpdatedAtUtc so summarize can
+                                // detect when the source has changed since last summary.
+                                var existing = await store.LoadAsync(signal.Id);
+                                if (existing is not null)
+                                {
+                                    var sig = existing.Signals.FirstOrDefault();
+                                    if (sig is not null && sig.SourceUpdatedAtUtc != signal.SourceUpdatedAtUtc)
+                                    {
+                                        sig.SourceUpdatedAtUtc = signal.SourceUpdatedAtUtc;
+                                        await store.SaveAsync(existing);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -39,6 +79,7 @@ public sealed class GitHubSignalCollector
                 Source = "GitHub Issues",
                 Success = true,
                 Signals = signals,
+                Created = created,
                 Duration = started.Elapsed,
             };
         }
@@ -50,15 +91,17 @@ public sealed class GitHubSignalCollector
                 Success = false,
                 Error = ex.Message,
                 Signals = signals,
+                Created = created,
                 Duration = started.Elapsed,
             };
         }
     }
 
-    public async Task<CollectionResult> CollectPullRequestsAsync(CancellationToken ct = default)
+    public async Task<CollectionResult> CollectPullRequestsAsync(WorkItemStore? store = null, CancellationToken ct = default)
     {
         var started = Stopwatch.StartNew();
         var signals = new List<CollectedSignal>();
+        int created = 0;
 
         try
         {
@@ -69,6 +112,43 @@ public sealed class GitHubSignalCollector
                     ct.ThrowIfCancellationRequested();
                     var prs = await FetchPullRequestsAsync(org.Organization, repo, repo.PullRequests!, ct);
                     signals.AddRange(prs);
+
+                    if (store is not null)
+                    {
+                        foreach (var signal in prs)
+                        {
+                            if (!store.Exists(signal.Id))
+                            {
+                                await store.SaveAsync(new WorkItem
+                                {
+                                    Id = signal.Id,
+                                    Status = "new",
+                                    Title = signal.Title,
+                                    CorrelationId = signal.CorrelationId,
+                                    Signals = [new SignalReference
+                                    {
+                                        Type = signal.SignalType,
+                                        Ref = signal.SignalRef,
+                                        SourceUpdatedAtUtc = signal.SourceUpdatedAtUtc,
+                                    }],
+                                });
+                                created++;
+                            }
+                            else if (signal.SourceUpdatedAtUtc.HasValue)
+                            {
+                                var existing = await store.LoadAsync(signal.Id);
+                                if (existing is not null)
+                                {
+                                    var sig = existing.Signals.FirstOrDefault();
+                                    if (sig is not null && sig.SourceUpdatedAtUtc != signal.SourceUpdatedAtUtc)
+                                    {
+                                        sig.SourceUpdatedAtUtc = signal.SourceUpdatedAtUtc;
+                                        await store.SaveAsync(existing);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -77,6 +157,7 @@ public sealed class GitHubSignalCollector
                 Source = "GitHub PRs",
                 Success = true,
                 Signals = signals,
+                Created = created,
                 Duration = started.Elapsed,
             };
         }
@@ -88,6 +169,7 @@ public sealed class GitHubSignalCollector
                 Success = false,
                 Error = ex.Message,
                 Signals = signals,
+                Created = created,
                 Duration = started.Elapsed,
             };
         }
@@ -104,7 +186,7 @@ public sealed class GitHubSignalCollector
 
         var output = await RunGhAsync(
             $"issue list --repo {owner}/{repo.Name} --state {state} {labelFilter} " +
-            "--json number,title,state,url --limit 100");
+            "--json number,title,state,url,updatedAt --limit 100");
 
         if (output is null) return [];
 
@@ -116,6 +198,7 @@ public sealed class GitHubSignalCollector
             var title = i.TryGetProperty("title", out var t) ? t.GetString() ?? "" : "";
             var issueState = i.TryGetProperty("state", out var s) ? s.GetString()?.ToLowerInvariant() ?? "open" : "open";
             var url = i.TryGetProperty("url", out var u) ? u.GetString() ?? "" : $"https://github.com/{owner}/{repo.Name}/issues/{number}";
+            var updatedAt = i.TryGetProperty("updatedAt", out var ua) && ua.TryGetDateTime(out var dt) ? dt : (DateTime?)null;
 
             return new CollectedSignal
             {
@@ -125,6 +208,7 @@ public sealed class GitHubSignalCollector
                 SignalType = "github-issue",
                 SignalRef = url,
                 Status = issueState,
+                SourceUpdatedAtUtc = updatedAt?.ToUniversalTime(),
             };
         }).ToList();
     }
@@ -145,7 +229,7 @@ public sealed class GitHubSignalCollector
 
             var output = await RunGhAsync(
                 $"pr list --repo {owner}/{repo.Name} --state {state} " +
-                "--json number,title,state,url --limit 200");
+                "--json number,title,state,url,updatedAt --limit 200");
 
             if (output is null) continue;
 
@@ -156,7 +240,8 @@ public sealed class GitHubSignalCollector
                     Number: i.GetProperty("number").GetInt32(),
                     Title: i.TryGetProperty("title", out var t) ? t.GetString() ?? "" : "",
                     State: i.TryGetProperty("state", out var s) ? s.GetString()?.ToLowerInvariant() ?? "open" : "open",
-                    Url: i.TryGetProperty("url", out var u) ? u.GetString() ?? "" : $"https://github.com/{owner}/{repo.Name}/pull/{i.GetProperty("number").GetInt32()}"
+                    Url: i.TryGetProperty("url", out var u) ? u.GetString() ?? "" : $"https://github.com/{owner}/{repo.Name}/pull/{i.GetProperty("number").GetInt32()}",
+                    UpdatedAt: i.TryGetProperty("updatedAt", out var ua) && ua.TryGetDateTime(out var dt) ? dt : (DateTime?)null
                 ))
                 .Where(pr => MatchesAnyPattern(pr.Title, statePatterns))
                 .Select(pr => new CollectedSignal
@@ -167,6 +252,7 @@ public sealed class GitHubSignalCollector
                     SignalType = "github-pr",
                     SignalRef = pr.Url,
                     Status = pr.State,
+                    SourceUpdatedAtUtc = pr.UpdatedAt?.ToUniversalTime(),
                 });
 
             signals.AddRange(matched);

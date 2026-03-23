@@ -21,6 +21,7 @@ public sealed class AzureDevOpsSignalCollector
     {
         var started = Stopwatch.StartNew();
         var signals = new List<CollectedSignal>();
+        int created = 0, resolved = 0;
 
         try
         {
@@ -49,19 +50,98 @@ public sealed class AzureDevOpsSignalCollector
 
                             if (statusFilter.Contains(build.Result))
                             {
-                                // Failure — include for AI to create work items
+                                var stageFilterStr = FormatStageFilters(pipeline.Stages);
+                                var hasStageFilters = !string.IsNullOrWhiteSpace(stageFilterStr);
+
+                                // Fetch timeline to get failure details and apply stage/job filters
+                                var failureInfo = await AzureDevOpsBuildClient.GetFailedTasksAsync(
+                                    orgUrl, project.Name, build.Id, hasStageFilters ? stageFilterStr : null);
+
+                                // If stage filters are configured and no filtered tasks failed,
+                                // the legs we care about passed — auto-resolve any existing items
+                                if (hasStageFilters && failureInfo.Error is null && failureInfo.FailedTasks.Count == 0)
+                                {
+                                    if (store is not null)
+                                    {
+                                        var existingItems = await store.ListAsync();
+                                        foreach (var item in existingItems.Where(i =>
+                                            i.CorrelationId == signal.CorrelationId && !i.IsResolved))
+                                        {
+                                            item.SetStatus("resolved",
+                                                $"Auto-resolved: filtered stages/jobs passed in build #{build.BuildNumber}");
+                                            await store.SaveAsync(item);
+                                            resolved++;
+                                        }
+                                    }
+                                    continue;
+                                }
+
                                 signals.Add(signal);
+
+                                // Create work item if it doesn't exist, or update
+                                // failure details on existing items that lack them
+                                if (store is not null)
+                                {
+                                    var metadata = new Dictionary<string, string>();
+                                    if (hasStageFilters)
+                                        metadata["stageFilters"] = stageFilterStr;
+
+                                    // Store failure details so summarize doesn't need to re-fetch
+                                    if (failureInfo.Error is null && failureInfo.FailedTasks.Count > 0)
+                                        metadata["failureDetails"] = FormatFailureDetails(failureInfo);
+
+                                    if (!store.Exists(signal.Id))
+                                    {
+                                        await store.SaveAsync(new WorkItem
+                                        {
+                                            Id = signal.Id,
+                                            Status = "new",
+                                            Title = signal.Title,
+                                            CorrelationId = signal.CorrelationId,
+                                            Signals = [new SignalReference
+                                            {
+                                                Type = signal.SignalType,
+                                                Ref = signal.SignalRef,
+                                                SourceUpdatedAtUtc = signal.SourceUpdatedAtUtc,
+                                                Metadata = metadata.Count > 0 ? metadata : null,
+                                            }],
+                                        });
+                                        created++;
+                                    }
+                                    else if (metadata.ContainsKey("failureDetails"))
+                                    {
+                                        // Backfill failure details on existing items
+                                        var existing = await store.LoadAsync(signal.Id);
+                                        if (existing is not null)
+                                        {
+                                            var sig = existing.Signals.FirstOrDefault();
+                                            if (sig is not null)
+                                            {
+                                                var existingDetails = sig.Metadata?.GetValueOrDefault("failureDetails");
+                                                if (string.IsNullOrWhiteSpace(existingDetails))
+                                                {
+                                                    sig.Metadata ??= new Dictionary<string, string>();
+                                                    sig.Metadata["failureDetails"] = metadata["failureDetails"];
+                                                    sig.SourceUpdatedAtUtc = DateTime.UtcNow;
+                                                    await store.SaveAsync(existing);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                             else if (store is not null)
                             {
-                                // Success — only include if there's an unresolved work item
-                                // the AI may want to resolve
+                                // Success — auto-resolve any unresolved work items
+                                // with the same correlation ID
                                 var existingItems = await store.ListAsync();
-                                if (existingItems.Any(i =>
-                                    i.CorrelationId == signal.CorrelationId &&
-                                    !i.IsResolved))
+                                foreach (var item in existingItems.Where(i =>
+                                    i.CorrelationId == signal.CorrelationId && !i.IsResolved))
                                 {
-                                    signals.Add(signal);
+                                    item.SetStatus("resolved",
+                                        $"Auto-resolved: latest build #{build.BuildNumber} {build.Result}");
+                                    await store.SaveAsync(item);
+                                    resolved++;
                                 }
                             }
                         }
@@ -74,6 +154,8 @@ public sealed class AzureDevOpsSignalCollector
                 Source = "AzureDevOps",
                 Success = true,
                 Signals = signals,
+                Created = created,
+                Resolved = resolved,
                 Duration = started.Elapsed,
             };
         }
@@ -85,6 +167,8 @@ public sealed class AzureDevOpsSignalCollector
                 Success = false,
                 Error = ex.Message,
                 Signals = signals,
+                Created = created,
+                Resolved = resolved,
                 Duration = started.Elapsed,
             };
         }
@@ -199,6 +283,7 @@ public sealed class AzureDevOpsSignalCollector
             SignalType = "ado-pipeline-run",
             SignalRef = $"{orgUrl.TrimEnd('/')}/{project}/_build/results?buildId={build.Id}",
             Status = build.Result,
+            SourceUpdatedAtUtc = build.FinishTimeUtc?.UtcDateTime,
             Metadata = new()
             {
                 ["pipelineId"] = pipeline.Id.ToString(),
@@ -223,6 +308,26 @@ public sealed class AzureDevOpsSignalCollector
             s.Jobs is { Count: > 0 }
                 ? $"{s.Name} → {string.Join(", ", s.Jobs)}"
                 : $"{s.Name} (all jobs)"));
+    }
+
+    /// <summary>
+    /// Formats pipeline failure details for storage in work item metadata.
+    /// Includes stage → job → task hierarchy and error messages.
+    /// </summary>
+    private static string FormatFailureDetails(PipelineFailureInfo info)
+    {
+        var lines = info.FailedTasks.Select(t =>
+        {
+            var path = string.Join(" > ",
+                new[] { t.StageName, t.JobName, t.TaskName }.Where(s => s is not null));
+            var errors = t.ErrorMessages.Count > 0
+                ? "\n  Errors:\n    " + string.Join("\n    ", t.ErrorMessages)
+                : "";
+            var logRef = t.LogId.HasValue ? $" [logId={t.LogId}]" : "";
+            return $"- {path}{logRef}{errors}";
+        });
+
+        return $"Failed tasks ({info.FailedTasks.Count}):\n{string.Join("\n", lines)}";
     }
 
     private static string NormalizeOrg(string org) =>
