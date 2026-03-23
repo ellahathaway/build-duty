@@ -3,100 +3,72 @@ using Xunit;
 
 namespace BuildDuty.Tests;
 
-public class WorkItemStateTransitionTests
+public class WorkItemStatusTests
 {
     [Theory]
-    [InlineData(WorkItemState.Unresolved, WorkItemState.InProgress)]
-    [InlineData(WorkItemState.InProgress, WorkItemState.Resolved)]
-    [InlineData(WorkItemState.InProgress, WorkItemState.Unresolved)]
-    public void ValidTransitions_Succeed(WorkItemState from, WorkItemState to)
+    [InlineData("new", false)]
+    [InlineData("tracked", false)]
+    [InlineData("investigating", false)]
+    [InlineData("needs-review", false)]
+    [InlineData("test-failures", false)]
+    [InlineData("resolved", true)]
+    [InlineData("fixed", true)]
+    [InlineData("merged", true)]
+    [InlineData("closed", true)]
+    public void IsResolved_ReflectsTerminalStatuses(string status, bool expected)
     {
-        var wi = new WorkItem
-        {
-            Id = "wi_test",
-            State = from,
-            Title = "Test work item"
-        };
-
-        wi.TransitionTo(to, "test transition");
-
-        Assert.Equal(to, wi.State);
-        Assert.Single(wi.History);
-        Assert.Equal("state-change", wi.History[0].Action);
-        Assert.Equal(from.ToString().ToLowerInvariant(), wi.History[0].From);
-        Assert.Equal(to.ToString().ToLowerInvariant(), wi.History[0].To);
-        Assert.Equal("test transition", wi.History[0].Note);
+        var wi = new WorkItem { Id = "wi_test", Status = status, Title = "Test" };
+        Assert.Equal(expected, wi.IsResolved);
     }
 
-    [Theory]
-    [InlineData(WorkItemState.Unresolved, WorkItemState.Resolved)]
-    [InlineData(WorkItemState.Resolved, WorkItemState.InProgress)]
-    [InlineData(WorkItemState.Resolved, WorkItemState.Unresolved)]
-    [InlineData(WorkItemState.Unresolved, WorkItemState.Unresolved)]
-    public void InvalidTransitions_Throw(WorkItemState from, WorkItemState to)
+    [Fact]
+    public void SetStatus_UpdatesStatusAndHistory()
     {
-        var wi = new WorkItem
-        {
-            Id = "wi_test",
-            State = from,
-            Title = "Test work item"
-        };
+        var wi = new WorkItem { Id = "wi_test", Status = "new", Title = "Test" };
 
-        Assert.Throws<InvalidOperationException>(() => wi.TransitionTo(to));
+        wi.SetStatus("tracked", "acknowledged");
+
+        Assert.Equal("tracked", wi.Status);
+        Assert.Single(wi.History);
+        Assert.Equal("status-change", wi.History[0].Action);
+        Assert.Equal("new", wi.History[0].From);
+        Assert.Equal("tracked", wi.History[0].To);
+        Assert.Equal("acknowledged", wi.History[0].Note);
     }
 
     [Fact]
     public void FullLifecycle_TracksHistory()
     {
-        var wi = new WorkItem
-        {
-            Id = "wi_lifecycle",
-            State = WorkItemState.Unresolved,
-            Title = "Lifecycle test"
-        };
+        var wi = new WorkItem { Id = "wi_lifecycle", Status = "new", Title = "Lifecycle test" };
 
-        wi.TransitionTo(WorkItemState.InProgress, "AI job started");
-        wi.TransitionTo(WorkItemState.Resolved, "Investigation complete");
+        wi.SetStatus("investigating", "AI job started");
+        wi.SetStatus("fixed", "Investigation complete");
 
-        Assert.Equal(WorkItemState.Resolved, wi.State);
+        Assert.True(wi.IsResolved);
         Assert.Equal(2, wi.History.Count);
-        Assert.Equal("unresolved", wi.History[0].From);
-        Assert.Equal("inprogress", wi.History[0].To);
-        Assert.Equal("inprogress", wi.History[1].From);
-        Assert.Equal("resolved", wi.History[1].To);
+        Assert.Equal("new", wi.History[0].From);
+        Assert.Equal("investigating", wi.History[0].To);
+        Assert.Equal("investigating", wi.History[1].From);
+        Assert.Equal("fixed", wi.History[1].To);
     }
 
     [Fact]
-    public void TransitionTo_SetsTimestamp()
+    public void SetStatus_SetsTimestamp()
     {
-        var wi = new WorkItem
-        {
-            Id = "wi_ts",
-            State = WorkItemState.Unresolved,
-            Title = "Timestamp test"
-        };
+        var wi = new WorkItem { Id = "wi_ts", Title = "Timestamp test" };
         var before = DateTime.UtcNow;
 
-        wi.TransitionTo(WorkItemState.InProgress);
+        wi.SetStatus("tracked");
 
         Assert.True(wi.History[0].TimestampUtc >= before);
         Assert.True(wi.History[0].TimestampUtc <= DateTime.UtcNow);
     }
 
     [Fact]
-    public void ReturnToUnresolved_FromInProgress()
+    public void DefaultStatus_IsNew()
     {
-        var wi = new WorkItem
-        {
-            Id = "wi_return",
-            State = WorkItemState.Unresolved,
-            Title = "Return test"
-        };
-
-        wi.TransitionTo(WorkItemState.InProgress);
-        wi.TransitionTo(WorkItemState.Unresolved, "AI run failed, returning");
-
-        Assert.Equal(WorkItemState.Unresolved, wi.State);
-        Assert.Equal(2, wi.History.Count);
+        var wi = new WorkItem { Id = "wi_default", Title = "Default test" };
+        Assert.Equal("new", wi.Status);
+        Assert.False(wi.IsResolved);
     }
 }

@@ -1,16 +1,27 @@
 # Work Item Lifecycle
 
-## States
+## Status
 
-| State | Meaning |
-|-------|---------|
-| `unresolved` | New failure or issue, needs attention |
-| `inprogress` | Being investigated |
-| `resolved` | No longer active (build fixed, issue closed, etc.) |
+Work items have a single `status` field (string) that tracks their lifecycle.
+Terminal statuses indicate the item is done.
 
-Transitions: `unresolved → inprogress → resolved`
+### Terminal statuses (resolved)
 
-Auto-resolution goes through `inprogress` automatically.
+| Status | Meaning |
+|--------|---------|
+| `resolved` | Generic resolution |
+| `fixed` | Pipeline/build issue fixed |
+| `merged` | PR merged |
+| `closed` | Issue or PR closed |
+
+### Active statuses (by signal type)
+
+**Pipeline (`ado-pipeline-run`):** `new` → `tracked` → `investigating` → `fixed`
+
+**Issue (`github-issue`):** `new` → `monitoring` → `in-pr` → `resolved`
+
+**PR (`github-pr`):** `new` → `needs-review` → `approved` → `needs-merge` → `merged`
+Other PR statuses: `changes-requested`, `automerge`, `test-failures`, `merge-conflicts`, `closed`
 
 ## ID and Correlation Formats
 

@@ -25,25 +25,24 @@ public static class BuildDutyTools
                 "Get full details of a work item by ID, including signals and history."),
 
             AIFunctionFactory.Create(
-                async (string? state, int? limit) =>
+                async (string? status, int? limit) =>
                 {
-                    WorkItemState? filter = state?.ToLowerInvariant() switch
+                    bool? resolved = status?.ToLowerInvariant() switch
                     {
-                        "unresolved" => WorkItemState.Unresolved,
-                        "inprogress" => WorkItemState.InProgress,
-                        "resolved" => WorkItemState.Resolved,
+                        "resolved" => true,
+                        "unresolved" or "active" => false,
                         _ => null
                     };
 
-                    var items = await store.ListAsync(filter, limit ?? 200);
+                    var items = await store.ListAsync(resolved, limit ?? 200);
                     if (items.Count == 0)
                         return "No work items found.";
 
                     return string.Join("\n", items.Select(i =>
-                        $"- {i.Id} [{i.State}] {i.Title} (corr: {i.CorrelationId ?? "none"})"));
+                        $"- {i.Id} [{i.Status}] {i.Title} (corr: {i.CorrelationId ?? "none"})"));
                 },
                 "list_work_items",
-                "List tracked work items, optionally filtered by state (unresolved, inprogress, resolved) and limited to a count."),
+                "List tracked work items, optionally filtered by status ('resolved' or 'unresolved') and limited to a count."),
 
             AIFunctionFactory.Create(
                 (string id) => store.Exists(id)
@@ -60,9 +59,15 @@ public static class BuildDutyTools
         {
             $"## {item.Title}",
             $"- **ID:** {item.Id}",
-            $"- **State:** {item.State}",
+            $"- **Status:** {item.Status}",
             $"- **Correlation ID:** {item.CorrelationId ?? "(none)"}",
         };
+
+        if (!string.IsNullOrWhiteSpace(item.Summary))
+            lines.Add($"- **Summary:** {item.Summary}");
+
+        if (item.LinkedItems.Count > 0)
+            lines.Add($"- **Linked:** {string.Join(", ", item.LinkedItems)}");
 
         if (item.Signals.Count > 0)
         {

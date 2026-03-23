@@ -75,7 +75,8 @@ public class ScanToolsTests : IDisposable
         var item = await _store.LoadAsync("wi_test_1");
         Assert.NotNull(item);
         Assert.Equal("Test failure", item.Title);
-        Assert.Equal(WorkItemState.Unresolved, item.State);
+        Assert.Equal("new", item.Status);
+        Assert.False(item.IsResolved);
         Assert.Equal("corr_test_1", item.CorrelationId);
     }
 
@@ -137,7 +138,7 @@ public class ScanToolsTests : IDisposable
         {
             Id = "wi_resolve_1",
             Title = "Failing build",
-            State = WorkItemState.Unresolved,
+            Status = "new",
             CorrelationId = "corr_resolve_1"
         });
 
@@ -151,8 +152,9 @@ public class ScanToolsTests : IDisposable
         Assert.Contains("Resolved", result?.ToString());
 
         var item = await _store.LoadAsync("wi_resolve_1");
-        Assert.Equal(WorkItemState.Resolved, item!.State);
-        Assert.Equal(2, item.History.Count);
+        Assert.Equal("resolved", item!.Status);
+        Assert.True(item.IsResolved);
+        Assert.Single(item.History);
     }
 
     [Fact]
@@ -162,10 +164,9 @@ public class ScanToolsTests : IDisposable
         {
             Id = "wi_already_resolved",
             Title = "Old issue",
-            State = WorkItemState.Unresolved,
+            Status = "new",
         };
-        item.TransitionTo(WorkItemState.InProgress, "test");
-        item.TransitionTo(WorkItemState.Resolved, "test");
+        item.SetStatus("resolved", "test");
         await _store.SaveAsync(item);
 
         var tools = ScanTools.Create(_store);
@@ -185,7 +186,7 @@ public class ScanToolsTests : IDisposable
         {
             Id = "wi_list_1",
             Title = "Unresolved item",
-            State = WorkItemState.Unresolved,
+            Status = "new",
             CorrelationId = "corr_1"
         });
 
@@ -193,18 +194,17 @@ public class ScanToolsTests : IDisposable
         {
             Id = "wi_list_2",
             Title = "Resolved item",
-            State = WorkItemState.Unresolved,
+            Status = "new",
             CorrelationId = "corr_2"
         };
-        resolved.TransitionTo(WorkItemState.InProgress, "test");
-        resolved.TransitionTo(WorkItemState.Resolved, "fixed");
+        resolved.SetStatus("fixed", "done");
         await _store.SaveAsync(resolved);
 
         var tools = BuildDutyTools.Create(_store);
         var listTool = tools.First(t => t.Name == "list_work_items");
 
         var result = await listTool.InvokeAsync(Args(
-            ("state", "unresolved"),
+            ("status", "unresolved"),
             ("limit", 10)));
 
         var text = result?.ToString()!;

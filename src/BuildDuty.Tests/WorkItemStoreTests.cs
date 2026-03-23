@@ -26,7 +26,7 @@ public class WorkItemStoreTests : IDisposable
         var wi = new WorkItem
         {
             Id = "wi_roundtrip",
-            State = WorkItemState.Unresolved,
+            Status = "new",
             Title = "Round-trip test",
             CorrelationId = "corr_123",
             Signals =
@@ -40,7 +40,8 @@ public class WorkItemStoreTests : IDisposable
 
         Assert.NotNull(loaded);
         Assert.Equal("wi_roundtrip", loaded.Id);
-        Assert.Equal(WorkItemState.Unresolved, loaded.State);
+        Assert.Equal("new", loaded.Status);
+        Assert.False(loaded.IsResolved);
         Assert.Equal("Round-trip test", loaded.Title);
         Assert.Equal("corr_123", loaded.CorrelationId);
         Assert.Single(loaded.Signals);
@@ -55,17 +56,17 @@ public class WorkItemStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task ListAsync_FiltersByState()
+    public async Task ListAsync_FiltersByResolved()
     {
-        await _store.SaveAsync(new WorkItem { Id = "wi_a", State = WorkItemState.Unresolved, Title = "A" });
-        await _store.SaveAsync(new WorkItem { Id = "wi_b", State = WorkItemState.InProgress, Title = "B" });
-        await _store.SaveAsync(new WorkItem { Id = "wi_c", State = WorkItemState.Unresolved, Title = "C" });
+        await _store.SaveAsync(new WorkItem { Id = "wi_a", Status = "new", Title = "A" });
+        await _store.SaveAsync(new WorkItem { Id = "wi_b", Status = "investigating", Title = "B" });
+        await _store.SaveAsync(new WorkItem { Id = "wi_c", Status = "fixed", Title = "C" });
 
-        var unresolved = await _store.ListAsync(WorkItemState.Unresolved);
-        var inProgress = await _store.ListAsync(WorkItemState.InProgress);
+        var unresolved = await _store.ListAsync(resolved: false);
+        var resolved = await _store.ListAsync(resolved: true);
 
         Assert.Equal(2, unresolved.Count);
-        Assert.Single(inProgress);
+        Assert.Single(resolved);
     }
 
     [Fact]
@@ -80,23 +81,23 @@ public class WorkItemStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task SaveAsync_PersistsStateTransitions()
+    public async Task SaveAsync_PersistsStatusChanges()
     {
         var wi = new WorkItem
         {
             Id = "wi_transitions",
-            State = WorkItemState.Unresolved,
+            Status = "new",
             Title = "Transition persistence"
         };
 
-        wi.TransitionTo(WorkItemState.InProgress, "starting");
+        wi.SetStatus("investigating", "starting");
         await _store.SaveAsync(wi);
 
         var loaded = await _store.LoadAsync("wi_transitions");
         Assert.NotNull(loaded);
-        Assert.Equal(WorkItemState.InProgress, loaded.State);
+        Assert.Equal("investigating", loaded.Status);
         Assert.Single(loaded.History);
-        Assert.Equal("state-change", loaded.History[0].Action);
+        Assert.Equal("status-change", loaded.History[0].Action);
     }
 
     [Fact]

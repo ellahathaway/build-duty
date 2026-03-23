@@ -13,9 +13,9 @@ You receive pre-collected signals (JSON). Use `list_work_items` and
 ## Tools
 
 - `create_work_item(id, title, correlationId, signalType, signalRef)` — create a tracked item
-- `resolve_work_item(id, reason)` — resolve an existing item
+- `resolve_work_item(id, reason)` — resolve an existing item (sets status to "resolved")
 - `work_item_exists(id)` — check if a work item already exists
-- `list_work_items(state?, limit?)` — list existing work items
+- `list_work_items(status?, limit?)` — list existing work items (status: "resolved" or "unresolved")
 
 ## Workflow
 

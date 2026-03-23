@@ -43,7 +43,7 @@ public sealed class WorkItemStore
     }
 
     public async Task<IReadOnlyList<WorkItem>> ListAsync(
-        WorkItemState? stateFilter = null,
+        bool? resolved = null,
         int? limit = null,
         CancellationToken ct = default)
     {
@@ -58,7 +58,7 @@ public sealed class WorkItemStore
             await using var stream = File.OpenRead(file);
             var item = await JsonSerializer.DeserializeAsync<WorkItem>(stream, s_options, ct);
             if (item is null) continue;
-            if (stateFilter.HasValue && item.State != stateFilter.Value) continue;
+            if (resolved.HasValue && item.IsResolved != resolved.Value) continue;
             items.Add(item);
             if (limit.HasValue && items.Count >= limit.Value) break;
         }

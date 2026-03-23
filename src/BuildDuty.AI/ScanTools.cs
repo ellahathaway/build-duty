@@ -28,7 +28,7 @@ public static class ScanTools
                     var item = new WorkItem
                     {
                         Id = id,
-                        State = WorkItemState.Unresolved,
+                        Status = "new",
                         Title = title,
                         CorrelationId = correlationId,
                         Signals = [new SignalReference { Type = signalType, Ref = signalRef }]
@@ -46,19 +46,15 @@ public static class ScanTools
                     var item = await store.LoadAsync(id);
                     if (item is null)
                         return $"Work item '{id}' not found.";
-                    if (item.State == WorkItemState.Resolved)
-                        return $"Work item '{id}' is already resolved.";
+                    if (item.IsResolved)
+                        return $"Work item '{id}' is already resolved (status: {item.Status}).";
 
-                    if (item.State == WorkItemState.Unresolved)
-                        item.TransitionTo(WorkItemState.InProgress,
-                            "Build status changed", actor: "build-duty");
-
-                    item.TransitionTo(WorkItemState.Resolved, reason, actor: "build-duty");
+                    item.SetStatus("resolved", reason);
                     await store.SaveAsync(item);
                     return $"Resolved work item '{id}': {reason}";
                 },
                 "resolve_work_item",
-                "Resolve an existing work item by transitioning it to resolved state with a reason."),
+                "Resolve an existing work item by setting its status to resolved with a reason."),
         ];
     }
 }

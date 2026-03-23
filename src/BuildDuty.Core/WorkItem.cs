@@ -4,11 +4,28 @@ namespace BuildDuty.Core;
 
 public sealed class WorkItem
 {
+    /// <summary>Terminal statuses — items in these statuses are considered resolved.</summary>
+    public static readonly HashSet<string> TerminalStatuses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "resolved", "fixed", "merged", "closed",
+    };
+
     [JsonPropertyName("id")]
     public string Id { get; set; } = string.Empty;
 
-    [JsonPropertyName("state")]
-    public WorkItemState State { get; set; } = WorkItemState.Unresolved;
+    /// <summary>
+    /// Type-specific status (e.g. "new", "needs-review", "tracked", "test-failures", "fixed").
+    /// Terminal statuses (resolved, fixed, merged, closed) indicate the item is done.
+    /// </summary>
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = "new";
+
+    /// <summary>
+    /// AI-generated summary of the work item's source (build failure reason,
+    /// issue description, PR changes, etc.).
+    /// </summary>
+    [JsonPropertyName("summary")]
+    public string? Summary { get; set; }
 
     [JsonPropertyName("title")]
     public string Title { get; set; } = string.Empty;
@@ -16,45 +33,37 @@ public sealed class WorkItem
     [JsonPropertyName("correlationId")]
     public string? CorrelationId { get; set; }
 
+    /// <summary>
+    /// IDs of related work items (cross-referenced during correlation).
+    /// </summary>
+    [JsonPropertyName("linkedItems")]
+    public List<string> LinkedItems { get; set; } = [];
+
     [JsonPropertyName("signals")]
     public List<SignalReference> Signals { get; set; } = [];
 
     [JsonPropertyName("history")]
     public List<WorkItemHistoryEntry> History { get; set; } = [];
 
+    /// <summary>Whether the item is in a terminal status.</summary>
+    [JsonIgnore]
+    public bool IsResolved => TerminalStatuses.Contains(Status);
+
     /// <summary>
-    /// Transition to a new state. Validates the transition and appends history.
+    /// Update the status and append a history entry.
     /// </summary>
-    public void TransitionTo(WorkItemState newState, string? note = null, string actor = "build-duty")
+    public void SetStatus(string newStatus, string? note = null, string actor = "build-duty")
     {
-        ValidateTransition(State, newState);
-        var entry = new WorkItemHistoryEntry
+        var old = Status;
+        Status = newStatus;
+        History.Add(new WorkItemHistoryEntry
         {
             TimestampUtc = DateTime.UtcNow,
-            Action = "state-change",
-            From = State.ToString().ToLowerInvariant(),
-            To = newState.ToString().ToLowerInvariant(),
+            Action = "status-change",
+            From = old,
+            To = newStatus,
             Actor = actor,
-            Note = note
-        };
-        History.Add(entry);
-        State = newState;
-    }
-
-    internal static void ValidateTransition(WorkItemState from, WorkItemState to)
-    {
-        bool valid = (from, to) switch
-        {
-            (WorkItemState.Unresolved, WorkItemState.InProgress) => true,
-            (WorkItemState.InProgress, WorkItemState.Resolved) => true,
-            (WorkItemState.InProgress, WorkItemState.Unresolved) => true, // return on failure
-            _ => false
-        };
-
-        if (!valid)
-        {
-            throw new InvalidOperationException(
-                $"Invalid state transition from '{from}' to '{to}'.");
-        }
+            Note = note,
+        });
     }
 }
