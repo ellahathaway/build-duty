@@ -324,7 +324,8 @@ public sealed class AzureDevOpsSignalCollector
                 ? "\n  Errors:\n    " + string.Join("\n    ", t.ErrorMessages)
                 : "";
             var logRef = t.LogId.HasValue ? $" [logId={t.LogId}]" : "";
-            return $"- {path}{logRef}{errors}";
+            var tag = t.Result == "canceled" ? " (timed out)" : "";
+            return $"- {path}{tag}{logRef}{errors}";
         });
 
         return $"Failed tasks ({info.FailedTasks.Count}):\n{string.Join("\n", lines)}";

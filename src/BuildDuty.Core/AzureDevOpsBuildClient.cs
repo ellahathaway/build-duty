@@ -68,7 +68,7 @@ public static class AzureDevOpsBuildClient
                 var type = rec.GetProperty("type").GetString();
                 var result = rec.TryGetProperty("result", out var r) ? r.GetString() : null;
 
-                if (type != "Task" || result != "failed")
+                if (type != "Task" || (result != "failed" && result != "canceled"))
                     continue;
 
                 var taskName = rec.GetProperty("name").GetString() ?? "(unknown)";
@@ -113,6 +113,7 @@ public static class AzureDevOpsBuildClient
                     JobName = jobName,
                     StageName = stageName,
                     LogId = logId,
+                    Result = result ?? "failed",
                     ErrorMessages = issues,
                 });
             }
@@ -253,12 +254,14 @@ public sealed class PipelineFailureInfo
     public List<FailedTask> FailedTasks { get; init; } = [];
 }
 
-/// <summary>A single failed task in the build timeline.</summary>
+/// <summary>A single failed or canceled task in the build timeline.</summary>
 public sealed class FailedTask
 {
     public string TaskName { get; init; } = "";
     public string? JobName { get; init; }
     public string? StageName { get; init; }
     public int? LogId { get; init; }
+    /// <summary>The timeline result: "failed" or "canceled" (timeout).</summary>
+    public string Result { get; init; } = "failed";
     public List<string> ErrorMessages { get; init; } = [];
 }
