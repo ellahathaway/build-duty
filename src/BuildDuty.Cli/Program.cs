@@ -42,6 +42,9 @@ app.Configure(config =>
     config.AddCommand<TriageCommand>("triage")
         .WithDescription("Collect signals, triage with AI, and correlate work items");
 
+    config.AddCommand<ReviewCommand>("review")
+        .WithDescription("Interactively review and act on triaged work items");
+
     config.AddBranch("workitems", wi =>
     {
         wi.SetDescription("Manage tracked work items");
