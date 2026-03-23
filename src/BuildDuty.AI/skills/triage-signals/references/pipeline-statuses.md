@@ -36,8 +36,8 @@ that addresses it. Without a link, it stays `needs-investigation`.
    **most recent** build per group. Apply findings to all items in the group.
 2. **Write as you go** — Call `update_work_item_status` after each group.
    Do NOT wait until you've analyzed all builds.
-3. **Check links** — Use `get_work_item` to check `linkedItems` before
-   deciding between `needs-investigation` and `tracked`.
+3. **Check existing links** — Use the `linkedItems` data provided in the
+   prompt to decide between `needs-investigation` and `tracked`.
 
 ## Cross-referencing
 

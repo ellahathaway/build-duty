@@ -268,10 +268,16 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
         {
             var existingList = string.Join("\n", toTriage.Select(i =>
             {
-                var signalRef = i.Signals.FirstOrDefault()?.Ref ?? "(none)";
-                var signalType = i.Signals.FirstOrDefault()?.Type ?? "(none)";
+                var sig = i.Signals.FirstOrDefault();
+                var signalRef = sig?.Ref ?? "(none)";
+                var signalType = sig?.Type ?? "(none)";
                 var summary = string.IsNullOrWhiteSpace(i.Summary) ? "(none)" : i.Summary;
-                return $"- {i.Id} | status={i.Status} | type={signalType} | ref={signalRef} | summary={summary} | title={i.Title}";
+                var links = i.LinkedItems.Count > 0 ? string.Join(", ", i.LinkedItems) : "(none)";
+                var failureDetails = sig?.Metadata?.GetValueOrDefault("failureDetails");
+                var detailsLine = string.IsNullOrWhiteSpace(failureDetails)
+                    ? ""
+                    : $"\n  failureDetails: {failureDetails.Replace("\n", "\n  ")}";
+                return $"- {i.Id} | status={i.Status} | type={signalType} | ref={signalRef} | links={links} | summary={summary} | title={i.Title}{detailsLine}";
             }));
 
             var feedbackSection = feedbackLines.Length > 0
@@ -290,7 +296,8 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
 
                 1. Determine and update the type-specific status for each unresolved
                    work item (use `update_work_item_status`).
-                2. Cross-reference related items where applicable (use `link_work_items`).
+                2. Cross-reference related items **within this list** where applicable
+                   (use `link_work_items`).
                    **IMPORTANT:** Only link/correlate items if their failure signatures
                    (error messages, failed tasks, test names) match specifically. Two
                    failures in the same category (e.g. both "Component Governance") but
@@ -298,8 +305,9 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
                 3. Resolve work items that are no longer relevant based on context
                    (use `resolve_work_item`).
 
-                Each item includes its current summary — use it to understand what the
-                item is about when determining statuses and cross-references.
+                Each item includes its current summary, linked items, and failure
+                details — use these to determine statuses and cross-references.
+                **Do NOT query external services** — everything you need is here.
 
                 **Work items needing triage ({toTriage.Count}):**
                 {existingList}
