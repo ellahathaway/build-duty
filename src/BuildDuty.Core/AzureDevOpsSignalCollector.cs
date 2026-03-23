@@ -37,9 +37,14 @@ public sealed class AzureDevOpsSignalCollector
                         var branches = await ResolveBranchesAsync(orgUrl, project.Name, pipeline, ct);
                         var builds = await GetLatestBuildsAsync(orgUrl, project.Name, pipeline.Id, branches, ct);
                         var statusFilter = pipeline.EffectiveStatus.Select(s => s.ToLowerInvariant()).ToHashSet();
+                        var maxAge = pipeline.ParsedAge;
+                        var cutoff = maxAge.HasValue ? DateTimeOffset.UtcNow - maxAge.Value : (DateTimeOffset?)null;
 
                         foreach (var build in builds)
                         {
+                            // Skip builds older than the configured age
+                            if (cutoff.HasValue && build.FinishTimeUtc.HasValue && build.FinishTimeUtc < cutoff)
+                                continue;
                             var signal = ToSignal(orgUrl, project.Name, pipeline, build, statusFilter);
 
                             if (statusFilter.Contains(build.Result))
@@ -133,13 +138,15 @@ public sealed class AzureDevOpsSignalCollector
                 if (builds is null || builds.Count == 0) return null;
 
                 var b = builds[0];
+                var finishStr = b.TryGetProperty("finishTime", out var ft) ? ft.GetString() : null;
                 return new BuildInfo
                 {
                     Id = b.GetProperty("id").GetInt32(),
                     BuildNumber = b.TryGetProperty("buildNumber", out var bn) ? bn.GetString() ?? "" : "",
                     Result = ParseResult(b),
                     SourceBranch = branch,
-                    FinishTime = b.TryGetProperty("finishTime", out var ft) ? ft.GetString() : null,
+                    FinishTime = finishStr,
+                    FinishTimeUtc = DateTimeOffset.TryParse(finishStr, out var dto) ? dto : null,
                 };
             }
             catch
@@ -240,5 +247,6 @@ public sealed class AzureDevOpsSignalCollector
         public string Result { get; init; } = "unknown";
         public string SourceBranch { get; init; } = "";
         public string? FinishTime { get; init; }
+        public DateTimeOffset? FinishTimeUtc { get; init; }
     }
 }

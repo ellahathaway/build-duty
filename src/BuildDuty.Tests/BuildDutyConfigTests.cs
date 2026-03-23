@@ -84,6 +84,28 @@ public class BuildDutyConfigTests : IDisposable
         Assert.Equal(["failed", "partiallySucceeded"], pipeline.EffectiveStatus);
     }
 
+    [Theory]
+    [InlineData("7d", 7 * 24 * 60)]
+    [InlineData("24h", 24 * 60)]
+    [InlineData("2d12h", 2 * 24 * 60 + 12 * 60)]
+    [InlineData("30m", 30)]
+    [InlineData("1d6h30m", 1 * 24 * 60 + 6 * 60 + 30)]
+    public void ParsedAge_ParsesDurationString(string age, int expectedMinutes)
+    {
+        var pipeline = new AzureDevOpsPipelineConfig { Id = 1, Name = "test", Age = age };
+        Assert.Equal(TimeSpan.FromMinutes(expectedMinutes), pipeline.ParsedAge);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("  ")]
+    public void ParsedAge_ReturnsNull_WhenEmpty(string? age)
+    {
+        var pipeline = new AzureDevOpsPipelineConfig { Id = 1, Name = "test", Age = age };
+        Assert.Null(pipeline.ParsedAge);
+    }
+
     private string WriteConfig(string yaml)
     {
         var path = Path.Combine(_tempDir, ".build-duty.yml");

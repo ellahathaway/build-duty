@@ -53,11 +53,54 @@ public sealed class AzureDevOpsPipelineConfig
     public List<string>? Status { get; set; }
 
     /// <summary>
+    /// Maximum age of pipeline runs to consider (e.g. "7d", "24h", "2d12h").
+    /// Runs older than this are ignored. Omit or leave empty for no age limit.
+    /// Supported suffixes: <c>d</c> (days), <c>h</c> (hours), <c>m</c> (minutes).
+    /// </summary>
+    [YamlMember(Alias = "age")]
+    public string? Age { get; set; }
+
+    /// <summary>
     /// Returns the effective status filter, defaulting to
     /// <c>["failed", "partiallySucceeded"]</c>.
     /// </summary>
     public IReadOnlyList<string> EffectiveStatus =>
         Status is { Count: > 0 } ? Status : ["failed", "partiallySucceeded"];
+
+    /// <summary>
+    /// Parses the <see cref="Age"/> string into a <see cref="TimeSpan"/>.
+    /// Returns <c>null</c> when no age limit is configured.
+    /// </summary>
+    public TimeSpan? ParsedAge => ParseAge(Age);
+
+    private static TimeSpan? ParseAge(string? age)
+    {
+        if (string.IsNullOrWhiteSpace(age)) return null;
+
+        var span = TimeSpan.Zero;
+        var num = 0;
+
+        foreach (var c in age)
+        {
+            if (char.IsDigit(c))
+            {
+                num = num * 10 + (c - '0');
+            }
+            else
+            {
+                span += c switch
+                {
+                    'd' or 'D' => TimeSpan.FromDays(num),
+                    'h' or 'H' => TimeSpan.FromHours(num),
+                    'm' or 'M' => TimeSpan.FromMinutes(num),
+                    _ => TimeSpan.Zero,
+                };
+                num = 0;
+            }
+        }
+
+        return span > TimeSpan.Zero ? span : null;
+    }
 }
 
 /// <summary>
