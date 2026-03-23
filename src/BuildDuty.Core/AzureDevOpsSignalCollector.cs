@@ -206,8 +206,23 @@ public sealed class AzureDevOpsSignalCollector
                 ["branch"] = shortBranch,
                 ["buildNumber"] = build.BuildNumber,
                 ["matchesFilter"] = statusFilter.Contains(build.Result) ? "true" : "false",
+                ["stageFilters"] = FormatStageFilters(pipeline.Stages),
             },
         };
+    }
+
+    /// <summary>
+    /// Formats stage filters as a human-readable string for AI consumption.
+    /// Example: "Source* (all jobs); VMR* → *Signing Validation*"
+    /// </summary>
+    private static string FormatStageFilters(List<StageFilterConfig>? stages)
+    {
+        if (stages is not { Count: > 0 }) return "";
+
+        return string.Join("; ", stages.Select(s =>
+            s.Jobs is { Count: > 0 }
+                ? $"{s.Name} → {string.Join(", ", s.Jobs)}"
+                : $"{s.Name} (all jobs)"));
     }
 
     private static string NormalizeOrg(string org) =>

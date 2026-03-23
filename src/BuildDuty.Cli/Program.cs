@@ -24,8 +24,7 @@ services.AddSingleton<Func<BuildDutyConfig, WorkItemStore, CopilotAdapter>>(_ =>
     {
         var tools = BuildDutyTools.Create(wiStore)
             .Concat(TriageTools.Create(wiStore))
-            .Concat(ScanTools.Create(wiStore))
-            .Concat(CorrelationTools.Create(wiStore))
+            .Concat(SignalTriageTools.Create(wiStore))
             .Concat(SummarizeTools.Create(wiStore))
             .ToList();
 

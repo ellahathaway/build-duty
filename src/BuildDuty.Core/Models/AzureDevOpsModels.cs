@@ -61,6 +61,14 @@ public sealed class AzureDevOpsPipelineConfig
     public string? Age { get; set; }
 
     /// <summary>
+    /// Stage filters to focus on when analyzing build failures.
+    /// Each entry specifies a stage name pattern and optionally job patterns
+    /// within that stage. When empty, all stages are considered.
+    /// </summary>
+    [YamlMember(Alias = "stages")]
+    public List<StageFilterConfig>? Stages { get; set; }
+
+    /// <summary>
     /// Returns the effective status filter, defaulting to
     /// <c>["failed", "partiallySucceeded"]</c>.
     /// </summary>
@@ -101,6 +109,26 @@ public sealed class AzureDevOpsPipelineConfig
 
         return span > TimeSpan.Zero ? span : null;
     }
+}
+
+/// <summary>
+/// Filter for a pipeline stage. Matches stages by name pattern and optionally
+/// restricts which jobs within the stage are investigated.
+/// </summary>
+public sealed class StageFilterConfig
+{
+    /// <summary>
+    /// Stage name pattern. Supports glob-style wildcards (<c>*</c>).
+    /// </summary>
+    [YamlMember(Alias = "name")]
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Job/leg name patterns within this stage. When empty, all jobs in the
+    /// stage are investigated. Supports glob-style wildcards (<c>*</c>).
+    /// </summary>
+    [YamlMember(Alias = "jobs")]
+    public List<string>? Jobs { get; set; }
 }
 
 /// <summary>

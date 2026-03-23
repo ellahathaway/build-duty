@@ -34,6 +34,31 @@ az devops invoke \
   -o table
 ```
 
+### Stage and job filters
+
+Work items may include a `stageFilters` metadata field from the pipeline config.
+When present, **only investigate matching stages and jobs** — skip all others.
+
+Format: `Stage1Pattern (all jobs); Stage2Pattern → Job1Pattern, Job2Pattern`
+
+Examples:
+- `Source* (all jobs)` — investigate all jobs in stages starting with "Source"
+- `VMR* → *Signing Validation*` — in VMR stages, only investigate Signing Validation jobs
+- `Source* (all jobs); VMR* → *Signing Validation*` — both rules combined
+
+To filter the timeline to specific stages:
+```bash
+# List all stages with their results
+az devops invoke \
+  --area build --resource timeline \
+  --route-parameters project={project} buildId={buildId} \
+  --org https://dev.azure.com/{org} \
+  --query "records[?type=='Stage'].{name:name, result:result, id:id}" -o table
+```
+
+Then filter tasks by matching parent stage/job names against the patterns.
+When no `stageFilters` are set, investigate all failed tasks.
+
 ### Fetch a task log
 
 ```bash
