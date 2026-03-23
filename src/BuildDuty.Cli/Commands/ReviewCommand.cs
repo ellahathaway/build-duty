@@ -126,18 +126,21 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
             if (string.IsNullOrWhiteSpace(instruction))
                 continue;
 
-            await ExecuteInstructionAsync(config, store, selectedItems, instruction, adapterFactory);
-
-            AnsiConsole.MarkupLine("\n[dim]Press enter to continue...[/]");
-            Console.ReadLine();
+            // Multi-turn conversation with the agent on these items
+            await RunConversationAsync(config, store, selectedItems, instruction, adapterFactory);
         }
     }
 
-    private static async Task ExecuteInstructionAsync(
+    /// <summary>
+    /// Opens a multi-turn conversation with the AI agent for the selected items.
+    /// The first message includes full item context. Follow-ups are sent on the
+    /// same session so the agent retains memory.
+    /// </summary>
+    private static async Task RunConversationAsync(
         BuildDutyConfig config,
         WorkItemStore store,
         List<WorkItem> items,
-        string instruction,
+        string firstInstruction,
         Func<BuildDutyConfig, WorkItemStore, CopilotAdapter>? adapterFactory)
     {
         if (adapterFactory is null)
@@ -151,70 +154,104 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
             ? CopilotSessionFactory.AdoPipelineServers(ExtractOrgName(adoOrgUrl))
             : CopilotSessionFactory.NoExtraServers();
 
-        var itemContext = string.Join("\n\n", items.Select(item =>
+        await using var adapter = adapterFactory(config, store);
+        ReviewSession session;
+
+        try
         {
-            var sig = item.Signals.FirstOrDefault();
-            var failureDetails = sig?.Metadata?.GetValueOrDefault("failureDetails") ?? "";
-            var detailsBlock = string.IsNullOrWhiteSpace(failureDetails)
-                ? ""
-                : $"\n  Failure details:\n  {failureDetails.Replace("\n", "\n  ")}";
+            session = await adapter.CreateReviewSessionAsync(
+                [
+                    "skills/triage-signals",
+                    "skills/diagnose-build-break",
+                    "skills/suggest-next-actions",
+                ],
+                mcpServers);
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Failed to start agent: {Markup.Escape(ex.Message)}[/]");
+            return;
+        }
 
-            return $"""
-                - **{item.Id}**
-                  Type: {sig?.Type ?? "(unknown)"}
-                  Status: {item.Status}
-                  Title: {item.Title}
-                  Summary: {item.Summary ?? "(none)"}
-                  Ref: {sig?.Ref ?? "(none)"}
-                  Links: {(item.LinkedItems.Count > 0 ? string.Join(", ", item.LinkedItems) : "(none)")}{detailsBlock}
+        await using (session)
+        {
+            // Build the initial prompt with full item context
+            var itemContext = string.Join("\n\n", items.Select(item =>
+            {
+                var sig = item.Signals.FirstOrDefault();
+                var failureDetails = sig?.Metadata?.GetValueOrDefault("failureDetails") ?? "";
+                var detailsBlock = string.IsNullOrWhiteSpace(failureDetails)
+                    ? ""
+                    : $"\n  Failure details:\n  {failureDetails.Replace("\n", "\n  ")}";
+
+                return $"""
+                    - **{item.Id}**
+                      Type: {sig?.Type ?? "(unknown)"}
+                      Status: {item.Status}
+                      Title: {item.Title}
+                      Summary: {item.Summary ?? "(none)"}
+                      Ref: {sig?.Ref ?? "(none)"}
+                      Links: {(item.LinkedItems.Count > 0 ? string.Join(", ", item.LinkedItems) : "(none)")}{detailsBlock}
+                    """;
+            }));
+
+            var firstPrompt = $"""
+                You are a build-duty assistant helping an engineer review work items.
+                This is a multi-turn conversation — the engineer may give follow-up
+                instructions after your initial response.
+
+                You have tools to:
+                - `resolve_work_item(id, reason)` — resolve items
+                - `update_work_item_status(id, status)` — change status
+                - `link_work_items(id, linkedId)` — link related items
+                - `get_task_log(buildUrl, logId, tailLines?)` — fetch build logs
+                - `set_work_item_summary(id, summary)` — update summaries
+
+                Use the diagnose-build-break and suggest-next-actions skills if the
+                instruction requires investigation or analysis.
+
+                **Selected work items ({items.Count}):**
+                {itemContext}
+
+                **Engineer's instruction:**
+                > {firstInstruction}
+
+                Execute the instruction. Provide a brief summary of what you did.
+                If you need input, clearly ask.
                 """;
-        }));
 
-        var prompt = $"""
-            You are a build-duty assistant helping an engineer review work items.
+            // Send first message
+            var response = await SendWithSpinner(session, firstPrompt);
+            ShowResponse(response);
 
-            The engineer selected the following {items.Count} work item(s) and gave
-            this instruction:
+            // Multi-turn loop
+            while (true)
+            {
+                AnsiConsole.WriteLine();
+                var followUp = AnsiConsole.Prompt(
+                    new TextPrompt<string>("[bold]Follow-up[/] [dim](empty to go back)[/]:")
+                        .AllowEmpty());
 
-            > {instruction}
+                if (string.IsNullOrWhiteSpace(followUp))
+                    break;
 
-            **Selected work items:**
-            {itemContext}
+                response = await SendWithSpinner(session, followUp);
+                ShowResponse(response);
+            }
+        }
+    }
 
-            Execute the engineer's instruction. You have tools to:
-            - `resolve_work_item(id, reason)` — resolve items
-            - `update_work_item_status(id, status)` — change status
-            - `link_work_items(id, linkedId)` — link related items
-            - `get_task_log(buildUrl, logId, tailLines?)` — fetch build logs
-            - `set_work_item_summary(id, summary)` — update summaries
-
-            Use the diagnose-build-break and suggest-next-actions skills if the
-            instruction requires investigation or analysis.
-
-            After executing, provide a brief summary of what you did. If you need
-            the engineer's input to proceed, clearly ask your question and explain
-            what you need to know.
-            """;
-
+    private static async Task<string> SendWithSpinner(ReviewSession session, string prompt)
+    {
         string? response = null;
 
         await AnsiConsole.Status()
             .Spinner(Spinner.Known.Dots)
             .StartAsync("[bold]Agent working...[/]", async _ =>
             {
-                await using var adapter = adapterFactory(config, store);
                 try
                 {
-                    var result = await adapter.ScanSourceAsync(
-                        prompt, "review",
-                        [
-                            "skills/triage-signals",
-                            "skills/diagnose-build-break",
-                            "skills/suggest-next-actions",
-                        ],
-                        mcpServers, ct: default);
-
-                    response = result.Summary;
+                    response = await session.SendAsync(prompt);
                 }
                 catch (Exception ex)
                 {
@@ -222,20 +259,18 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                 }
             });
 
-        if (response is not null)
+        return response ?? "(no response)";
+    }
+
+    private static void ShowResponse(string response)
+    {
+        AnsiConsole.WriteLine();
+        AnsiConsole.Write(new Panel(Markup.Escape(response))
         {
-            AnsiConsole.WriteLine();
-            AnsiConsole.Write(new Panel(Markup.Escape(response))
-            {
-                Header = new PanelHeader("[green]Agent Response[/]"),
-                Border = BoxBorder.Double,
-                Padding = new Padding(1, 1),
-            });
-        }
-        else
-        {
-            AnsiConsole.MarkupLine("[red]No response from agent.[/]");
-        }
+            Header = new PanelHeader("[green]Agent Response[/]"),
+            Border = BoxBorder.Double,
+            Padding = new Padding(1, 1),
+        });
     }
 
     private static string FormatType(string type) => type switch

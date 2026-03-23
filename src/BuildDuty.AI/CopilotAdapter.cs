@@ -204,4 +204,54 @@ public class CopilotAdapter : IAsyncDisposable
             await d.DisposeAsync();
         GC.SuppressFinalize(this);
     }
+
+    /// <summary>
+    /// Create a persistent review session for multi-turn interaction.
+    /// The caller is responsible for disposing the returned session.
+    /// </summary>
+    public async Task<ReviewSession> CreateReviewSessionAsync(
+        IReadOnlyList<string> skills,
+        Dictionary<string, object> mcpServers,
+        CancellationToken ct = default)
+    {
+        _client ??= new CopilotClient(_clientOptions);
+        await _client.StartAsync(ct);
+
+        var session = await CopilotSessionFactory.CreateAsync(
+            _client,
+            skills: skills,
+            mcpServers: mcpServers,
+            model: _model,
+            tools: _tools,
+            ct: ct);
+
+        return new ReviewSession(session);
+    }
+}
+
+/// <summary>
+/// A long-lived session that supports multi-turn conversation with
+/// the AI agent. Created via <see cref="CopilotAdapter.CreateReviewSessionAsync"/>.
+/// </summary>
+public sealed class ReviewSession : IAsyncDisposable
+{
+    private readonly CopilotSession _session;
+
+    internal ReviewSession(CopilotSession session) => _session = session;
+
+    /// <summary>Send a message and wait for the agent's response.</summary>
+    public async Task<string> SendAsync(string prompt, CancellationToken ct = default)
+    {
+        var response = await _session.SendAndWaitAsync(
+            new MessageOptions { Prompt = prompt },
+            timeout: TimeSpan.FromMinutes(10),
+            cancellationToken: ct);
+
+        return response?.Data?.Content ?? "(no response)";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _session.DisposeAsync();
+    }
 }
