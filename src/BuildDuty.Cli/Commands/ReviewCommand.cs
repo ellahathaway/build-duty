@@ -133,14 +133,22 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
 
                 if (selectedChoice == exitLabel)
                 {
-                    // Wait for running agents before exiting
-                    var running = agents.Where(a => a.State == AgentState.Running).ToList();
-                    if (running.Count > 0)
+                    // Save any non-dismissed agents for later resume
+                    var saveable = agents.Where(a => a.State != AgentState.Dismissed).ToList();
+                    if (saveable.Count > 0)
                     {
+                        // Wait briefly for running agents to finish
+                        var running = saveable.Where(a => a.State == AgentState.Running).ToList();
+                        if (running.Count > 0)
+                        {
+                            AnsiConsole.MarkupLine(
+                                $"[yellow]Waiting for {running.Count} running agent(s) to finish...[/]");
+                            await Task.WhenAll(running.Select(a => a.WaitAsync()));
+                        }
+
+                        await SavedSession.SaveAllAsync(store.BasePath, agents);
                         AnsiConsole.MarkupLine(
-                            $"[yellow]Waiting for {running.Count} running agent(s) to finish...[/]");
-                        await Task.WhenAll(running.Select(a => a.WaitAsync()));
-                        await ShowAgentResults(agents, store);
+                            $"[dim]{saveable.Count} agent session(s) saved — resume next time you review those items.[/]");
                     }
 
                     AnsiConsole.MarkupLine("[dim]Review complete.[/]");
@@ -193,6 +201,42 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                     AnsiConsole.MarkupLine($"  [bold]•[/] {Markup.Escape(item.Id)}: {Markup.Escape(Truncate(item.Summary ?? item.Title, 80))}");
                 AnsiConsole.WriteLine();
 
+                // Check for a saved session matching these items
+                var savedSession = await SavedSession.FindAsync(
+                    store.BasePath, selectedItems.Select(i => i.Id));
+
+                if (savedSession is not null)
+                {
+                    var resumeChoice = AnsiConsole.Prompt(
+                        new SelectionPrompt<string>()
+                            .Title($"[bold]Prior session found[/] [dim](saved {savedSession.SavedAtUtc:g} UTC)[/]")
+                            .HighlightStyle(new Style(Color.Cyan1))
+                            .AddChoices("Resume prior session", "Start new session", "Go back"));
+
+                    if (resumeChoice == "Go back")
+                        continue;
+
+                    if (adapterFactory is null)
+                    {
+                        AnsiConsole.MarkupLine("[red]AI adapter required for review actions.[/]");
+                        continue;
+                    }
+
+                    if (resumeChoice == "Resume prior session")
+                    {
+                        var agent = BackgroundAgent.StartWithHistory(
+                            config, store, selectedItems, savedSession, adapterFactory);
+                        agents.Add(agent);
+                        SavedSession.ClearAll(store.BasePath);
+
+                        AnsiConsole.MarkupLine(
+                            $"[green]✓ Agent resumed:[/] [dim]{Markup.Escape(agent.Label)}[/]");
+                        AnsiConsole.MarkupLine("[dim]Continue reviewing — check results anytime from the menu.[/]");
+                        await Task.Delay(800);
+                        continue;
+                    }
+                }
+
                 var instruction = AnsiConsole.Ask<string>("[bold]What should I do with these?[/]");
 
                 if (string.IsNullOrWhiteSpace(instruction))
@@ -205,12 +249,12 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                 }
 
                 // Dispatch as background agent
-                var agent = BackgroundAgent.Start(
+                var newAgent = BackgroundAgent.Start(
                     config, store, selectedItems, instruction, adapterFactory);
-                agents.Add(agent);
+                agents.Add(newAgent);
 
                 AnsiConsole.MarkupLine(
-                    $"[green]✓ Agent dispatched:[/] [dim]{Markup.Escape(agent.Label)}[/]");
+                    $"[green]✓ Agent dispatched:[/] [dim]{Markup.Escape(newAgent.Label)}[/]");
                 AnsiConsole.MarkupLine("[dim]Continue reviewing — check results anytime from the menu.[/]");
                 await Task.Delay(800);
             }
@@ -603,13 +647,100 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
 /// against a set of work items. The session stays alive so follow-up
 /// messages can be sent once the initial work completes.
 /// </summary>
+/// <summary>
+/// Persisted conversation state for resuming agent sessions across runs.
+/// </summary>
+internal sealed class SavedSession
+{
+    public List<string> WorkItemIds { get; set; } = [];
+    public string Instruction { get; set; } = "";
+    public List<ConversationTurn> History { get; set; } = [];
+    public DateTime SavedAtUtc { get; set; } = DateTime.UtcNow;
+
+    public sealed class ConversationTurn
+    {
+        public string Role { get; set; } = ""; // "user" or "assistant"
+        public string Content { get; set; } = "";
+    }
+
+    /// <summary>
+    /// Saves agent sessions to the store's review-sessions directory.
+    /// </summary>
+    public static async Task SaveAllAsync(string basePath, IEnumerable<BackgroundAgent> agents)
+    {
+        var dir = Path.Combine(basePath, "review-sessions");
+        // Clear old sessions
+        if (Directory.Exists(dir))
+            Directory.Delete(dir, recursive: true);
+
+        var toSave = agents.Where(a =>
+            a.State != AgentState.Dismissed && a.ConversationHistory.Count > 0).ToList();
+
+        if (toSave.Count == 0) return;
+        Directory.CreateDirectory(dir);
+
+        for (int i = 0; i < toSave.Count; i++)
+        {
+            var agent = toSave[i];
+            var session = new SavedSession
+            {
+                WorkItemIds = agent.Items.Select(it => it.Id).ToList(),
+                Instruction = agent.Instruction,
+                History = agent.ConversationHistory.ToList(),
+                SavedAtUtc = DateTime.UtcNow,
+            };
+            var json = JsonSerializer.Serialize(session, new JsonSerializerOptions { WriteIndented = true });
+            await File.WriteAllTextAsync(Path.Combine(dir, $"session-{i}.json"), json);
+        }
+    }
+
+    /// <summary>
+    /// Finds a saved session matching the given work item IDs (exact set match).
+    /// </summary>
+    public static async Task<SavedSession?> FindAsync(string basePath, IEnumerable<string> workItemIds)
+    {
+        var dir = Path.Combine(basePath, "review-sessions");
+        if (!Directory.Exists(dir)) return null;
+
+        var targetSet = workItemIds.ToHashSet();
+
+        foreach (var file in Directory.GetFiles(dir, "session-*.json"))
+        {
+            try
+            {
+                var json = await File.ReadAllTextAsync(file);
+                var session = JsonSerializer.Deserialize<SavedSession>(json);
+                if (session is not null && session.WorkItemIds.ToHashSet().SetEquals(targetSet))
+                    return session;
+            }
+            catch { }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Deletes all saved sessions.
+    /// </summary>
+    public static void ClearAll(string basePath)
+    {
+        var dir = Path.Combine(basePath, "review-sessions");
+        if (Directory.Exists(dir))
+            Directory.Delete(dir, recursive: true);
+    }
+}
+
 internal sealed class BackgroundAgent : IAsyncDisposable
 {
     public string Label { get; }
     public List<WorkItem> Items { get; }
+    public string Instruction { get; }
     public AgentState State { get; private set; } = AgentState.Running;
     public string? LastResponse { get; private set; }
     public string? ErrorMessage { get; private set; }
+
+    /// <summary>Full conversation history for persistence.</summary>
+    public List<SavedSession.ConversationTurn> ConversationHistory { get; } = [];
 
     private CopilotAdapter? _adapter;
     private ReviewSession? _session;
@@ -622,6 +753,7 @@ internal sealed class BackgroundAgent : IAsyncDisposable
     private BackgroundAgent(List<WorkItem> items, string instruction)
     {
         Items = items;
+        Instruction = instruction;
         Label = items.Count == 1
             ? $"{items[0].Id}: {Truncate(instruction, 40)}"
             : $"{items.Count} items: {Truncate(instruction, 40)}";
@@ -636,6 +768,24 @@ internal sealed class BackgroundAgent : IAsyncDisposable
     {
         var agent = new BackgroundAgent(items, instruction);
         agent._workTask = agent.RunAsync(config, store, instruction, adapterFactory);
+        return agent;
+    }
+
+    /// <summary>
+    /// Resume an agent from a saved session. Replays prior conversation as context
+    /// and sends the resume prompt.
+    /// </summary>
+    public static BackgroundAgent StartWithHistory(
+        BuildDutyConfig config,
+        WorkItemStore store,
+        List<WorkItem> items,
+        SavedSession saved,
+        Func<BuildDutyConfig, WorkItemStore, CopilotAdapter> adapterFactory)
+    {
+        var agent = new BackgroundAgent(items, saved.Instruction);
+        agent.ConversationHistory.AddRange(saved.History);
+        agent.LastResponse = saved.History.LastOrDefault(t => t.Role == "assistant")?.Content;
+        agent._workTask = agent.ResumeAsync(config, store, saved, adapterFactory);
         return agent;
     }
 
@@ -677,8 +827,10 @@ internal sealed class BackgroundAgent : IAsyncDisposable
         if (_session is null)
             throw new InvalidOperationException("Agent session is not available.");
 
+        ConversationHistory.Add(new SavedSession.ConversationTurn { Role = "user", Content = prompt });
         var response = await _session.SendAsync(prompt);
         LastResponse = response;
+        ConversationHistory.Add(new SavedSession.ConversationTurn { Role = "assistant", Content = response });
         return response;
     }
 
@@ -691,6 +843,7 @@ internal sealed class BackgroundAgent : IAsyncDisposable
         if (_session is null)
             throw new InvalidOperationException("Agent session is not available.");
 
+        ConversationHistory.Add(new SavedSession.ConversationTurn { Role = "user", Content = prompt });
         State = AgentState.Running;
         ClearStreamBuffer();
         _workTask = Task.Run(async () =>
@@ -698,6 +851,7 @@ internal sealed class BackgroundAgent : IAsyncDisposable
             try
             {
                 LastResponse = await _session.SendAsync(prompt);
+                ConversationHistory.Add(new SavedSession.ConversationTurn { Role = "assistant", Content = LastResponse });
                 State = AgentState.Done;
             }
             catch (Exception ex)
@@ -734,7 +888,63 @@ internal sealed class BackgroundAgent : IAsyncDisposable
             _session.OnStream(OnStreamEvent);
 
             var prompt = ReviewCommand.BuildAgentPrompt(Items, instruction);
+            ConversationHistory.Add(new SavedSession.ConversationTurn { Role = "user", Content = prompt });
             LastResponse = await _session.SendAsync(prompt);
+            ConversationHistory.Add(new SavedSession.ConversationTurn { Role = "assistant", Content = LastResponse });
+            State = AgentState.Done;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+            State = AgentState.Error;
+        }
+    }
+
+    private async Task ResumeAsync(
+        BuildDutyConfig config,
+        WorkItemStore store,
+        SavedSession saved,
+        Func<BuildDutyConfig, WorkItemStore, CopilotAdapter> adapterFactory)
+    {
+        try
+        {
+            _adapter = adapterFactory(config, store);
+
+            var adoOrgUrl = config.AzureDevOps?.Organizations.FirstOrDefault()?.Url;
+            var mcpServers = adoOrgUrl is not null
+                ? CopilotSessionFactory.AdoPipelineServers(ExtractOrgName(adoOrgUrl))
+                : CopilotSessionFactory.NoExtraServers();
+
+            _session = await _adapter.CreateReviewSessionAsync(
+                [
+                    "skills/triage",
+                    "skills/diagnose-build-break",
+                    "skills/suggest-next-actions",
+                ],
+                mcpServers);
+
+            _session.OnStream(OnStreamEvent);
+
+            // Build a resume prompt that includes the full prior conversation
+            var historyBlock = string.Join("\n\n", saved.History.Select(t =>
+                t.Role == "user"
+                    ? $"**User:**\n{t.Content}"
+                    : $"**Assistant:**\n{t.Content}"));
+
+            var resumePrompt = $"""
+                You are resuming a prior review session. Here is the full
+                conversation history from the previous session:
+
+                {historyBlock}
+
+                The session was interrupted. Continue where you left off.
+                Briefly summarize what was done previously, then ask the
+                engineer what they'd like to do next.
+                """;
+
+            ConversationHistory.Add(new SavedSession.ConversationTurn { Role = "user", Content = resumePrompt });
+            LastResponse = await _session.SendAsync(resumePrompt);
+            ConversationHistory.Add(new SavedSession.ConversationTurn { Role = "assistant", Content = LastResponse });
             State = AgentState.Done;
         }
         catch (Exception ex)
