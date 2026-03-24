@@ -325,31 +325,12 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                     break;
                 }
 
-                var response = await SendWithSpinner(picked, followUp);
-                ShowResponse(response);
+                picked.FollowUpInBackground(followUp);
+                AnsiConsole.MarkupLine("[dim]Follow-up dispatched — agent is working in the background.[/]");
+                await Task.Delay(400);
+                break; // return to agent list / review loop
             }
         }
-    }
-
-    private static async Task<string> SendWithSpinner(BackgroundAgent agent, string prompt)
-    {
-        string? response = null;
-
-        await AnsiConsole.Status()
-            .Spinner(Spinner.Known.Dots)
-            .StartAsync("[bold]Agent working...[/]", async _ =>
-            {
-                try
-                {
-                    response = await agent.FollowUpAsync(prompt);
-                }
-                catch (Exception ex)
-                {
-                    response = $"Error: {ex.Message}";
-                }
-            });
-
-        return response ?? "(no response)";
     }
 
     private static void ShowResponse(string response)
@@ -483,6 +464,31 @@ internal sealed class BackgroundAgent : IAsyncDisposable
         var response = await _session.SendAsync(prompt);
         LastResponse = response;
         return response;
+    }
+
+    /// <summary>
+    /// Dispatch a follow-up in the background so the caller can return
+    /// to the review loop immediately.
+    /// </summary>
+    public void FollowUpInBackground(string prompt)
+    {
+        if (_session is null)
+            throw new InvalidOperationException("Agent session is not available.");
+
+        State = AgentState.Running;
+        _workTask = Task.Run(async () =>
+        {
+            try
+            {
+                LastResponse = await _session.SendAsync(prompt);
+                State = AgentState.Done;
+            }
+            catch (Exception ex)
+            {
+                ErrorMessage = ex.Message;
+                State = AgentState.Error;
+            }
+        });
     }
 
     private async Task RunAsync(
