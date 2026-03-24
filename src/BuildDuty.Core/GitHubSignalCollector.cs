@@ -65,6 +65,11 @@ public sealed class GitHubSignalCollector
                                     if (sig is not null && sig.SourceUpdatedAtUtc != signal.SourceUpdatedAtUtc)
                                     {
                                         sig.SourceUpdatedAtUtc = signal.SourceUpdatedAtUtc;
+
+                                        // Re-activate acknowledged items when source data changes
+                                        if (existing.Status == "acknowledged")
+                                            existing.SetStatus("needs-investigation", "Source updated since acknowledgement");
+
                                         await store.SaveAsync(existing);
                                     }
                                 }
@@ -143,6 +148,11 @@ public sealed class GitHubSignalCollector
                                     if (sig is not null && sig.SourceUpdatedAtUtc != signal.SourceUpdatedAtUtc)
                                     {
                                         sig.SourceUpdatedAtUtc = signal.SourceUpdatedAtUtc;
+
+                                        // Re-activate acknowledged items when source data changes
+                                        if (existing.Status == "acknowledged")
+                                            existing.SetStatus("needs-investigation", "Source updated since acknowledgement");
+
                                         await store.SaveAsync(existing);
                                     }
                                 }

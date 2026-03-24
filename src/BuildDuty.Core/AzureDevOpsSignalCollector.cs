@@ -123,6 +123,11 @@ public sealed class AzureDevOpsSignalCollector
                                                     sig.Metadata ??= new Dictionary<string, string>();
                                                     sig.Metadata["failureDetails"] = metadata["failureDetails"];
                                                     sig.SourceUpdatedAtUtc = DateTime.UtcNow;
+
+                                                    // Re-activate acknowledged items when source data changes
+                                                    if (existing.Status == "acknowledged")
+                                                        existing.SetStatus("needs-investigation", "Source updated since acknowledgement");
+
                                                     await store.SaveAsync(existing);
                                                 }
                                             }
