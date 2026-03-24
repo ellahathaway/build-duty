@@ -280,36 +280,47 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
     }
 
     /// <summary>
-    /// Full interaction with an agent: live watch (if running), show response, follow-up loop.
+    /// Full interaction with an agent: stream output, follow-up loop.
     /// </summary>
     private static async Task InteractWithAgent(BackgroundAgent agent, WorkItemStore store)
     {
-        // If running, enter live watch mode
+        AnsiConsole.Clear();
+
+        foreach (var item in agent.Items)
+            AnsiConsole.MarkupLine($"  [dim]•[/] {Markup.Escape(item.Id)}");
+        AnsiConsole.WriteLine();
+
+        // If running, stream the current turn
         if (agent.State == AgentState.Running)
         {
-            var escaped = await WatchAgentLive(agent);
+            AnsiConsole.Write(new Rule($"[bold]⟳ {Markup.Escape(agent.Label)}[/]") { Justification = Justify.Left });
+            AnsiConsole.MarkupLine("[dim]Esc to return to menu · agent continues in background[/]");
+            AnsiConsole.WriteLine();
+
+            var escaped = await StreamAgentTurn(agent);
             if (escaped)
             {
+                AnsiConsole.WriteLine();
                 AnsiConsole.MarkupLine("[dim]Agent continues in background.[/]");
                 await Task.Delay(500);
                 return;
             }
+            AnsiConsole.WriteLine();
+        }
+        else if (agent.State == AgentState.Done)
+        {
+            // Agent was already done — show the batched response
+            ShowResponse(agent.LastResponse ?? "(no response)");
         }
 
-        // Follow-up loop (agent is done or errored)
+        // Follow-up loop
         while (true)
         {
-            AnsiConsole.Clear();
-            AnsiConsole.Write(new Rule($"[bold]{Markup.Escape(agent.Label)}[/]") { Justification = Justify.Left });
-            AnsiConsole.WriteLine();
-
-            foreach (var item in agent.Items)
-                AnsiConsole.MarkupLine($"  [dim]•[/] {Markup.Escape(item.Id)}");
-            AnsiConsole.WriteLine();
-
             if (agent.State == AgentState.Error)
             {
-                AnsiConsole.MarkupLine($"[red]Error: {Markup.Escape(agent.ErrorMessage ?? "Unknown")}[/]");
+                AnsiConsole.Write(new Rule("[red]✗ Error[/]") { Justification = Justify.Left });
+                AnsiConsole.MarkupLine($"[red]{Markup.Escape(agent.ErrorMessage ?? "Unknown")}[/]");
+                AnsiConsole.WriteLine();
 
                 var errorAction = AnsiConsole.Prompt(
                     new SelectionPrompt<string>()
@@ -320,11 +331,11 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                 return;
             }
 
-            ShowResponse(agent.LastResponse ?? "(no response)");
-
+            AnsiConsole.Write(new Rule("[dim]Turn complete[/]") { Justification = Justify.Left });
             AnsiConsole.WriteLine();
+
             var followUp = AnsiConsole.Prompt(
-                new TextPrompt<string>("[bold]Follow-up[/] [dim](empty to go back, 'done' to dismiss)[/]:")
+                new TextPrompt<string>("[bold]Follow-up[/] [dim](empty to return, 'done' to dismiss)[/]:")
                     .AllowEmpty());
 
             if (string.IsNullOrWhiteSpace(followUp))
@@ -336,119 +347,101 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                 return;
             }
 
-            // Dispatch follow-up and watch it live
+            // Dispatch follow-up and stream it
             agent.FollowUpInBackground(followUp);
-            var wasEscaped = await WatchAgentLive(agent);
+            AnsiConsole.WriteLine();
+            AnsiConsole.Write(new Rule("[bold]⟳ Follow-up[/]") { Justification = Justify.Left });
+            AnsiConsole.WriteLine();
+
+            var wasEscaped = await StreamAgentTurn(agent);
             if (wasEscaped)
             {
+                AnsiConsole.WriteLine();
                 AnsiConsole.MarkupLine("[dim]Agent continues in background.[/]");
                 await Task.Delay(500);
                 return;
             }
-            // Loop back to show new response and prompt again
+            AnsiConsole.WriteLine();
+            // Loop back to prompt for another follow-up
         }
     }
 
     /// <summary>
-    /// Live-stream agent activity to the terminal. Returns true if user pressed Escape.
+    /// Stream agent events directly to terminal (append-only, no clearing).
+    /// Returns true if user pressed Escape.
     /// </summary>
-    private static async Task<bool> WatchAgentLive(BackgroundAgent agent)
+    private static async Task<bool> StreamAgentTurn(BackgroundAgent agent)
     {
-        var sb = new StringBuilder();
         var cursor = 0;
         var buffer = new List<AgentStreamEvent>();
-        var escaped = false;
+        var hasDelta = false;
 
-        await AnsiConsole.Live(BuildStreamPanel(sb, agent))
-            .AutoClear(false)
-            .StartAsync(async ctx =>
+        while (agent.State == AgentState.Running)
+        {
+            if (Console.KeyAvailable)
             {
-                while (agent.State == AgentState.Running)
-                {
-                    if (Console.KeyAvailable)
-                    {
-                        var key = Console.ReadKey(intercept: true);
-                        if (key.Key == ConsoleKey.Escape)
-                        {
-                            escaped = true;
-                            return;
-                        }
-                    }
+                var key = Console.ReadKey(intercept: true);
+                if (key.Key == ConsoleKey.Escape)
+                    return true;
+            }
 
-                    cursor = agent.ReadStreamEvents(cursor, buffer);
-                    foreach (var evt in buffer)
-                        FormatStreamEvent(sb, evt);
-                    buffer.Clear();
+            cursor = agent.ReadStreamEvents(cursor, buffer);
+            foreach (var evt in buffer)
+                WriteStreamEvent(evt, ref hasDelta);
+            buffer.Clear();
+            await Task.Delay(100);
+        }
 
-                    ctx.UpdateTarget(BuildStreamPanel(sb, agent));
-                    await Task.Delay(100);
-                }
+        // Final flush
+        cursor = agent.ReadStreamEvents(cursor, buffer);
+        foreach (var evt in buffer)
+            WriteStreamEvent(evt, ref hasDelta);
+        buffer.Clear();
 
-                // Final flush after completion
-                cursor = agent.ReadStreamEvents(cursor, buffer);
-                foreach (var evt in buffer)
-                    FormatStreamEvent(sb, evt);
-                buffer.Clear();
-                ctx.UpdateTarget(BuildStreamPanel(sb, agent));
-            });
-
-        return escaped;
+        return false;
     }
 
-    private static Panel BuildStreamPanel(StringBuilder sb, BackgroundAgent agent)
-    {
-        var icon = agent.State switch
-        {
-            AgentState.Running => "⟳",
-            AgentState.Done => "✓",
-            AgentState.Error => "✗",
-            _ => "?",
-        };
-
-        var text = sb.Length > 0 ? sb.ToString() : "[dim]Waiting for response...[/]";
-
-        // Show last 50 lines to keep terminal manageable
-        var lines = text.Split('\n');
-        if (lines.Length > 50)
-            text = "[dim]...[/]\n" + string.Join('\n', lines[^50..]);
-
-        var stateHint = agent.State == AgentState.Running ? " [dim](Esc to return to menu)[/]" : "";
-
-        return new Panel(new Markup(text))
-        {
-            Header = new PanelHeader($"{icon} [bold]{Markup.Escape(agent.Label)}[/]{stateHint}"),
-            Border = BoxBorder.Rounded,
-            Padding = new Padding(1, 0),
-        };
-    }
-
-    private static void FormatStreamEvent(StringBuilder sb, AgentStreamEvent evt)
+    /// <summary>
+    /// Write a single stream event directly to the terminal.
+    /// Handles both delta (incremental) and message (batched) text from the agent.
+    /// </summary>
+    private static void WriteStreamEvent(AgentStreamEvent evt, ref bool hasDelta)
     {
         switch (evt.Type)
         {
             case "delta":
-                sb.Append(Markup.Escape(evt.Content ?? ""));
+                hasDelta = true;
+                Console.Write(evt.Content ?? "");
+                break;
+            case "message":
+                // Full message — only render if no deltas were received (SDK batched mode)
+                if (!hasDelta && !string.IsNullOrEmpty(evt.Content))
+                {
+                    Console.WriteLine();
+                    Console.Write(evt.Content);
+                    Console.WriteLine();
+                }
+                hasDelta = false; // reset for next message section
                 break;
             case "tool-start":
-                if (sb.Length > 0 && sb[^1] != '\n') sb.AppendLine();
-                sb.AppendLine();
-                sb.AppendLine($"  [dim]┌─ 🔧 {Markup.Escape(evt.ToolName ?? "?")}[/]");
+                Console.WriteLine();
+                AnsiConsole.MarkupLine($"  [dim]┌─ 🔧 {Markup.Escape(evt.ToolName ?? "?")}[/]");
                 if (!string.IsNullOrEmpty(evt.ToolArgs))
                 {
                     foreach (var argLine in FormatToolArgs(evt.ToolArgs))
-                        sb.AppendLine($"  [dim]│[/] {argLine}");
+                        AnsiConsole.MarkupLine($"  [dim]│[/] {argLine}");
                 }
                 break;
             case "tool-end":
                 if (evt.ToolSuccess == true)
-                    sb.AppendLine("  [dim]└─[/] [green]✓ done[/]");
+                    AnsiConsole.MarkupLine("  [dim]└─[/] [green]✓ done[/]");
                 else
-                    sb.AppendLine("  [dim]└─[/] [red]✗ failed[/]");
-                sb.AppendLine();
+                    AnsiConsole.MarkupLine("  [dim]└─[/] [red]✗ failed[/]");
+                Console.WriteLine();
                 break;
             case "error":
-                if (sb.Length > 0 && sb[^1] != '\n') sb.AppendLine();
-                sb.AppendLine($"[red]⚠ {Markup.Escape(evt.Content ?? "")}[/]");
+                Console.WriteLine();
+                AnsiConsole.MarkupLine($"[red]⚠ {Markup.Escape(evt.Content ?? "")}[/]");
                 break;
         }
     }
