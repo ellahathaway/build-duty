@@ -91,12 +91,13 @@ azureDevOps:
               status: [failed, partiallySucceeded, canceled]
 
 github:
-  repositories:
-    - owner: dotnet
-      name: my-repo
-      issues:
-        labels: ["Build Break"]
-        state: open
+  organizations:
+    - organization: dotnet
+      repositories:
+        - name: my-repo
+          issues:
+            labels: ["Build Break"]
+            state: open
 ```
 
 ### 5. Run the triage pipeline
@@ -164,44 +165,44 @@ azureDevOps:
               name: dotnet-source-build
               branches:
                 - main
-              release:
+              release:                              # auto-discover release branches
                 repository: dotnet-dotnet
                 supportPhases: [active, maintenance, preview]
                 minVersion: 8
-              status: [failed, partiallySucceeded]
-              stages:              # optional: only collect matching stages/jobs
-                - "Build"
-              legs:
-                - "Build Linux*"
+              status: [failed, partiallySucceeded, canceled]
+              age: 7d                               # only runs from the last 7 days
+              stages:                               # optional: filter to specific stages/jobs
+                - name: "Build"
+                  jobs:
+                    - "Build Linux*"
 
 github:
-  repositories:
-    - owner: dotnet
-      name: source-build
-      issues:
-        labels: ["Build Break"]
-        state: open
-      pullRequests:
-        - namePattern: "dotnet-*"
-          labels: ["auto-merge"]
+  organizations:
+    - organization: dotnet
+      repositories:
+        - name: source-build
+          issues:
+            labels: ["Build Break"]
+            state: open
+          prs:
+            - name: "dotnet-*"
 ```
 
 ### Release branch auto-discovery
 
-When a pipeline includes a `release` section, BuildDuty's scanning AI agent
-calls a bundled Python script (`resolve-release-branches.py`) to discover
-active .NET release branches. The script:
+When a pipeline includes a `release` section, the `ReleaseBranchResolver`
+service automatically discovers active .NET release branches. The resolver:
 
-1. Queries the [dotnet/core releases index](https://github.com/dotnet/core/blob/main/release-notes/releases-index.json)
-   for supported channels matching the configured support phases and minimum version.
-2. Downloads per-channel release data to detect shipped SDK versions and
-   previews/RCs.
-3. Returns structured JSON with supported channels, released SDK versions, and
-   released preview identifiers.
+1. Looks up the pipeline's Git repository via `az pipelines show`.
+2. Lists `release/` and `internal/release/` branches in that repo via `az repos ref list`.
+3. Fetches the [dotnet/core releases index](https://github.com/dotnet/core/blob/main/release-notes/releases-index.json)
+   to determine which .NET channels are supported (filtered by configured
+   `supportPhases` and `minVersion`).
+4. Filters branches to only those matching supported channels, returning them
+   alongside `main`.
 
-The AI agent then uses MCP server tools to list branches in the configured
-repository, matches them against the supported channels, and filters out
-branches for released previews and superseded versions.
+All results are cached per pipeline/repo for the lifetime of the process, with
+per-key locking so concurrent callers share a single resolution.
 
 ## CLI commands
 
