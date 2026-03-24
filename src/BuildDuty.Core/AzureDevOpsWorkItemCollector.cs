@@ -11,10 +11,12 @@ namespace BuildDuty.Core;
 public sealed class AzureDevOpsWorkItemCollector
 {
     private readonly AzureDevOpsConfig _config;
+    private readonly ReleaseBranchResolver _branchResolver;
 
-    public AzureDevOpsWorkItemCollector(AzureDevOpsConfig config)
+    public AzureDevOpsWorkItemCollector(AzureDevOpsConfig config, ReleaseBranchResolver branchResolver)
     {
         _config = config;
+        _branchResolver = branchResolver;
     }
 
     public async Task<CollectionResult> CollectAsync(WorkItemStore? store = null, CancellationToken ct = default)
@@ -193,7 +195,7 @@ public sealed class AzureDevOpsWorkItemCollector
         }
     }
 
-    private static async Task<List<string>> ResolveBranchesAsync(
+    private async Task<List<string>> ResolveBranchesAsync(
         string orgUrl, string project, AzureDevOpsPipelineConfig pipeline, CancellationToken ct)
     {
         if (pipeline.Branches is { Count: > 0 })
@@ -205,18 +207,8 @@ public sealed class AzureDevOpsWorkItemCollector
                 ? string.Join(",", pipeline.Release.SupportPhases)
                 : null;
 
-            var resolved = await ReleaseBranchResolver.ResolveAsync(
+            return await _branchResolver.ResolveAsync(
                 orgUrl, project, pipeline.Id, phases, pipeline.Release.MinVersion);
-
-            // Parse the JSON list result
-            try
-            {
-                return JsonSerializer.Deserialize<List<string>>(resolved) ?? ["main"];
-            }
-            catch
-            {
-                return ["main"];
-            }
         }
 
         return ["main"];

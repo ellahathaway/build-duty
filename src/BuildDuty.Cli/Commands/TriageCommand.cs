@@ -51,6 +51,7 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
         AnsiConsole.MarkupLine($"Using config: [bold]{configPath}[/] (name: [bold]{Markup.Escape(config.Name)}[/])");
 
         var store = _storeFactory(config.Name, configPath);
+        var branchResolver = new ReleaseBranchResolver();
 
         // === Step 1: Gather work items ===
         AnsiConsole.MarkupLine("\n[bold]Step 1:[/] Gathering work items...");
@@ -72,7 +73,7 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
                     var adoTask = ctx.AddTask("[bold]AzureDevOps[/]", maxValue: 1);
                     tasks.Add(Task.Run(async () =>
                     {
-                        var collector = new AzureDevOpsWorkItemCollector(config.AzureDevOps);
+                        var collector = new AzureDevOpsWorkItemCollector(config.AzureDevOps, branchResolver);
                         var result = await collector.CollectAsync(store, default);
                         adoTask.Description = result.Success
                             ? $"[green]✓[/] AzureDevOps ({result.Sources.Count} sources)"
