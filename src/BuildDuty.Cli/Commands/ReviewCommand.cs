@@ -358,8 +358,8 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                     .Title("[bold]Set status for these items:[/]")
                     .HighlightStyle(new Style(Color.Cyan1))
                     .AddChoices(
-                        "acknowledged — no action needed right now",
-                        "investigating — actively looking into it",
+                        "monitoring — watching, may return later",
+                        "acknowledged — no action needed, ignore unless resolved",
                         "needs-investigation — needs deeper analysis",
                         "resolved — issue is done",
                         "leave as-is"));

@@ -14,6 +14,8 @@ Source type: `github-pr`
 | `automerge` | Auto-merge is enabled, waiting on checks |
 | `test-failures` | CI checks are failing |
 | `merge-conflicts` | Has merge conflicts |
+| `monitoring` | Watching for updates — will re-triage when source changes |
+| `acknowledged` | Reviewed — no action needed, ignore unless resolved |
 | `merged` | PR has been merged |
 | `closed` | Closed without merging |
 

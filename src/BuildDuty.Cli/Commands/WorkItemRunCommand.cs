@@ -175,10 +175,10 @@ internal sealed class WorkItemRunCommand : AsyncCommand<WorkItemRunSettings>
         if (workItem.Status != "new")
             priorRun = await triageStore.FindLatestForWorkItemAsync(workItemId, ct);
 
-        // Mark as investigating if new
+        // Mark as needs-investigation if new
         if (workItem.Status == "new")
         {
-            workItem.SetStatus("investigating", $"Triage: {action}");
+            workItem.SetStatus("needs-investigation", $"Triage: {action}");
             await wiStore.SaveAsync(workItem, ct);
         }
 

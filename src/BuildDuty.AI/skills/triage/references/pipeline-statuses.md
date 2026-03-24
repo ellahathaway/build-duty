@@ -9,8 +9,8 @@ Source type: `ado-pipeline-run`
 | `new` | Just created, not yet reviewed |
 | `needs-investigation` | Failure with no linked issue or PR — needs attention |
 | `tracked` | Has a linked issue or PR addressing the failure |
-| `investigating` | Actively investigating root cause |
-| `acknowledged` | Reviewed and accepted — no further action needed right now |
+| `acknowledged` | Reviewed and accepted — no action needed, ignore unless resolved |
+| `monitoring` | Watching for updates — will re-triage when source changes |
 | `fixed` | Issue resolved (pipeline passing again) |
 
 ## Status determination
@@ -22,7 +22,7 @@ that addresses it. Without a link, it stays `needs-investigation`.
 |-------------|---------------------|-----------------|
 | `failed` | No | `needs-investigation` |
 | `failed` | Yes | `tracked` |
-| `failed` (recurring, same correlation ID) | No | `investigating` |
+| `failed` (recurring, same correlation ID) | No | `needs-investigation` |
 | `failed` (recurring, same correlation ID) | Yes | `tracked` |
 | `succeeded` (after prior failure) | — | `fixed` |
 | `canceled` | No | `needs-investigation` |

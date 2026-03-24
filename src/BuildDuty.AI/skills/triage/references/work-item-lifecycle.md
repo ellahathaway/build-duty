@@ -1,5 +1,18 @@
 # Work Item Lifecycle
 
+## State vs Status
+
+Work items have two distinct fields:
+
+- **`state`** (collection observation) — set by collectors to describe what was observed.
+  Values: `"new"`, `"updated"`, `"closed"`, or `"stable"` (processed by triage).
+  Triage reads this to decide status changes, then marks the item as `"stable"`.
+
+- **`status`** (triage decision) — set by the triage step to track the item's lifecycle.
+  Terminal statuses indicate the item is done.
+
+Collection ONLY sets `state`. Triage reads `state`, makes `status` decisions, then sets `state` to `"stable"`.
+
 ## Status
 
 Work items have a single `status` field (string) that tracks their lifecycle.
@@ -17,12 +30,24 @@ Terminal statuses indicate the item is done.
 ### Active statuses (by source type)
 
 **Pipeline (`ado-pipeline-run`):** `new` → `needs-investigation` → `tracked` (when linked to issue/PR) → `fixed`
-Other pipeline statuses: `investigating`
+Other pipeline statuses: `monitoring`, `acknowledged`
 
-**Issue (`github-issue`):** `new` → `monitoring` → `in-pr` → `resolved`
+**Issue (`github-issue`):** `new` → `needs-investigation` or `monitoring` → `tracked` → `resolved`
+Other issue statuses: `acknowledged`
 
 **PR (`github-pr`):** `new` → `needs-review` → `approved` → `needs-merge` → `merged`
-Other PR statuses: `changes-requested`, `automerge`, `test-failures`, `merge-conflicts`, `closed`
+Other PR statuses: `changes-requested`, `automerge`, `test-failures`, `merge-conflicts`, `monitoring`, `acknowledged`, `closed`
+
+### Acknowledged vs Monitoring
+
+- **`acknowledged`** — "I've reviewed this and decided no action is needed."
+  Acknowledged items are ignored during triage — they will NOT re-triage when
+  state changes to `updated`. They only re-enter triage if state becomes `closed`
+  (to auto-resolve) or are manually changed.
+
+- **`monitoring`** — "I'm aware of this and actively watching it."
+  Monitoring items WILL re-triage when state changes to `updated`, allowing
+  the engineer to stay informed about changes.
 
 ## ID and Correlation Formats
 

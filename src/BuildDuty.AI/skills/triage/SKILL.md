@@ -14,6 +14,28 @@ the collection step and summarized by the summarize step. Your job is to:
 2. Cross-reference related items **within the provided work item list**
 3. Resolve work items that are no longer relevant
 
+## Collection State
+
+Each work item has a `state` field set by the collection step:
+
+- **`new`** — first time collected, needs initial triage
+- **`updated`** — source has changed since last collection
+- **`closed`** — source is no longer active (build passing, PR merged, issue closed)
+- **`stable`** — triage has processed this item, no pending changes
+
+### How to handle each state
+
+- **`closed`** items: resolve them with `resolve_work_item` (the source is gone).
+- **`updated`** items with `acknowledged` status: consider whether the update
+  warrants re-investigation (change status to `needs-investigation` if so).
+- **`new`** items: determine the appropriate initial status based on source type.
+- **`stable`** items: skip — already triaged, no new information.
+
+After processing, items are automatically marked as `stable`.
+
+The `state` field is separate from `status` — state describes what the collector
+observed, status is what triage decides.
+
 ## Inputs
 
 You receive:

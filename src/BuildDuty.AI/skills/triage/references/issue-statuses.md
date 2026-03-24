@@ -7,16 +7,18 @@ Source type: `github-issue`
 | Status | Meaning |
 |--------|---------|
 | `new` | Just created, not yet reviewed |
+| `needs-investigation` | Needs attention — no linked PR addressing it |
 | `monitoring` | Watching for updates |
-| `in-pr` | Has an associated pull request |
+| `acknowledged` | Reviewed — no action needed, ignore unless resolved |
+| `tracked` | Has a linked item (issue or PR) addressing it |
 | `resolved` | Issue closed |
 
 ## Status determination
 
 | Issue state | Linked PR? | Work item status |
 |------------|-----------|-----------------|
-| `open` + no PR | `monitoring` |
-| `open` + linked PR | `in-pr` |
+| `open` + no PR | `needs-investigation` or `monitoring` |
+| `open` + linked PR | `tracked` |
 | `closed` | — | `resolved` |
 
 ## Cross-referencing
