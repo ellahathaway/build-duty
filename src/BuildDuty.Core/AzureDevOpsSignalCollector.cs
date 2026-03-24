@@ -71,6 +71,9 @@ public sealed class AzureDevOpsSignalCollector
                                                 $"Auto-resolved: filtered stages/jobs passed in build #{build.BuildNumber}");
                                             await store.SaveAsync(item);
                                             resolved++;
+
+                                            // Re-activate acknowledged items linked to this now-resolved item
+                                            ReactivateLinkedAcknowledged(existingItems, item.Id, store);
                                         }
                                     }
                                     continue;
@@ -123,11 +126,6 @@ public sealed class AzureDevOpsSignalCollector
                                                     sig.Metadata ??= new Dictionary<string, string>();
                                                     sig.Metadata["failureDetails"] = metadata["failureDetails"];
                                                     sig.SourceUpdatedAtUtc = DateTime.UtcNow;
-
-                                                    // Re-activate acknowledged items when source data changes
-                                                    if (existing.Status == "acknowledged")
-                                                        existing.SetStatus("needs-investigation", "Source updated since acknowledgement");
-
                                                     await store.SaveAsync(existing);
                                                 }
                                             }
@@ -147,6 +145,9 @@ public sealed class AzureDevOpsSignalCollector
                                         $"Auto-resolved: latest build #{build.BuildNumber} {build.Result}");
                                     await store.SaveAsync(item);
                                     resolved++;
+
+                                    // Re-activate acknowledged items linked to this now-resolved item
+                                    ReactivateLinkedAcknowledged(existingItems, item.Id, store);
                                 }
                             }
                         }
@@ -176,6 +177,21 @@ public sealed class AzureDevOpsSignalCollector
                 Resolved = resolved,
                 Duration = started.Elapsed,
             };
+        }
+    }
+
+    /// <summary>
+    /// When a linked item is resolved, re-activate any acknowledged items
+    /// that reference it — the situation has changed and they may need review.
+    /// </summary>
+    private static void ReactivateLinkedAcknowledged(
+        IReadOnlyList<WorkItem> allItems, string resolvedId, WorkItemStore store)
+    {
+        foreach (var item in allItems.Where(i =>
+            i.Status == "acknowledged" && i.LinkedItems.Contains(resolvedId)))
+        {
+            item.SetStatus("needs-investigation", $"Linked item '{resolvedId}' was resolved");
+            store.SaveAsync(item).GetAwaiter().GetResult();
         }
     }
 

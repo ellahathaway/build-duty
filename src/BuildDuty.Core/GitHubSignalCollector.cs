@@ -21,7 +21,7 @@ public sealed class GitHubSignalCollector
     {
         var started = Stopwatch.StartNew();
         var signals = new List<CollectedSignal>();
-        int created = 0;
+        int created = 0, resolved = 0;
 
         try
         {
@@ -35,8 +35,12 @@ public sealed class GitHubSignalCollector
 
                     if (store is not null)
                     {
+                        var collectedIds = new HashSet<string>();
+
                         foreach (var signal in issues)
                         {
+                            collectedIds.Add(signal.Id);
+
                             if (!store.Exists(signal.Id))
                             {
                                 await store.SaveAsync(new WorkItem
@@ -65,16 +69,16 @@ public sealed class GitHubSignalCollector
                                     if (sig is not null && sig.SourceUpdatedAtUtc != signal.SourceUpdatedAtUtc)
                                     {
                                         sig.SourceUpdatedAtUtc = signal.SourceUpdatedAtUtc;
-
-                                        // Re-activate acknowledged items when source data changes
-                                        if (existing.Status == "acknowledged")
-                                            existing.SetStatus("needs-investigation", "Source updated since acknowledgement");
-
                                         await store.SaveAsync(existing);
                                     }
                                 }
                             }
                         }
+
+                        // Auto-resolve existing items whose source is no longer collected
+                        // (e.g. issue was closed since last collection)
+                        var prefix = $"wi_gh_issue_{org.Organization}_{repo.Name}_";
+                        resolved += await ResolveUncollectedItemsAsync(store, prefix, collectedIds);
                     }
                 }
             }
@@ -85,6 +89,7 @@ public sealed class GitHubSignalCollector
                 Success = true,
                 Signals = signals,
                 Created = created,
+                Resolved = resolved,
                 Duration = started.Elapsed,
             };
         }
@@ -97,6 +102,7 @@ public sealed class GitHubSignalCollector
                 Error = ex.Message,
                 Signals = signals,
                 Created = created,
+                Resolved = resolved,
                 Duration = started.Elapsed,
             };
         }
@@ -106,7 +112,7 @@ public sealed class GitHubSignalCollector
     {
         var started = Stopwatch.StartNew();
         var signals = new List<CollectedSignal>();
-        int created = 0;
+        int created = 0, resolved = 0;
 
         try
         {
@@ -120,8 +126,12 @@ public sealed class GitHubSignalCollector
 
                     if (store is not null)
                     {
+                        var collectedIds = new HashSet<string>();
+
                         foreach (var signal in prs)
                         {
+                            collectedIds.Add(signal.Id);
+
                             if (!store.Exists(signal.Id))
                             {
                                 await store.SaveAsync(new WorkItem
@@ -148,16 +158,16 @@ public sealed class GitHubSignalCollector
                                     if (sig is not null && sig.SourceUpdatedAtUtc != signal.SourceUpdatedAtUtc)
                                     {
                                         sig.SourceUpdatedAtUtc = signal.SourceUpdatedAtUtc;
-
-                                        // Re-activate acknowledged items when source data changes
-                                        if (existing.Status == "acknowledged")
-                                            existing.SetStatus("needs-investigation", "Source updated since acknowledgement");
-
                                         await store.SaveAsync(existing);
                                     }
                                 }
                             }
                         }
+
+                        // Auto-resolve existing items whose source is no longer collected
+                        // (e.g. PR was merged/closed since last collection)
+                        var prefix = $"wi_gh_pr_{org.Organization}_{repo.Name}_";
+                        resolved += await ResolveUncollectedItemsAsync(store, prefix, collectedIds);
                     }
                 }
             }
@@ -168,6 +178,7 @@ public sealed class GitHubSignalCollector
                 Success = true,
                 Signals = signals,
                 Created = created,
+                Resolved = resolved,
                 Duration = started.Elapsed,
             };
         }
@@ -180,8 +191,52 @@ public sealed class GitHubSignalCollector
                 Error = ex.Message,
                 Signals = signals,
                 Created = created,
+                Resolved = resolved,
                 Duration = started.Elapsed,
             };
+        }
+    }
+
+    /// <summary>
+    /// Auto-resolve unresolved work items whose source was not collected this run.
+    /// This handles PRs/issues that were closed/merged since the last collection.
+    /// Also re-activates acknowledged items whose linked items changed status.
+    /// </summary>
+    private static async Task<int> ResolveUncollectedItemsAsync(
+        WorkItemStore store, string idPrefix, HashSet<string> collectedIds)
+    {
+        int resolved = 0;
+        var allItems = await store.ListAsync();
+
+        foreach (var item in allItems.Where(i =>
+            i.Id.StartsWith(idPrefix, StringComparison.Ordinal) && !i.IsResolved))
+        {
+            if (!collectedIds.Contains(item.Id))
+            {
+                item.SetStatus("resolved", "Auto-resolved: source no longer matches collection criteria (closed/merged)");
+                await store.SaveAsync(item);
+                resolved++;
+
+                // Re-activate acknowledged items linked to this now-resolved item
+                await ReactivateLinkedAcknowledgedAsync(store, item.Id, allItems);
+            }
+        }
+
+        return resolved;
+    }
+
+    /// <summary>
+    /// When a linked item is resolved, re-activate any acknowledged items
+    /// that reference it — the situation has changed and they may need review.
+    /// </summary>
+    private static async Task ReactivateLinkedAcknowledgedAsync(
+        WorkItemStore store, string resolvedId, IReadOnlyList<WorkItem> allItems)
+    {
+        foreach (var item in allItems.Where(i =>
+            i.Status == "acknowledged" && i.LinkedItems.Contains(resolvedId)))
+        {
+            item.SetStatus("needs-investigation", $"Linked item '{resolvedId}' was resolved");
+            await store.SaveAsync(item);
         }
     }
 
