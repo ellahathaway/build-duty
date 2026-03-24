@@ -21,7 +21,7 @@ public sealed class AzureDevOpsWorkItemCollector
     {
         var started = Stopwatch.StartNew();
         var sources = new List<CollectedSource>();
-        int created = 0, resolved = 0;
+        int created = 0, updated = 0, closed = 0;
 
         try
         {
@@ -67,13 +67,9 @@ public sealed class AzureDevOpsWorkItemCollector
                                         foreach (var item in existingItems.Where(i =>
                                             i.CorrelationId == source.CorrelationId && !i.IsResolved))
                                         {
-                                            item.SetStatus("resolved",
-                                                $"Auto-resolved: filtered stages/jobs passed in build #{build.BuildNumber}");
+                                            item.State = "closed";
                                             await store.SaveAsync(item);
-                                            resolved++;
-
-                                            // Re-activate acknowledged items linked to this now-resolved item
-                                            ReactivateLinkedAcknowledged(existingItems, item.Id, store);
+                                            closed++;
                                         }
                                     }
                                     continue;
@@ -99,6 +95,7 @@ public sealed class AzureDevOpsWorkItemCollector
                                         {
                                             Id = source.Id,
                                             Status = "new",
+                                            State = "new",
                                             Title = source.Title,
                                             CorrelationId = source.CorrelationId,
                                             Sources = [new SourceReference
@@ -126,7 +123,10 @@ public sealed class AzureDevOpsWorkItemCollector
                                                     sourceRef.Metadata ??= new Dictionary<string, string>();
                                                     sourceRef.Metadata["failureDetails"] = metadata["failureDetails"];
                                                     sourceRef.SourceUpdatedAtUtc = DateTime.UtcNow;
+                                                    if (existing.State != "new")
+                                                        existing.State = "updated";
                                                     await store.SaveAsync(existing);
+                                                    updated++;
                                                 }
                                             }
                                         }
@@ -135,19 +135,14 @@ public sealed class AzureDevOpsWorkItemCollector
                             }
                             else if (store is not null)
                             {
-                                // Success — auto-resolve any unresolved work items
-                                // with the same correlation ID
+                                // Success — mark unresolved work items with same correlation as closed
                                 var existingItems = await store.ListAsync();
                                 foreach (var item in existingItems.Where(i =>
                                     i.CorrelationId == source.CorrelationId && !i.IsResolved))
                                 {
-                                    item.SetStatus("resolved",
-                                        $"Auto-resolved: latest build #{build.BuildNumber} {build.Result}");
+                                    item.State = "closed";
                                     await store.SaveAsync(item);
-                                    resolved++;
-
-                                    // Re-activate acknowledged items linked to this now-resolved item
-                                    ReactivateLinkedAcknowledged(existingItems, item.Id, store);
+                                    closed++;
                                 }
                             }
                         }
@@ -161,7 +156,8 @@ public sealed class AzureDevOpsWorkItemCollector
                 Success = true,
                 Sources = sources,
                 Created = created,
-                Resolved = resolved,
+                Updated = updated,
+                Closed = closed,
                 Duration = started.Elapsed,
             };
         }
@@ -174,24 +170,10 @@ public sealed class AzureDevOpsWorkItemCollector
                 Error = ex.Message,
                 Sources = sources,
                 Created = created,
-                Resolved = resolved,
+                Updated = updated,
+                Closed = closed,
                 Duration = started.Elapsed,
             };
-        }
-    }
-
-    /// <summary>
-    /// When a linked item is resolved, re-activate any acknowledged items
-    /// that reference it — the situation has changed and they may need review.
-    /// </summary>
-    private static void ReactivateLinkedAcknowledged(
-        IReadOnlyList<WorkItem> allItems, string resolvedId, WorkItemStore store)
-    {
-        foreach (var item in allItems.Where(i =>
-            i.Status == "acknowledged" && i.LinkedItems.Contains(resolvedId)))
-        {
-            item.SetStatus("needs-investigation", $"Linked item '{resolvedId}' was resolved");
-            store.SaveAsync(item).GetAwaiter().GetResult();
         }
     }
 

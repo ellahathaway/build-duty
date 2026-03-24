@@ -21,6 +21,15 @@ public sealed class WorkItem
     public string Status { get; set; } = "new";
 
     /// <summary>
+    /// Collection state — set by collectors to describe what was observed.
+    /// Triage reads this to decide status changes.
+    /// Values: "new" (first collected), "updated" (source changed), "closed" (source no longer active).
+    /// Null means no pending state change (already processed by triage).
+    /// </summary>
+    [JsonPropertyName("state")]
+    public string? State { get; set; }
+
+    /// <summary>
     /// AI-generated summary of the work item's source (build failure reason,
     /// issue description, PR changes, etc.).
     /// </summary>
@@ -72,6 +81,10 @@ public sealed class WorkItem
     {
         get
         {
+            // Closed or stable items don't need summarization
+            if (State is "closed" or "stable")
+                return false;
+
             if (string.IsNullOrWhiteSpace(Summary))
                 return true;
 
@@ -88,12 +101,25 @@ public sealed class WorkItem
     /// <summary>
     /// Whether the item needs triage. True if never triaged, or if the
     /// summary has been written/refreshed since the last triage.
+    /// Acknowledged items only re-triage when state is "closed" (to auto-resolve).
     /// </summary>
     [JsonIgnore]
     public bool NeedsTriage
     {
         get
         {
+            // Stable items don't need triage
+            if (State == "stable")
+                return false;
+
+            // Acknowledged items ignore updates — only triage on "closed" (to resolve)
+            if (Status == "acknowledged")
+                return State == "closed";
+
+            // Items with a pending collection state need triage
+            if (State is not null)
+                return true;
+
             if (!TriagedAtUtc.HasValue)
                 return true;
 

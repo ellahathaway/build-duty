@@ -27,6 +27,7 @@ public class WorkItemStoreTests : IDisposable
         {
             Id = "wi_roundtrip",
             Status = "new",
+            State = "new",
             Title = "Round-trip test",
             CorrelationId = "corr_123",
             Sources =
@@ -41,6 +42,7 @@ public class WorkItemStoreTests : IDisposable
         Assert.NotNull(loaded);
         Assert.Equal("wi_roundtrip", loaded.Id);
         Assert.Equal("new", loaded.Status);
+        Assert.Equal("new", loaded.State);
         Assert.False(loaded.IsResolved);
         Assert.Equal("Round-trip test", loaded.Title);
         Assert.Equal("corr_123", loaded.CorrelationId);
@@ -59,7 +61,7 @@ public class WorkItemStoreTests : IDisposable
     public async Task ListAsync_FiltersByResolved()
     {
         await _store.SaveAsync(new WorkItem { Id = "wi_a", Status = "new", Title = "A" });
-        await _store.SaveAsync(new WorkItem { Id = "wi_b", Status = "investigating", Title = "B" });
+        await _store.SaveAsync(new WorkItem { Id = "wi_b", Status = "needs-investigation", Title = "B" });
         await _store.SaveAsync(new WorkItem { Id = "wi_c", Status = "fixed", Title = "C" });
 
         var unresolved = await _store.ListAsync(resolved: false);
@@ -90,12 +92,12 @@ public class WorkItemStoreTests : IDisposable
             Title = "Transition persistence"
         };
 
-        wi.SetStatus("investigating", "starting");
+        wi.SetStatus("needs-investigation", "starting");
         await _store.SaveAsync(wi);
 
         var loaded = await _store.LoadAsync("wi_transitions");
         Assert.NotNull(loaded);
-        Assert.Equal("investigating", loaded.Status);
+        Assert.Equal("needs-investigation", loaded.Status);
         Assert.Single(loaded.History);
         Assert.Equal("status-change", loaded.History[0].Action);
     }
@@ -108,5 +110,42 @@ public class WorkItemStoreTests : IDisposable
 
         Assert.True(_store.Exists("wi_exists"));
         Assert.False(_store.Exists("wi_nope"));
+    }
+
+    [Fact]
+    public async Task SaveAndLoad_StateNullRoundTrip()
+    {
+        var wi = new WorkItem
+        {
+            Id = "wi_state_null",
+            Status = "new",
+            State = null,
+            Title = "State null test",
+        };
+
+        await _store.SaveAsync(wi);
+        var loaded = await _store.LoadAsync("wi_state_null");
+
+        Assert.NotNull(loaded);
+        Assert.Null(loaded.State);
+    }
+
+    [Fact]
+    public async Task SaveAndLoad_StateClosedRoundTrip()
+    {
+        var wi = new WorkItem
+        {
+            Id = "wi_state_closed",
+            Status = "needs-review",
+            State = "closed",
+            Title = "State closed test",
+        };
+
+        await _store.SaveAsync(wi);
+        var loaded = await _store.LoadAsync("wi_state_closed");
+
+        Assert.NotNull(loaded);
+        Assert.Equal("closed", loaded.State);
+        Assert.Equal("needs-review", loaded.Status);
     }
 }

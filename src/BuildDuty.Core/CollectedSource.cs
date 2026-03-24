@@ -42,7 +42,8 @@ public sealed class CollectionResult
     public string? Error { get; init; }
     public List<CollectedSource> Sources { get; init; } = [];
     public int Created { get; set; }
-    public int Resolved { get; set; }
+    public int Updated { get; set; }
+    public int Closed { get; set; }
     public TimeSpan Duration { get; set; }
 
     public string ToJson() => JsonSerializer.Serialize(Sources, new JsonSerializerOptions { WriteIndented = true });

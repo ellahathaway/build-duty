@@ -126,9 +126,10 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
         var allSources = collectionResults.SelectMany(r => r.Sources).ToList();
         var failedCollections = collectionResults.Where(r => !r.Success).ToList();
         var totalCreated = collectionResults.Sum(r => r.Created);
-        var totalResolved = collectionResults.Sum(r => r.Resolved);
+        var totalUpdated = collectionResults.Sum(r => r.Updated);
+        var totalClosed = collectionResults.Sum(r => r.Closed);
 
-        AnsiConsole.MarkupLine($"Gathered [bold]{allSources.Count}[/] sources — created [green]{totalCreated}[/] work items, resolved [blue]{totalResolved}[/].");
+        AnsiConsole.MarkupLine($"Gathered [bold]{allSources.Count}[/] sources — created [green]{totalCreated}[/], updated [yellow]{totalUpdated}[/], closed [blue]{totalClosed}[/].");
 
         foreach (var failure in failedCollections)
             AnsiConsole.MarkupLine($"  [red]✗[/] {failure.Source}: {Markup.Escape(failure.Error ?? "unknown error")}");
@@ -277,7 +278,7 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
                 var detailsLine = string.IsNullOrWhiteSpace(failureDetails)
                     ? ""
                     : $"\n  failureDetails: {failureDetails.Replace("\n", "\n  ")}";
-                return $"- {i.Id} | status={i.Status} | type={sourceType} | ref={refUrl} | links={links} | summary={summary} | title={i.Title}{detailsLine}";
+                return $"- {i.Id} | status={i.Status} | state={i.State ?? "(none)"} | type={sourceType} | ref={refUrl} | links={links} | summary={summary} | title={i.Title}{detailsLine}";
             }));
 
             var feedbackSection = feedbackLines.Length > 0
@@ -304,6 +305,22 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
                    with different specific alerts are NOT the same issue.
                 3. Resolve work items that are no longer relevant based on context
                    (use `resolve_work_item`).
+
+                Each work item has a `state` field set by collection:
+                - `new` — first time collected, needs initial triage
+                - `updated` — source has changed since last collection
+                - `closed` — source is no longer active (build passing, PR merged, issue closed)
+
+                For `closed` items: resolve them with `resolve_work_item`.
+                For `updated` items with `monitoring` status: re-evaluate and update status
+                if the change warrants it (e.g. change to `needs-investigation`).
+                For `new` items: determine the appropriate initial status.
+
+                Status semantics:
+                - `monitoring` — engineer is watching this item, wants to stay informed
+                - `acknowledged` — engineer has dismissed this, no action needed
+
+                After processing, items are marked as `stable` automatically.
 
                 Each item includes its current summary, linked items, and failure
                 details — use these to determine statuses and cross-references.
@@ -354,6 +371,17 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
                     progressTask.StopTask();
                 }
             });
+
+            // Mark triaged items as stable
+            foreach (var item in toTriage)
+            {
+                var refreshed = await store.LoadAsync(item.Id);
+                if (refreshed is not null && refreshed.State is not null && refreshed.State != "stable")
+                {
+                    refreshed.State = "stable";
+                    await store.SaveAsync(refreshed);
+                }
+            }
         }
 
         // === Confirm new correlations ===
@@ -468,7 +496,7 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
             table.AddRow(
                 "Collection",
                 Markup.Escape(r.Source),
-                r.Success ? $"[green]✓[/] {r.Sources.Count} sources, {r.Created} new, {r.Resolved} resolved" : "[red]✗[/] failed",
+                r.Success ? $"[green]✓[/] {r.Sources.Count} sources, {r.Created} new, {r.Updated} updated, {r.Closed} closed" : "[red]✗[/] failed",
                 $"{r.Duration.TotalSeconds:F1}s");
 
         foreach (var r in summarizeResults)

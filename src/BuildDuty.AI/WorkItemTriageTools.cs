@@ -30,6 +30,7 @@ public static class WorkItemTriageTools
 
                     item.SetStatus("resolved", reason);
                     item.TriagedAtUtc = DateTime.UtcNow;
+                    item.State = "stable";
                     await store.SaveAsync(item);
                     return $"Resolved work item '{id}': {reason}";
                 },
@@ -46,6 +47,7 @@ public static class WorkItemTriageTools
                     var old = item.Status;
                     item.SetStatus(status);
                     item.TriagedAtUtc = DateTime.UtcNow;
+                    item.State = "stable";
                     await store.SaveAsync(item);
                     return $"Updated '{id}' status: {old} → {status}";
                 },
