@@ -30,28 +30,96 @@ auditable workflow:
 - **Repo-owned configuration** — a `.build-duty.yml` file in your repository
   declares exactly what to monitor.
 
-## Quick start
+## Quick start (from a local clone)
 
-```bash
-# Install the CLI as a .NET global tool
-dotnet tool install -g BuildDuty
-
-# Run the full triage pipeline (collect → summarize → triage)
-build-duty triage
-
-# Run triage and enter interactive review when done
-build-duty triage --review
-
-# Review existing work items interactively
-build-duty review
-
-# List open work items
-build-duty workitems list
-```
-
-## Prerequisites
+### 1. Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/) (see `global.json`)
+- [GitHub Copilot in the CLI](https://docs.github.com/en/copilot/github-copilot-in-the-cli) —
+  the Copilot SDK needs the `copilot` binary on your PATH
+- [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) (`az`) —
+  required for Azure DevOps pipeline access
+- [GitHub CLI](https://cli.github.com/) (`gh`) — required for GitHub issue/PR access
+- [Node.js / npm](https://nodejs.org/) — the Azure DevOps MCP server is fetched via `npx`
+
+### 2. Authenticate
+
+```bash
+# Azure DevOps (needed for pipeline data)
+az login
+
+# GitHub (needed for issues, PRs, and Copilot SDK)
+gh auth login
+```
+
+### 3. Build and install locally
+
+```bash
+# Clone the repo
+git clone https://github.com/ellahathaway/build-duty.git
+cd build-duty
+
+# Build and test
+./eng/build.sh
+
+# Pack and install as a global tool
+./eng/build.sh --pack
+dotnet tool install --global --add-source artifacts/packages buildduty
+
+# Verify
+build-duty --help
+```
+
+### 4. Create a config file
+
+Create a `.build-duty.yml` in the repository you want to monitor (or anywhere —
+you can pass `--config <path>` to any command):
+
+```yaml
+name: my-repo-monitor          # required — drives local storage isolation
+
+azureDevOps:
+  organizations:
+    - url: https://dev.azure.com/dnceng
+      projects:
+        - name: internal
+          pipelines:
+            - id: 1234
+              name: my-pipeline
+              branches:
+                - main
+              status: [failed, partiallySucceeded, canceled]
+
+github:
+  repositories:
+    - owner: dotnet
+      name: my-repo
+      issues:
+        labels: ["Build Break"]
+        state: open
+```
+
+### 5. Run the triage pipeline
+
+```bash
+# Full pipeline: collect → summarize → triage → review
+build-duty triage --review
+
+# Or step by step:
+build-duty triage              # collect + summarize + triage
+build-duty review              # interactive review of triaged items
+build-duty workitems list      # see current work items
+```
+
+### Updating after code changes
+
+After making changes to the source, rebuild and reinstall:
+
+```bash
+./eng/build.sh --pack
+dotnet tool uninstall -g buildduty
+dotnet tool install --global --add-source artifacts/packages buildduty
+```
 
 ## Building from source
 
@@ -153,11 +221,14 @@ confirmation. Optionally enter interactive review with `--review`.
 
 Interactively review and act on triaged work items. Items are displayed in a
 grouped table (by type and status). Select items, type a freeform instruction,
-and an AI agent executes it.
+and an AI agent executes it. Agent output streams live to the terminal — you
+can see reasoning, tool calls, and results in real time. Send follow-up
+messages between turns for multi-turn conversations.
 
 | Option | Description |
 |---|---|
 | `--config <path>` | Path to config file (default: auto-detect) |
+| `--include-acknowledged` | Include acknowledged items in the review list |
 
 ### `build-duty workitems list`
 
