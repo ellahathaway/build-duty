@@ -40,11 +40,12 @@ public sealed class GitHubWorkItemCollector
                         foreach (var source in issues)
                         {
                             collectedIds.Add(source.Id);
+                            WorkItem issueItem;
 
                             if (!store.Exists(source.Id))
                             {
                                 var metadata = source.Metadata.Count > 0 ? source.Metadata : null;
-                                await store.SaveAsync(new WorkItem
+                                issueItem = new WorkItem
                                 {
                                     Id = source.Id,
                                     Status = "new",
@@ -58,46 +59,89 @@ public sealed class GitHubWorkItemCollector
                                         SourceUpdatedAtUtc = source.SourceUpdatedAtUtc,
                                         Metadata = metadata,
                                     }],
-                                });
+                                };
+                                await store.SaveAsync(issueItem);
                                 created++;
                             }
                             else
                             {
-                                var existing = await store.LoadAsync(source.Id);
-                                if (existing is not null)
+                                issueItem = (await store.LoadAsync(source.Id))!;
+                                var sourceRef = issueItem.Sources.FirstOrDefault();
+                                if (sourceRef is null) continue;
+
+                                var changed = false;
+
+                                // Check if updatedAt changed
+                                if (source.SourceUpdatedAtUtc.HasValue &&
+                                    sourceRef.SourceUpdatedAtUtc != source.SourceUpdatedAtUtc)
                                 {
-                                    var sourceRef = existing.Sources.FirstOrDefault();
-                                    if (sourceRef is null) continue;
+                                    sourceRef.SourceUpdatedAtUtc = source.SourceUpdatedAtUtc;
+                                    changed = true;
+                                }
 
-                                    var changed = false;
+                                // Check if linked PRs changed
+                                var newLinkedPrs = source.Metadata.GetValueOrDefault("linkedPrs") ?? "";
+                                var oldLinkedPrs = sourceRef.Metadata?.GetValueOrDefault("linkedPrs") ?? "";
+                                if (newLinkedPrs != oldLinkedPrs)
+                                {
+                                    sourceRef.Metadata ??= new Dictionary<string, string>();
+                                    if (newLinkedPrs.Length > 0)
+                                        sourceRef.Metadata["linkedPrs"] = newLinkedPrs;
+                                    else
+                                        sourceRef.Metadata.Remove("linkedPrs");
+                                    changed = true;
+                                }
 
-                                    // Check if updatedAt changed
-                                    if (source.SourceUpdatedAtUtc.HasValue &&
-                                        sourceRef.SourceUpdatedAtUtc != source.SourceUpdatedAtUtc)
+                                if (changed)
+                                {
+                                    if (issueItem.State != "new")
+                                        issueItem.State = "updated";
+                                    await store.SaveAsync(issueItem);
+                                    updated++;
+                                }
+                            }
+
+                            // Auto-create work items for linked PRs and cross-link
+                            var linkedPrUrls = source.Metadata.GetValueOrDefault("linkedPrs");
+                            if (!string.IsNullOrWhiteSpace(linkedPrUrls))
+                            {
+                                foreach (var prUrl in linkedPrUrls.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+                                {
+                                    var parsed = ParseGitHubPrUrl(prUrl);
+                                    if (parsed is null) continue;
+
+                                    var (prOwner, prRepo, prNumber) = parsed.Value;
+                                    var prId = $"wi_gh_pr_{prOwner}_{prRepo}_{prNumber}";
+
+                                    if (!store.Exists(prId))
                                     {
-                                        sourceRef.SourceUpdatedAtUtc = source.SourceUpdatedAtUtc;
-                                        changed = true;
+                                        // Fetch PR title
+                                        var prTitle = await FetchPrTitleAsync(prOwner, prRepo, prNumber);
+                                        var prItem = new WorkItem
+                                        {
+                                            Id = prId,
+                                            Status = "new",
+                                            State = "new",
+                                            Title = $"[{prOwner}/{prRepo}#{prNumber}] {prTitle}",
+                                            CorrelationId = $"corr_gh_{prOwner}_{prRepo}_pr_{prNumber}",
+                                            Sources = [new SourceReference
+                                            {
+                                                Type = "github-pr",
+                                                Ref = prUrl,
+                                            }],
+                                            LinkedItems = [source.Id],
+                                        };
+                                        await store.SaveAsync(prItem);
+                                        created++;
                                     }
 
-                                    // Check if linked PRs changed
-                                    var newLinkedPrs = source.Metadata.GetValueOrDefault("linkedPrs") ?? "";
-                                    var oldLinkedPrs = sourceRef.Metadata?.GetValueOrDefault("linkedPrs") ?? "";
-                                    if (newLinkedPrs != oldLinkedPrs)
+                                    // Ensure bidirectional link
+                                    if (!issueItem.LinkedItems.Contains(prId))
                                     {
-                                        sourceRef.Metadata ??= new Dictionary<string, string>();
-                                        if (newLinkedPrs.Length > 0)
-                                            sourceRef.Metadata["linkedPrs"] = newLinkedPrs;
-                                        else
-                                            sourceRef.Metadata.Remove("linkedPrs");
-                                        changed = true;
-                                    }
-
-                                    if (changed)
-                                    {
-                                        if (existing.State != "new")
-                                            existing.State = "updated";
-                                        await store.SaveAsync(existing);
-                                        updated++;
+                                        issueItem.LinkedItems.Add(prId);
+                                        if (issueItem.State != "new")
+                                            issueItem.State = "updated";
+                                        await store.SaveAsync(issueItem);
                                     }
                                 }
                             }
@@ -319,7 +363,9 @@ public sealed class GitHubWorkItemCollector
             } }
             """;
 
-        var output = await RunGhAsync($"api graphql -f query='{query.Replace("'", "'\\''")}'");
+        // Pass query directly - no shell quoting needed since UseShellExecute=false
+        var output = await RunGhWithArgsAsync(
+            ["api", "graphql", "-f", $"query={query}"]);
         if (output is null) return [];
 
         try
@@ -450,5 +496,54 @@ public sealed class GitHubWorkItemCollector
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Runs gh with explicit argument list to avoid shell quoting issues.
+    /// Use this for arguments containing special characters (e.g. GraphQL queries).
+    /// </summary>
+    private static async Task<string?> RunGhWithArgsAsync(string[] args)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo("gh")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            foreach (var arg in args)
+                psi.ArgumentList.Add(arg);
+
+            using var proc = Process.Start(psi);
+            if (proc is null) return null;
+
+            var output = await proc.StandardOutput.ReadToEndAsync();
+            await proc.WaitForExitAsync();
+
+            return proc.ExitCode == 0 ? output : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Parses a GitHub PR URL into (owner, repo, number).</summary>
+    private static (string Owner, string Repo, int Number)? ParseGitHubPrUrl(string url)
+    {
+        // https://github.com/{owner}/{repo}/pull/{number}
+        var match = System.Text.RegularExpressions.Regex.Match(
+            url, @"github\.com/([^/]+)/([^/]+)/pull/(\d+)");
+        if (!match.Success) return null;
+        return (match.Groups[1].Value, match.Groups[2].Value, int.Parse(match.Groups[3].Value));
+    }
+
+    /// <summary>Fetches a PR title via gh CLI.</summary>
+    private static async Task<string> FetchPrTitleAsync(string owner, string repo, int number)
+    {
+        var output = await RunGhAsync(
+            $"pr view {number} --repo {owner}/{repo} --json title --jq .title");
+        return string.IsNullOrWhiteSpace(output) ? "(unknown)" : output.Trim();
     }
 }

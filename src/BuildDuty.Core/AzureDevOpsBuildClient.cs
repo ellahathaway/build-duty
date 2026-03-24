@@ -68,23 +68,38 @@ public static class AzureDevOpsBuildClient
                 var type = rec.GetProperty("type").GetString();
                 var result = rec.TryGetProperty("result", out var r) ? r.GetString() : null;
 
-                if (type != "Task" || (result != "failed" && result != "canceled"))
+                // Include failed, canceled (timeout), and succeededWithIssues tasks
+                if (type != "Task" || (result != "failed" && result != "canceled" && result != "succeededWithIssues"))
                     continue;
 
                 var taskName = rec.GetProperty("name").GetString() ?? "(unknown)";
                 var logId = rec.TryGetProperty("log", out var log) && log.TryGetProperty("id", out var lid)
                     ? lid.GetInt32() : (int?)null;
 
-                // Walk parent chain: task → job → stage
+                // Walk parent chain to find job and stage names.
+                // ADO timeline hierarchy can be: Task → Job → Stage
+                // or: Task → Job → Phase → Stage (when phases exist)
                 var parentId = rec.TryGetProperty("parentId", out var pid) ? pid.GetString() : null;
                 string? jobName = null, stageName = null;
 
                 if (parentId is not null && byId.TryGetValue(parentId, out var jobRec))
                 {
                     jobName = jobRec.GetProperty("name").GetString();
-                    var jobParentId = jobRec.TryGetProperty("parentId", out var jpid) ? jpid.GetString() : null;
-                    if (jobParentId is not null && byId.TryGetValue(jobParentId, out var stageRec))
-                        stageName = stageRec.GetProperty("name").GetString();
+                    // Walk up from the job record to find the Stage
+                    var current = jobRec;
+                    while (true)
+                    {
+                        var curParentId = current.TryGetProperty("parentId", out var cpid) ? cpid.GetString() : null;
+                        if (curParentId is null || !byId.TryGetValue(curParentId, out var parentRec))
+                            break;
+                        var parentType = parentRec.TryGetProperty("type", out var pt) ? pt.GetString() : null;
+                        if (parentType == "Stage")
+                        {
+                            stageName = parentRec.GetProperty("name").GetString();
+                            break;
+                        }
+                        current = parentRec;
+                    }
                 }
 
                 // Apply stage/job filters
@@ -98,7 +113,8 @@ public static class AzureDevOpsBuildClient
                     foreach (var issue in issuesProp.EnumerateArray())
                     {
                         var issueType = issue.TryGetProperty("type", out var it) ? it.GetString() : null;
-                        if (issueType == "error")
+                        // Collect errors always; for succeededWithIssues tasks also collect warnings
+                        if (issueType == "error" || (issueType == "warning" && result == "succeededWithIssues"))
                         {
                             var msg = issue.TryGetProperty("message", out var im) ? im.GetString() : null;
                             if (msg is not null)
