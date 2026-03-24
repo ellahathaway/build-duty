@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Text;
+using System.Text.Json;
 using BuildDuty.AI;
 using BuildDuty.Core;
 using BuildDuty.Core.Models;
@@ -404,16 +405,16 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
             _ => "?",
         };
 
-        var text = sb.Length > 0 ? sb.ToString() : "Waiting for response...";
+        var text = sb.Length > 0 ? sb.ToString() : "[dim]Waiting for response...[/]";
 
-        // Show last 40 lines to keep terminal manageable
+        // Show last 50 lines to keep terminal manageable
         var lines = text.Split('\n');
-        if (lines.Length > 40)
-            text = "...\n" + string.Join('\n', lines[^40..]);
+        if (lines.Length > 50)
+            text = "[dim]...[/]\n" + string.Join('\n', lines[^50..]);
 
         var stateHint = agent.State == AgentState.Running ? " [dim](Esc to return to menu)[/]" : "";
 
-        return new Panel(Markup.Escape(text))
+        return new Panel(new Markup(text))
         {
             Header = new PanelHeader($"{icon} [bold]{Markup.Escape(agent.Label)}[/]{stateHint}"),
             Border = BoxBorder.Rounded,
@@ -426,20 +427,61 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
         switch (evt.Type)
         {
             case "delta":
-                sb.Append(evt.Content);
+                sb.Append(Markup.Escape(evt.Content ?? ""));
                 break;
             case "tool-start":
                 if (sb.Length > 0 && sb[^1] != '\n') sb.AppendLine();
-                sb.AppendLine($"🔧 {evt.ToolName}");
+                sb.AppendLine();
+                sb.AppendLine($"  [dim]┌─ 🔧 {Markup.Escape(evt.ToolName ?? "?")}[/]");
+                if (!string.IsNullOrEmpty(evt.ToolArgs))
+                {
+                    foreach (var argLine in FormatToolArgs(evt.ToolArgs))
+                        sb.AppendLine($"  [dim]│[/] {argLine}");
+                }
                 break;
             case "tool-end":
-                sb.AppendLine(evt.ToolSuccess == true ? "  ✓ done" : "  ✗ failed");
+                if (evt.ToolSuccess == true)
+                    sb.AppendLine("  [dim]└─[/] [green]✓ done[/]");
+                else
+                    sb.AppendLine("  [dim]└─[/] [red]✗ failed[/]");
+                sb.AppendLine();
                 break;
             case "error":
                 if (sb.Length > 0 && sb[^1] != '\n') sb.AppendLine();
-                sb.AppendLine($"⚠ {evt.Content}");
+                sb.AppendLine($"[red]⚠ {Markup.Escape(evt.Content ?? "")}[/]");
                 break;
         }
+    }
+
+    private static List<string> FormatToolArgs(string argsJson)
+    {
+        var result = new List<string>();
+
+        // Try to parse as JSON for structured display
+        try
+        {
+            using var doc = JsonDocument.Parse(argsJson);
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                var val = prop.Value.ValueKind == JsonValueKind.String
+                    ? prop.Value.GetString() ?? ""
+                    : prop.Value.GetRawText();
+
+                // Truncate very long values (URLs, large content)
+                if (val.Length > 100)
+                    val = val[..97] + "...";
+
+                result.Add($"  [dim]{Markup.Escape(prop.Name)}:[/] {Markup.Escape(val)}");
+            }
+        }
+        catch
+        {
+            // Not valid JSON — show raw (truncated)
+            var display = argsJson.Length > 120 ? argsJson[..117] + "..." : argsJson;
+            result.Add($"  [dim]{Markup.Escape(display)}[/]");
+        }
+
+        return result;
     }
 
     private static void ShowResponse(string response)
