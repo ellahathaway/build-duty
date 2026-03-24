@@ -78,10 +78,10 @@ public class BuildDutyConfigTests : IDisposable
     }
 
     [Fact]
-    public void PipelineStatus_DefaultsToFailedAndPartiallySucceeded_WhenOmitted()
+    public void PipelineStatus_DefaultsToFailedPartiallySucceededAndCanceled_WhenOmitted()
     {
         var pipeline = new AzureDevOpsPipelineConfig { Id = 1, Name = "test" };
-        Assert.Equal(["failed", "partiallySucceeded"], pipeline.EffectiveStatus);
+        Assert.Equal(["failed", "partiallySucceeded", "canceled"], pipeline.EffectiveStatus);
     }
 
     [Theory]

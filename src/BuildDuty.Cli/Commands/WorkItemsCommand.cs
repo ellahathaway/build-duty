@@ -50,9 +50,15 @@ internal sealed class WorkItemsListCommand : AsyncCommand<WorkItemsListSettings>
 
         foreach (var item in items)
         {
-            var statusMarkup = item.IsResolved
-                ? $"[green]{Markup.Escape(item.Status)}[/]"
-                : $"[red]{Markup.Escape(item.Status)}[/]";
+            var statusColor = item.Status switch
+            {
+                "acknowledged" or "monitoring" => "dim",
+                "new" => "yellow",
+                "needs-investigation" => "red",
+                _ when item.IsResolved => "green",
+                _ => "red",
+            };
+            var statusMarkup = $"[{statusColor}]{Markup.Escape(item.Status)}[/]";
             table.AddRow(
                 Markup.Escape(item.Id),
                 statusMarkup,

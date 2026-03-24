@@ -25,125 +25,141 @@ public sealed class AzureDevOpsWorkItemCollector
 
         try
         {
+            // Cache the full work item list once instead of per-build
+            var existingItems = store is not null ? (await store.ListAsync()).ToList() : (List<WorkItem>?)null;
+
             foreach (var org in _config.Organizations)
             {
                 var orgUrl = NormalizeOrg(org.Url);
 
-                foreach (var project in org.Projects)
+                // Resolve branches for all pipelines in parallel
+                var pipelineBranches = await Task.WhenAll(
+                    org.Projects.SelectMany(p =>
+                        p.Pipelines.Select(async pipe => (
+                            Project: p,
+                            Pipeline: pipe,
+                            Branches: await ResolveBranchesAsync(orgUrl, p.Name, pipe, ct)
+                        ))));
+
+                // Fetch latest builds for all pipeline+branch combos in parallel
+                var buildTasks = pipelineBranches.Select(async pb =>
                 {
-                    foreach (var pipeline in project.Pipelines)
+                    var builds = await GetLatestBuildsAsync(orgUrl, pb.Project.Name, pb.Pipeline.Id, pb.Branches, ct);
+                    return (pb.Project, pb.Pipeline, Builds: builds);
+                });
+                var allBuilds = await Task.WhenAll(buildTasks);
+
+                foreach (var (project, pipeline, builds) in allBuilds)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var statusFilter = pipeline.EffectiveStatus.Select(s => s.ToLowerInvariant()).ToHashSet();
+                    var maxAge = pipeline.ParsedAge;
+                    var cutoff = maxAge.HasValue ? DateTimeOffset.UtcNow - maxAge.Value : (DateTimeOffset?)null;
+
+                    foreach (var build in builds)
                     {
-                        ct.ThrowIfCancellationRequested();
+                        // Skip builds older than the configured age
+                        if (cutoff.HasValue && build.FinishTimeUtc.HasValue && build.FinishTimeUtc < cutoff)
+                            continue;
+                        var source = ToSource(orgUrl, project.Name, pipeline, build, statusFilter);
 
-                        var branches = await ResolveBranchesAsync(orgUrl, project.Name, pipeline, ct);
-                        var builds = await GetLatestBuildsAsync(orgUrl, project.Name, pipeline.Id, branches, ct);
-                        var statusFilter = pipeline.EffectiveStatus.Select(s => s.ToLowerInvariant()).ToHashSet();
-                        var maxAge = pipeline.ParsedAge;
-                        var cutoff = maxAge.HasValue ? DateTimeOffset.UtcNow - maxAge.Value : (DateTimeOffset?)null;
-
-                        foreach (var build in builds)
+                        if (statusFilter.Contains(build.Result))
                         {
-                            // Skip builds older than the configured age
-                            if (cutoff.HasValue && build.FinishTimeUtc.HasValue && build.FinishTimeUtc < cutoff)
-                                continue;
-                            var source = ToSource(orgUrl, project.Name, pipeline, build, statusFilter);
+                            var stageFilterStr = FormatStageFilters(pipeline.Stages);
+                            var hasStageFilters = !string.IsNullOrWhiteSpace(stageFilterStr);
 
-                            if (statusFilter.Contains(build.Result))
+                            // Only fetch timeline during collection if stage filters require it.
+                            // Otherwise, defer to summarize step which fetches details on demand.
+                            if (hasStageFilters)
                             {
-                                var stageFilterStr = FormatStageFilters(pipeline.Stages);
-                                var hasStageFilters = !string.IsNullOrWhiteSpace(stageFilterStr);
-
-                                // Fetch timeline to get failure details and apply stage/job filters
                                 var failureInfo = await AzureDevOpsBuildClient.GetFailedTasksAsync(
-                                    orgUrl, project.Name, build.Id, hasStageFilters ? stageFilterStr : null);
+                                    orgUrl, project.Name, build.Id, stageFilterStr);
 
-                                // If stage filters are configured and no filtered tasks failed,
-                                // the legs we care about passed — mark existing items as closed
-                                if (hasStageFilters && failureInfo.Error is null && failureInfo.FailedTasks.Count == 0)
+                                // Stages we care about all passed — mark existing items as closed
+                                if (failureInfo.Error is null && failureInfo.FailedTasks.Count == 0)
                                 {
-                                    if (store is not null)
+                                    if (existingItems is not null)
                                     {
-                                        var existingItems = await store.ListAsync();
                                         foreach (var item in existingItems.Where(i =>
                                             i.CorrelationId == source.CorrelationId && !i.IsResolved))
                                         {
                                             item.State = "closed";
-                                            await store.SaveAsync(item);
+                                            await store!.SaveAsync(item);
                                             closed++;
                                         }
                                     }
                                     continue;
                                 }
+                            }
 
-                                sources.Add(source);
+                            sources.Add(source);
 
-                                // Create work item if it doesn't exist, or update
-                                // failure details on existing items that lack them
-                                if (store is not null)
+                            // Create or update work item
+                            if (store is not null)
+                            {
+                                var metadata = new Dictionary<string, string>();
+                                if (hasStageFilters)
+                                    metadata["stageFilters"] = stageFilterStr;
+
+                                if (!store.Exists(source.Id))
                                 {
-                                    var metadata = new Dictionary<string, string>();
-                                    if (hasStageFilters)
-                                        metadata["stageFilters"] = stageFilterStr;
-
-                                    // Store failure details so summarize doesn't need to re-fetch
-                                    if (failureInfo.Error is null && failureInfo.FailedTasks.Count > 0)
-                                        metadata["failureDetails"] = FormatFailureDetails(failureInfo);
-
-                                    if (!store.Exists(source.Id))
+                                    var newItem = new WorkItem
                                     {
-                                        await store.SaveAsync(new WorkItem
+                                        Id = source.Id,
+                                        Status = "new",
+                                        State = "new",
+                                        Title = source.Title,
+                                        CorrelationId = source.CorrelationId,
+                                        Sources = [new SourceReference
                                         {
-                                            Id = source.Id,
-                                            Status = "new",
-                                            State = "new",
-                                            Title = source.Title,
-                                            CorrelationId = source.CorrelationId,
-                                            Sources = [new SourceReference
-                                            {
-                                                Type = source.SourceType,
-                                                Ref = source.SourceRef,
-                                                SourceUpdatedAtUtc = source.SourceUpdatedAtUtc,
-                                                Metadata = metadata.Count > 0 ? metadata : null,
-                                            }],
-                                        });
-                                        created++;
-                                    }
-                                    else if (metadata.ContainsKey("failureDetails"))
+                                            Type = source.SourceType,
+                                            Ref = source.SourceRef,
+                                            SourceUpdatedAtUtc = source.SourceUpdatedAtUtc,
+                                            Metadata = metadata.Count > 0 ? metadata : null,
+                                        }],
+                                    };
+                                    await store.SaveAsync(newItem);
+                                    existingItems?.Add(newItem);
+                                    created++;
+                                }
+                                else
+                                {
+                                    // Existing item — update source ref if the build is newer
+                                    var existing = await store.LoadAsync(source.Id);
+                                    if (existing is not null)
                                     {
-                                        // Backfill failure details on existing items
-                                        var existing = await store.LoadAsync(source.Id);
-                                        if (existing is not null)
+                                        var sourceRef = existing.Sources.FirstOrDefault();
+                                        var existingTime = sourceRef?.SourceUpdatedAtUtc;
+                                        if (sourceRef is not null && (existingTime is null ||
+                                            source.SourceUpdatedAtUtc > existingTime))
                                         {
-                                            var sourceRef = existing.Sources.FirstOrDefault();
-                                            if (sourceRef is not null)
+                                            sourceRef.Ref = source.SourceRef;
+                                            sourceRef.SourceUpdatedAtUtc = source.SourceUpdatedAtUtc;
+                                            if (metadata.Count > 0)
                                             {
-                                                var existingDetails = sourceRef.Metadata?.GetValueOrDefault("failureDetails");
-                                                if (string.IsNullOrWhiteSpace(existingDetails))
-                                                {
-                                                    sourceRef.Metadata ??= new Dictionary<string, string>();
-                                                    sourceRef.Metadata["failureDetails"] = metadata["failureDetails"];
-                                                    sourceRef.SourceUpdatedAtUtc = DateTime.UtcNow;
-                                                    if (existing.State != "new")
-                                                        existing.State = "updated";
-                                                    await store.SaveAsync(existing);
-                                                    updated++;
-                                                }
+                                                sourceRef.Metadata ??= new Dictionary<string, string>();
+                                                foreach (var kv in metadata)
+                                                    sourceRef.Metadata[kv.Key] = kv.Value;
                                             }
+                                            existing.Title = source.Title;
+                                            if (existing.State is not "new")
+                                                existing.State = "updated";
+                                            await store.SaveAsync(existing);
+                                            updated++;
                                         }
                                     }
                                 }
                             }
-                            else if (store is not null)
+                        }
+                        else if (existingItems is not null)
+                        {
+                            // Build succeeded — mark existing items as closed
+                            foreach (var item in existingItems.Where(i =>
+                                i.CorrelationId == source.CorrelationId && !i.IsResolved))
                             {
-                                // Build succeeded — mark existing items as closed
-                                var existingItems = await store.ListAsync();
-                                foreach (var item in existingItems.Where(i =>
-                                    i.CorrelationId == source.CorrelationId && !i.IsResolved))
-                                {
-                                    item.State = "closed";
-                                    await store.SaveAsync(item);
-                                    closed++;
-                                }
+                                item.State = "closed";
+                                await store!.SaveAsync(item);
+                                closed++;
                             }
                         }
                     }

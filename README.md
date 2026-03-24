@@ -13,7 +13,7 @@ auditable workflow:
 
 - **Deterministic collection** — collects pipeline runs, GitHub issues, and PRs
   into local work items. Failed tasks (stages, jobs, log IDs) are captured
-  automatically. Passing builds auto-resolve their corresponding work items.
+  automatically. Passing builds mark work items as `closed` state for triage.
 - **AI-powered summarize & triage** — bundled skills summarize failures from
   build logs, determine statuses, cross-reference related items, and suggest
   next actions via the GitHub Copilot SDK.
@@ -47,9 +47,6 @@ build-duty review
 
 # List open work items
 build-duty workitems list
-
-# Run an AI action against a specific work item
-build-duty workitems run --id wi_ado_12345 --action "summarize this failure"
 ```
 
 ## Prerequisites
@@ -180,29 +177,6 @@ Show full details for a single work item, including sources, summary, and histor
 |---|---|
 | `--id <id>` | Work item ID (required) |
 
-### `build-duty workitems run`
-
-Run an AI action against one or more work items using the GitHub Copilot
-SDK with bundled skills and MCP server integration.
-
-| Option | Description |
-|---|---|
-| `--id <id>` | Single work item ID |
-| `--action <text>` | AI action to perform (required) |
-| `--status <status>` | Batch: select items by status |
-| `--show-resolved` | Batch: include resolved items |
-| `--limit <n>` | Batch: max items to process |
-| `--config <path>` | Path to config file (default: auto-detect) |
-
-**Bundled skills:**
-
-| Skill | Purpose |
-|---|---|
-| `summarize` | Fetch build logs, write concise work-item summaries |
-| `triage` | Determine statuses, resolve stale items, cross-reference |
-| `diagnose-build-break` | Root-cause analysis with ranked likely causes |
-| `cluster-incidents` | Group related failures across pipelines/branches |
-| `suggest-next-actions` | Recommend concrete next steps |
 
 ## Architecture
 
@@ -221,7 +195,7 @@ build-duty triage
   │   ├─ AzureDevOpsWorkItemCollector  → ADO pipeline runs + failure details
   │   ├─ GitHubIssueCollector          → GitHub issues
   │   └─ GitHubPrCollector             → GitHub PRs
-  │   └─ WorkItemStore  ←── work items created, passing builds auto-resolved
+  │   └─ WorkItemStore  ←── work items created/updated, state set (never status)
   │
   ├─ Step 2: AI Summarize  (summarize skill)
   │   ├─ CopilotAdapter       → Copilot SDK session
@@ -247,11 +221,6 @@ build-duty review
   ├─ Multi-select → freeform instruction
   ├─ CopilotAdapter  → agent with triage/diagnose/suggest skills
   └─ Loop until done
-
-build-duty workitems run
-  ├─ CopilotAdapter     → Copilot SDK session with all skills + MCP servers
-  ├─ BuildDutyTools      → work item data access for AI
-  └─ WorkItemStore       ←── persisted result
 ```
 
 ### Local storage

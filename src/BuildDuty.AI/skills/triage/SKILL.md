@@ -39,22 +39,26 @@ observed, status is what triage decides.
 ## Inputs
 
 You receive:
-- **Unresolved work items** — items with summaries from the summarize step
+- **Work items needing triage** — new, updated, or closed items to process
+- **Existing unresolved items** (context) — already-triaged items provided for
+  cross-referencing. Do NOT update their status, but DO link new items to them
+  when related (e.g., a new pipeline failure matches an existing GitHub issue).
 
 ## Workflow
 
-For each unresolved work item:
+For each work item needing triage:
 
-1. **Status** — Determine the current type-specific status and update it
-   using `update_work_item_status`. See reference docs for valid statuses
-   per source type.
+1. **Cross-reference first** — Before setting any status, check if the item
+   is related to ANY other item in the full list (both triage items and
+   context items). If a pipeline failure matches an existing GitHub issue
+   by error signature, component, or topic, link them using `link_work_items`.
 
-2. **Cross-reference** — If two work items **in the provided list** are
-   related (e.g., same failure on different branches, a pipeline failure
-   that matches an open issue), link them using `link_work_items`.
+2. **Status** — Now determine the type-specific status. If the item was just
+   linked to an issue or PR, set it to `tracked`. Otherwise, see reference
+   docs for valid statuses per source type. Use `update_work_item_status`.
 
-3. **Resolve** — If a work item's summary indicates it is no longer relevant
-   (e.g., "auto-resolved: build passed"), call `resolve_work_item`.
+3. **Resolve** — If a work item's state is `closed` (source no longer failing)
+   or its summary indicates it is no longer relevant, call `resolve_work_item`.
 
 ## Tools
 

@@ -258,9 +258,9 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
         var feedbackLines = File.Exists(feedbackPath) ? await File.ReadAllLinesAsync(feedbackPath) : [];
 
         // Only triage items that are new or were just (re-)summarized
-        var toTriage = (await store.ListAsync(resolved: false))
-            .Where(i => i.NeedsTriage)
-            .ToList();
+        var allUnresolved = (await store.ListAsync(resolved: false)).ToList();
+        var toTriage = allUnresolved.Where(i => i.NeedsTriage).ToList();
+        var contextOnly = allUnresolved.Where(i => !i.NeedsTriage).ToList();
 
         var triageResults = new List<ScanResult>();
 
@@ -270,7 +270,7 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
         }
         else
         {
-            var existingList = string.Join("\n", toTriage.Select(i =>
+            string FormatItem(WorkItem i)
             {
                 var sourceRef = i.Sources.FirstOrDefault();
                 var refUrl = sourceRef?.Ref ?? "(none)";
@@ -282,7 +282,17 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
                     ? ""
                     : $"\n  failureDetails: {failureDetails.Replace("\n", "\n  ")}";
                 return $"- {i.Id} | status={i.Status} | state={i.State ?? "(none)"} | type={sourceType} | ref={refUrl} | links={links} | summary={summary} | title={i.Title}{detailsLine}";
-            }));
+            }
+
+            var triageList = string.Join("\n", toTriage.Select(FormatItem));
+
+            var contextSection = contextOnly.Count > 0
+                ? $"""
+
+                **Existing unresolved items (context for cross-referencing — do NOT update these, but DO link new items to them and set status to `tracked` when appropriate):**
+                {string.Join("\n", contextOnly.Select(FormatItem))}
+                """
+                : "";
 
             var feedbackSection = feedbackLines.Length > 0
                 ? $"""
@@ -298,14 +308,18 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
                 Work items have already been created by the collection step and
                 summarized by the summarize step. Your job is to:
 
-                1. Determine and update the type-specific status for each unresolved
-                   work item (use `update_work_item_status`).
-                2. Cross-reference related items **within this list** where applicable
-                   (use `link_work_items`).
+                1. **Cross-reference first** — Before setting any status, check if
+                   the item is related to any other item in the full list (both
+                   triage items AND existing context items below). If a pipeline
+                   failure matches a GitHub issue by error signature, component,
+                   or topic, link them with `link_work_items`.
                    **IMPORTANT:** Only link/correlate items if their failure signatures
                    (error messages, failed tasks, test names) match specifically. Two
                    failures in the same category (e.g. both "Component Governance") but
                    with different specific alerts are NOT the same issue.
+                2. **Then set status** — If the item was just linked to an issue or PR,
+                   set it to `tracked`. Otherwise determine the appropriate status
+                   per source type (use `update_work_item_status`).
                 3. Resolve work items that are no longer relevant based on context
                    (use `resolve_work_item`).
 
@@ -317,9 +331,12 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
                 For `closed` items: resolve them with `resolve_work_item`.
                 For `updated` items with `monitoring` status: re-evaluate and update status
                 if the change warrants it (e.g. change to `needs-investigation`).
-                For `new` items: determine the appropriate initial status.
+                For `new` items: first check if the item matches any existing
+                issue or PR (see context items below). If yes, link them and set
+                status to `tracked`. If no match, set to `needs-investigation`.
 
                 Status semantics:
+                - `tracked` — has a linked issue or PR addressing it
                 - `monitoring` — engineer is watching this item, wants to stay informed
                 - `acknowledged` — engineer has dismissed this, no action needed
 
@@ -330,7 +347,8 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
                 **Do NOT query external services** — everything you need is here.
 
                 **Work items needing triage ({toTriage.Count}):**
-                {existingList}
+                {triageList}
+                {contextSection}
                 {feedbackSection}
                 """;
 

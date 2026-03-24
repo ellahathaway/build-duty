@@ -54,9 +54,6 @@ app.Configure(config =>
 
         wi.AddCommand<WorkItemsShowCommand>("show")
             .WithDescription("Inspect a single work item");
-
-        wi.AddCommand<WorkItemRunCommand>("run")
-            .WithDescription("Run an AI action against work item(s) (e.g. 'review this PR', 'root cause analysis')");
     });
 });
 

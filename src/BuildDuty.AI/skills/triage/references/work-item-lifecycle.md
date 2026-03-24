@@ -43,7 +43,7 @@ Other PR statuses: `changes-requested`, `automerge`, `test-failures`, `merge-con
 - **`acknowledged`** — "I've reviewed this and decided no action is needed."
   Acknowledged items are ignored during triage — they will NOT re-triage when
   state changes to `updated`. They only re-enter triage if state becomes `closed`
-  (to auto-resolve) or are manually changed.
+  (so triage can resolve them) or are manually changed.
 
 - **`monitoring`** — "I'm aware of this and actively watching it."
   Monitoring items WILL re-triage when state changes to `updated`, allowing

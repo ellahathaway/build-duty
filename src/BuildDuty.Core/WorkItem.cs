@@ -101,7 +101,7 @@ public sealed class WorkItem
     /// <summary>
     /// Whether the item needs triage. True if never triaged, or if the
     /// summary has been written/refreshed since the last triage.
-    /// Acknowledged items only re-triage when state is "closed" (to auto-resolve).
+    /// Acknowledged items only re-triage when state is "closed" (so triage can resolve them).
     /// </summary>
     [JsonIgnore]
     public bool NeedsTriage

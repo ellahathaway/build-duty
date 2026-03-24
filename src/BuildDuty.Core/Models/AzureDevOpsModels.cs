@@ -70,10 +70,11 @@ public sealed class AzureDevOpsPipelineConfig
 
     /// <summary>
     /// Returns the effective status filter, defaulting to
-    /// <c>["failed", "partiallySucceeded"]</c>.
+    /// <c>["failed", "partiallySucceeded", "canceled"]</c>.
+    /// Canceled covers builds that timed out.
     /// </summary>
     public IReadOnlyList<string> EffectiveStatus =>
-        Status is { Count: > 0 } ? Status : ["failed", "partiallySucceeded"];
+        Status is { Count: > 0 } ? Status : ["failed", "partiallySucceeded", "canceled"];
 
     /// <summary>
     /// Parses the <see cref="Age"/> string into a <see cref="TimeSpan"/>.

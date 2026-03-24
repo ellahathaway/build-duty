@@ -206,7 +206,6 @@ BuildDuty exposes a small set of composable CLI commands for work item collectio
 | `build-duty triage` | 3-step pipeline: collect → scan → correlate | `--config` | New/updated/enriched work items |
 | `build-duty workitems list` | List tracked work items | `--status`, `--show-resolved`, `--limit` | Tabular list |
 | `build-duty workitems show` | Inspect one work item | `--id` | Full detail, summary, and history |
-| `build-duty workitems run` | AI-assisted action on work item(s) | `--id`, `--action`, `--status`, `--show-resolved`, `--limit` | AI analysis result |
 
 ### Credential handling
 BuildDuty authenticates using the GitHub Copilot SDK's default credential resolution. MCP servers handle their own authentication independently.
@@ -287,16 +286,16 @@ Valid transitions:
 
 Invalid transitions throw `InvalidOperationException`. Every state change is recorded in the work item's `History` array with timestamp and actor metadata.
 
-## Auto-Resolution
-During scanning, AI agents automatically resolve work items that no longer need attention. A work item in `Unresolved` or `InProgress` state is resolved when:
+## Resolution via Triage
+Collection never changes a work item's status — it only observes state. When a source is no longer failing (build passes, issue closed, PR merged), collection sets `State = "closed"`. Triage then decides what to do:
 
-1. **Latest build passes**: The AI agent finds the latest build for a pipeline/branch succeeds, and an existing work item tracks a failure for that same correlation ID. The agent calls `resolve_work_item` with reason: *"Auto-resolved: latest build succeeded"*.
+1. **Latest build passes**: Collection marks the work item's state as `closed`. On the next triage run the AI sees the closed state and calls `resolve_work_item` with an appropriate reason.
 
-2. **Branch superseded**: For pipelines with `release` config, the AI determines (via the release branch script and MCP server data) that a branch is no longer active. Work items tracking failures on that branch are resolved with reason: *"Auto-resolved: branch superseded by newer release"*.
+2. **Branch superseded**: For pipelines with `release` config, the AI determines (via the release branch script and MCP server data) that a branch is no longer active and resolves the work item.
 
-3. **Issue/PR closed**: For GitHub-sourced work items, the AI resolves items when the underlying issue is closed or the PR is merged.
+3. **Issue/PR closed**: Collection marks the work item's state as `closed`. Triage resolves it on the next run.
 
-Auto-resolution transitions through valid states: if the item is `Unresolved`, the `resolve_work_item` tool moves it to `InProgress` first, then to `Resolved`.
+This separation ensures all status decisions flow through triage, keeping collection deterministic and side-effect free.
 
 ## AI Analysis
 BuildDuty provides AI-assisted triage through the GitHub Copilot SDK. The AI layer operates only on locally collected data and does not modify persisted sources.
