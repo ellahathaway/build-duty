@@ -137,7 +137,7 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                         AnsiConsole.MarkupLine(
                             $"[yellow]Waiting for {running.Count} running agent(s) to finish...[/]");
                         await Task.WhenAll(running.Select(a => a.WaitAsync()));
-                        await ShowAgentResults(agents);
+                        await ShowAgentResults(agents, store);
                     }
 
                     AnsiConsole.MarkupLine("[dim]Review complete.[/]");
@@ -146,7 +146,7 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
 
                 if (selectedChoice == agentLabel)
                 {
-                    await ShowAgentResults(agents);
+                    await ShowAgentResults(agents, store);
                     continue;
                 }
 
@@ -223,7 +223,7 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
     /// <summary>
     /// Shows completed/running agents and lets the user interact with finished ones.
     /// </summary>
-    private static async Task ShowAgentResults(List<BackgroundAgent> agents)
+    private static async Task ShowAgentResults(List<BackgroundAgent> agents, WorkItemStore store)
     {
         while (true)
         {
@@ -300,7 +300,7 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                         .Title("What would you like to do?")
                         .AddChoices("Dismiss", "← Back"));
                 if (errorAction == "Dismiss")
-                    picked.Dismiss();
+                    await DismissWithStatusPrompt(picked, store);
                 continue;
             }
 
@@ -319,9 +319,7 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
 
                 if (followUp.Equals("done", StringComparison.OrdinalIgnoreCase))
                 {
-                    picked.Dismiss();
-                    AnsiConsole.MarkupLine("[dim]Agent dismissed.[/]");
-                    await Task.Delay(400);
+                    await DismissWithStatusPrompt(picked, store);
                     break;
                 }
 
@@ -342,6 +340,46 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
             Border = BoxBorder.Double,
             Padding = new Padding(1, 1),
         });
+    }
+
+    /// <summary>
+    /// Prompt the user for a status to apply to the agent's items, then dismiss.
+    /// Items already in a terminal status are skipped.
+    /// </summary>
+    private static async Task DismissWithStatusPrompt(BackgroundAgent agent, WorkItemStore store)
+    {
+        // Check which items still need a status decision
+        var actionable = agent.Items.Where(i => !WorkItem.TerminalStatuses.Contains(i.Status)).ToList();
+
+        if (actionable.Count > 0)
+        {
+            var status = AnsiConsole.Prompt(
+                new SelectionPrompt<string>()
+                    .Title("[bold]Set status for these items:[/]")
+                    .HighlightStyle(new Style(Color.Cyan1))
+                    .AddChoices(
+                        "acknowledged — no action needed right now",
+                        "investigating — actively looking into it",
+                        "needs-investigation — needs deeper analysis",
+                        "resolved — issue is done",
+                        "leave as-is"));
+
+            if (status != "leave as-is")
+            {
+                var newStatus = status.Split('—')[0].Trim();
+                foreach (var item in actionable)
+                {
+                    item.SetStatus(newStatus, $"Set during review dismiss");
+                    await store.SaveAsync(item);
+                }
+
+                AnsiConsole.MarkupLine($"[dim]{actionable.Count} item(s) → {newStatus}[/]");
+            }
+        }
+
+        agent.Dismiss();
+        AnsiConsole.MarkupLine("[dim]Agent dismissed.[/]");
+        await Task.Delay(400);
     }
 
     internal static string BuildAgentPrompt(List<WorkItem> items, string instruction)
