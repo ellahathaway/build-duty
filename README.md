@@ -59,12 +59,8 @@ gh auth login
 git clone https://github.com/ellahathaway/build-duty.git
 cd build-duty
 
-# Build and test
-./eng/build.sh
-
-# Pack and install as a global tool
-./eng/build.sh --pack
-dotnet tool install --global --add-source artifacts/packages buildduty
+# Build, test, pack, and install as a global tool
+./eng/build.sh --install
 
 # Verify
 build-duty --help
@@ -117,9 +113,7 @@ build-duty workitems list      # see current work items
 After making changes to the source, rebuild and reinstall:
 
 ```bash
-./eng/build.sh --pack
-dotnet tool uninstall -g buildduty
-dotnet tool install --global --add-source artifacts/packages buildduty
+./eng/build.sh --install
 ```
 
 ## Building from source
@@ -127,15 +121,17 @@ dotnet tool install --global --add-source artifacts/packages buildduty
 ### Linux / macOS
 
 ```bash
-./eng/build.sh          # restore → build → test
-./eng/build.sh --pack   # … + pack as NuGet
+./eng/build.sh              # restore → build → test
+./eng/build.sh --pack       # … + pack as NuGet
+./eng/build.sh --install    # … + pack + install as global tool
 ```
 
 ### Windows
 
 ```powershell
-.\eng\build.ps1          # restore → build → test
-.\eng\build.ps1 -Pack    # … + pack as NuGet
+.\eng\build.ps1              # restore → build → test
+.\eng\build.ps1 -Pack        # … + pack as NuGet
+.\eng\build.ps1 -Install     # … + pack + install as global tool
 ```
 
 Or with the `dotnet` CLI directly:
