@@ -43,6 +43,7 @@ public sealed class GitHubWorkItemCollector
 
                             if (!store.Exists(source.Id))
                             {
+                                var metadata = source.Metadata.Count > 0 ? source.Metadata : null;
                                 await store.SaveAsync(new WorkItem
                                 {
                                     Id = source.Id,
@@ -55,21 +56,44 @@ public sealed class GitHubWorkItemCollector
                                         Type = source.SourceType,
                                         Ref = source.SourceRef,
                                         SourceUpdatedAtUtc = source.SourceUpdatedAtUtc,
+                                        Metadata = metadata,
                                     }],
                                 });
                                 created++;
                             }
-                            else if (source.SourceUpdatedAtUtc.HasValue)
+                            else
                             {
-                                // Refresh SourceUpdatedAtUtc so summarize can
-                                // detect when the source has changed since last summary.
                                 var existing = await store.LoadAsync(source.Id);
                                 if (existing is not null)
                                 {
                                     var sourceRef = existing.Sources.FirstOrDefault();
-                                    if (sourceRef is not null && sourceRef.SourceUpdatedAtUtc != source.SourceUpdatedAtUtc)
+                                    if (sourceRef is null) continue;
+
+                                    var changed = false;
+
+                                    // Check if updatedAt changed
+                                    if (source.SourceUpdatedAtUtc.HasValue &&
+                                        sourceRef.SourceUpdatedAtUtc != source.SourceUpdatedAtUtc)
                                     {
                                         sourceRef.SourceUpdatedAtUtc = source.SourceUpdatedAtUtc;
+                                        changed = true;
+                                    }
+
+                                    // Check if linked PRs changed
+                                    var newLinkedPrs = source.Metadata.GetValueOrDefault("linkedPrs") ?? "";
+                                    var oldLinkedPrs = sourceRef.Metadata?.GetValueOrDefault("linkedPrs") ?? "";
+                                    if (newLinkedPrs != oldLinkedPrs)
+                                    {
+                                        sourceRef.Metadata ??= new Dictionary<string, string>();
+                                        if (newLinkedPrs.Length > 0)
+                                            sourceRef.Metadata["linkedPrs"] = newLinkedPrs;
+                                        else
+                                            sourceRef.Metadata.Remove("linkedPrs");
+                                        changed = true;
+                                    }
+
+                                    if (changed)
+                                    {
                                         if (existing.State != "new")
                                             existing.State = "updated";
                                         await store.SaveAsync(existing);
@@ -240,13 +264,26 @@ public sealed class GitHubWorkItemCollector
 
         var items = JsonSerializer.Deserialize<List<JsonElement>>(output) ?? [];
 
-        return items.Select(i =>
+        // Fetch linked PRs for all issues in parallel
+        var linkedPrTasks = items.Select(i =>
+        {
+            var number = i.GetProperty("number").GetInt32();
+            return FetchLinkedPrsAsync(owner, repo.Name, number);
+        }).ToList();
+        var linkedPrResults = await Task.WhenAll(linkedPrTasks);
+
+        return items.Select((i, idx) =>
         {
             var number = i.GetProperty("number").GetInt32();
             var title = i.TryGetProperty("title", out var t) ? t.GetString() ?? "" : "";
             var issueState = i.TryGetProperty("state", out var s) ? s.GetString()?.ToLowerInvariant() ?? "open" : "open";
             var url = i.TryGetProperty("url", out var u) ? u.GetString() ?? "" : $"https://github.com/{owner}/{repo.Name}/issues/{number}";
             var updatedAt = i.TryGetProperty("updatedAt", out var ua) && ua.TryGetDateTime(out var dt) ? dt : (DateTime?)null;
+
+            var metadata = new Dictionary<string, string>();
+            var linkedPrs = linkedPrResults[idx];
+            if (linkedPrs.Count > 0)
+                metadata["linkedPrs"] = string.Join(", ", linkedPrs);
 
             return new CollectedSource
             {
@@ -257,8 +294,63 @@ public sealed class GitHubWorkItemCollector
                 SourceRef = url,
                 Status = issueState,
                 SourceUpdatedAtUtc = updatedAt?.ToUniversalTime(),
+                Metadata = metadata,
             };
         }).ToList();
+    }
+
+    /// <summary>
+    /// Fetches PRs cross-referenced or connected to an issue via GraphQL timeline.
+    /// Returns a list of PR URLs.
+    /// </summary>
+    private static async Task<List<string>> FetchLinkedPrsAsync(string owner, string repo, int issueNumber)
+    {
+        var query = $$"""
+            { repository(owner:"{{owner}}", name:"{{repo}}") {
+                issue(number:{{issueNumber}}) {
+                    timelineItems(last:20, itemTypes:[CROSS_REFERENCED_EVENT, CONNECTED_EVENT]) {
+                        nodes {
+                            __typename
+                            ... on CrossReferencedEvent { source { ... on PullRequest { url state } } }
+                            ... on ConnectedEvent { subject { ... on PullRequest { url state } } }
+                        }
+                    }
+                }
+            } }
+            """;
+
+        var output = await RunGhAsync($"api graphql -f query='{query.Replace("'", "'\\''")}'");
+        if (output is null) return [];
+
+        try
+        {
+            using var doc = JsonDocument.Parse(output);
+            var nodes = doc.RootElement
+                .GetProperty("data")
+                .GetProperty("repository")
+                .GetProperty("issue")
+                .GetProperty("timelineItems")
+                .GetProperty("nodes");
+
+            var prs = new HashSet<string>();
+            foreach (var node in nodes.EnumerateArray())
+            {
+                // CrossReferencedEvent → source.url
+                if (node.TryGetProperty("source", out var source) &&
+                    source.TryGetProperty("url", out var srcUrl))
+                    prs.Add(srcUrl.GetString()!);
+
+                // ConnectedEvent → subject.url
+                if (node.TryGetProperty("subject", out var subject) &&
+                    subject.TryGetProperty("url", out var subUrl))
+                    prs.Add(subUrl.GetString()!);
+            }
+            return prs.ToList();
+        }
+        catch
+        {
+            return [];
+        }
     }
 
     private static async Task<List<CollectedSource>> FetchPullRequestsAsync(

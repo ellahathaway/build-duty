@@ -282,7 +282,11 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
                 var detailsLine = string.IsNullOrWhiteSpace(failureDetails)
                     ? ""
                     : $"\n  failureDetails: {failureDetails.Replace("\n", "\n  ")}";
-                return $"- {i.Id} | status={i.Status} | state={i.State ?? "(none)"} | type={sourceType} | ref={refUrl} | links={links} | summary={summary} | title={i.Title}{detailsLine}";
+                var linkedPrs = sourceRef?.Metadata?.GetValueOrDefault("linkedPrs");
+                var linkedPrsLine = string.IsNullOrWhiteSpace(linkedPrs)
+                    ? ""
+                    : $"\n  linkedPrs: {linkedPrs}";
+                return $"- {i.Id} | status={i.Status} | state={i.State ?? "(none)"} | type={sourceType} | ref={refUrl} | links={links} | summary={summary} | title={i.Title}{detailsLine}{linkedPrsLine}";
             }
 
             var triageList = string.Join("\n", toTriage.Select(FormatItem));
@@ -330,11 +334,13 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
                 - `closed` — source is no longer active (build passing, PR merged, issue closed)
 
                 For `closed` items: resolve them with `resolve_work_item`.
-                For `updated` items with `monitoring` status: re-evaluate and update status
-                if the change warrants it (e.g. change to `needs-investigation`).
+                For `updated` items: re-evaluate the item. If new linked PRs
+                appeared (see `linkedPrs` field), set status to `tracked`. Otherwise
+                re-assess based on the change.
                 For `new` items: first check if the item matches any existing
-                issue or PR (see context items below). If yes, link them and set
-                status to `tracked`. If no match, set to `needs-investigation`.
+                issue or PR (see context items below), or if it has `linkedPrs`.
+                If yes, link them and set status to `tracked`. If no match, set
+                to `needs-investigation`.
 
                 Status semantics:
                 - `tracked` — has a linked issue or PR addressing it
