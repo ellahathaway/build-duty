@@ -134,40 +134,6 @@ public class CopilotAdapter : IAsyncDisposable
                 tools: _tools,
                 ct: ct);
 
-            // Temporary: stream full agent output to log file for debugging
-            var logFile = Path.Combine(Path.GetTempPath(), $"build-duty-{sourceName.Replace(" ", "-").ToLowerInvariant()}.log");
-            var logWriter = new StreamWriter(logFile, append: false) { AutoFlush = true };
-            logWriter.WriteLine($"=== {sourceName} scan started at {DateTime.UtcNow:O} ===\n");
-            Console.Error.WriteLine($"[DIAG] Agent log: {logFile}");
-
-            session.On(e =>
-            {
-                var ts = $"[{DateTime.UtcNow:HH:mm:ss}]";
-                switch (e)
-                {
-                    case AssistantMessageDeltaEvent delta:
-                        logWriter.Write(delta.Data?.DeltaContent ?? "");
-                        break;
-                    case AssistantMessageEvent msg:
-                        logWriter.WriteLine($"\n\n--- Full message ---\n{msg.Data?.Content}\n---\n");
-                        break;
-                    case ToolExecutionStartEvent toolStart:
-                        var name = toolStart.Data?.McpToolName ?? toolStart.Data?.ToolName ?? "?";
-                        var server = toolStart.Data?.McpServerName;
-                        var label = server is not null ? $"{server}/{name}" : name;
-                        logWriter.WriteLine($"\n{ts} TOOL CALL: {label}");
-                        logWriter.WriteLine($"  args: {toolStart.Data?.Arguments}");
-                        break;
-                    case ToolExecutionCompleteEvent toolEnd:
-                        var ok = toolEnd.Data?.Success == true ? "✓" : "✗";
-                        logWriter.WriteLine($"{ts} TOOL RESULT: {ok}");
-                        break;
-                    case SessionErrorEvent err:
-                        logWriter.WriteLine($"\n{ts} ERROR: {err.Data}");
-                        break;
-                }
-            });
-
             var response = await session.SendAndWaitAsync(
                 new MessageOptions { Prompt = prompt },
                 timeout: TimeSpan.FromMinutes(10),
