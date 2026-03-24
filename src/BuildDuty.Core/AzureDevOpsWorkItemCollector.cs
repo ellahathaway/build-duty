@@ -58,7 +58,7 @@ public sealed class AzureDevOpsWorkItemCollector
                                     orgUrl, project.Name, build.Id, hasStageFilters ? stageFilterStr : null);
 
                                 // If stage filters are configured and no filtered tasks failed,
-                                // the legs we care about passed — auto-resolve any existing items
+                                // the legs we care about passed — mark existing items as closed
                                 if (hasStageFilters && failureInfo.Error is null && failureInfo.FailedTasks.Count == 0)
                                 {
                                     if (store is not null)
@@ -135,7 +135,7 @@ public sealed class AzureDevOpsWorkItemCollector
                             }
                             else if (store is not null)
                             {
-                                // Success — mark unresolved work items with same correlation as closed
+                                // Build succeeded — mark existing items as closed
                                 var existingItems = await store.ListAsync();
                                 foreach (var item in existingItems.Where(i =>
                                     i.CorrelationId == source.CorrelationId && !i.IsResolved))

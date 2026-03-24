@@ -109,4 +109,18 @@ public class WorkItemStatusTests
         var wi = new WorkItem { Id = "wi_new", Title = "New test", State = "new" };
         Assert.True(wi.NeedsSummary);
     }
+
+    [Fact]
+    public void NeedsTriage_FalseWhenAcknowledged()
+    {
+        var wi = new WorkItem { Id = "wi_ack", Title = "Ack test", Status = "acknowledged", State = "updated" };
+        Assert.False(wi.NeedsTriage);
+    }
+
+    [Fact]
+    public void NeedsTriage_TrueWhenAcknowledgedAndClosed()
+    {
+        var wi = new WorkItem { Id = "wi_ack_closed", Title = "Ack closed test", Status = "acknowledged", State = "closed" };
+        Assert.True(wi.NeedsTriage);
+    }
 }

@@ -131,7 +131,7 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
 
         var parts = new List<string> { $"created [green]{totalCreated}[/]" };
         if (totalUpdated > 0) parts.Add($"updated [yellow]{totalUpdated}[/]");
-        if (totalClosed > 0) parts.Add($"stale [dim]{totalClosed}[/]");
+        if (totalClosed > 0) parts.Add($"closed [dim]{totalClosed}[/]");
         AnsiConsole.MarkupLine($"Gathered [bold]{allSources.Count}[/] sources — {string.Join(", ", parts)}.");
 
         foreach (var failure in failedCollections)
@@ -499,7 +499,7 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
             table.AddRow(
                 "Collection",
                 Markup.Escape(r.Source),
-                r.Success ? $"[green]✓[/] {r.Sources.Count} sources, {r.Created} new, {r.Updated} updated" + (r.Closed > 0 ? $", {r.Closed} stale" : "") : "[red]✗[/] failed",
+                r.Success ? $"[green]✓[/] {r.Sources.Count} sources, {r.Created} new, {r.Updated} updated" + (r.Closed > 0 ? $", {r.Closed} closed" : "") : "[red]✗[/] failed",
                 $"{r.Duration.TotalSeconds:F1}s");
 
         foreach (var r in summarizeResults)

@@ -182,7 +182,6 @@ public sealed class GitHubWorkItemCollector
                         }
 
                         // Mark existing items whose source is no longer collected
-                        // (e.g. PR was merged/closed since last collection)
                         var prefix = $"wi_gh_pr_{org.Organization}_{repo.Name}_";
                         var allItems = await store.ListAsync();
                         foreach (var item in allItems.Where(i =>

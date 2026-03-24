@@ -25,10 +25,10 @@ Each work item has a `state` field set by the collection step:
 
 ### How to handle each state
 
-- **`closed`** items: resolve them with `resolve_work_item` (the source is gone).
-- **`updated`** items with `acknowledged` status: consider whether the update
-  warrants re-investigation (change status to `needs-investigation` if so).
 - **`new`** items: determine the appropriate initial status based on source type.
+- **`updated`** items with `monitoring` status: re-evaluate and update status
+  if the change warrants it (e.g. change to `needs-investigation`).
+- **`closed`** items: resolve them with `resolve_work_item` (the source is gone).
 - **`stable`** items: skip — already triaged, no new information.
 
 After processing, items are automatically marked as `stable`.
