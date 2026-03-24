@@ -22,20 +22,10 @@
   </ItemGroup>
 
   <PropertyGroup>
-    <NoWarn>$(NoWarn);NU5118</NoWarn>
+    <!-- Use the system-installed Copilot CLI (prerequisite in README) instead of
+         downloading and bundling the native binary. This avoids PackAsTool
+         stripping runtimes/ and the single-RID-per-build limitation. -->
+    <CopilotSkipCliDownload>true</CopilotSkipCliDownload>
   </PropertyGroup>
-
-  <!-- Include the Copilot CLI native binary in the tool package.
-       PackAsTool strips runtimes/ by default, so we re-add it. -->
-  <PropertyGroup>
-    <TargetsForTfmSpecificContentInPackage>$(TargetsForTfmSpecificContentInPackage);_IncludeCopilotCliInToolPackage</TargetsForTfmSpecificContentInPackage>
-  </PropertyGroup>
-
-  <Target Name="_IncludeCopilotCliInToolPackage">
-    <ItemGroup>
-      <TfmSpecificPackageFile Include="$(OutputPath)runtimes/linux-x64/native/copilot"
-                              PackagePath="tools/$(TargetFramework)/any/runtimes/linux-x64/native/" />
-    </ItemGroup>
-  </Target>
 
 </Project>
