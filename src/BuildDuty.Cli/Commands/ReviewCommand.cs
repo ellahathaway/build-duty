@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text;
 using BuildDuty.AI;
 using BuildDuty.Core;
 using BuildDuty.Core.Models;
@@ -222,7 +223,7 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
     }
 
     /// <summary>
-    /// Shows completed/running agents and lets the user interact with finished ones.
+    /// Shows agents and lets the user interact — watch live, send follow-ups, dismiss.
     /// </summary>
     private static async Task ShowAgentResults(List<BackgroundAgent> agents, WorkItemStore store)
     {
@@ -250,7 +251,7 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                 };
                 var stateTag = agent.State switch
                 {
-                    AgentState.Running => "running",
+                    AgentState.Running => "running — select to watch live",
                     AgentState.Done => "done",
                     AgentState.Error => "error",
                     _ => "unknown",
@@ -261,7 +262,7 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
 
             var selected = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
-                    .Title("Select an agent to view results or send follow-ups:")
+                    .Title("Select an agent to interact with:")
                     .HighlightStyle(new Style(Color.Cyan1))
                     .PageSize(15)
                     .AddChoices(choices));
@@ -273,62 +274,171 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
             if (agentIdx < 0 || agentIdx >= visible.Count)
                 continue;
 
-            var picked = visible[agentIdx];
+            await InteractWithAgent(visible[agentIdx], store);
+        }
+    }
 
-            if (picked.State == AgentState.Running)
+    /// <summary>
+    /// Full interaction with an agent: live watch (if running), show response, follow-up loop.
+    /// </summary>
+    private static async Task InteractWithAgent(BackgroundAgent agent, WorkItemStore store)
+    {
+        // If running, enter live watch mode
+        if (agent.State == AgentState.Running)
+        {
+            var escaped = await WatchAgentLive(agent);
+            if (escaped)
             {
-                AnsiConsole.MarkupLine("[yellow]This agent is still working. Check back later.[/]");
-                AnsiConsole.MarkupLine("[dim]Press any key to go back.[/]");
-                Console.ReadKey(intercept: true);
-                continue;
+                AnsiConsole.MarkupLine("[dim]Agent continues in background.[/]");
+                await Task.Delay(500);
+                return;
             }
+        }
 
-            // Show the latest response
+        // Follow-up loop (agent is done or errored)
+        while (true)
+        {
             AnsiConsole.Clear();
-            AnsiConsole.Write(new Rule($"[bold]{Markup.Escape(picked.Label)}[/]") { Justification = Justify.Left });
+            AnsiConsole.Write(new Rule($"[bold]{Markup.Escape(agent.Label)}[/]") { Justification = Justify.Left });
             AnsiConsole.WriteLine();
 
-            foreach (var item in picked.Items)
+            foreach (var item in agent.Items)
                 AnsiConsole.MarkupLine($"  [dim]•[/] {Markup.Escape(item.Id)}");
             AnsiConsole.WriteLine();
 
-            if (picked.State == AgentState.Error)
+            if (agent.State == AgentState.Error)
             {
-                AnsiConsole.MarkupLine($"[red]Error: {Markup.Escape(picked.ErrorMessage ?? "Unknown")}[/]");
+                AnsiConsole.MarkupLine($"[red]Error: {Markup.Escape(agent.ErrorMessage ?? "Unknown")}[/]");
 
                 var errorAction = AnsiConsole.Prompt(
                     new SelectionPrompt<string>()
                         .Title("What would you like to do?")
                         .AddChoices("Dismiss", "← Back"));
                 if (errorAction == "Dismiss")
-                    await DismissWithStatusPrompt(picked, store);
-                continue;
+                    await DismissWithStatusPrompt(agent, store);
+                return;
             }
 
-            ShowResponse(picked.LastResponse ?? "(no response)");
+            ShowResponse(agent.LastResponse ?? "(no response)");
 
-            // Follow-up / dismiss loop
-            while (true)
+            AnsiConsole.WriteLine();
+            var followUp = AnsiConsole.Prompt(
+                new TextPrompt<string>("[bold]Follow-up[/] [dim](empty to go back, 'done' to dismiss)[/]:")
+                    .AllowEmpty());
+
+            if (string.IsNullOrWhiteSpace(followUp))
+                return;
+
+            if (followUp.Equals("done", StringComparison.OrdinalIgnoreCase))
             {
-                AnsiConsole.WriteLine();
-                var followUp = AnsiConsole.Prompt(
-                    new TextPrompt<string>("[bold]Follow-up[/] [dim](empty to go back, 'done' to dismiss)[/]:")
-                        .AllowEmpty());
+                await DismissWithStatusPrompt(agent, store);
+                return;
+            }
 
-                if (string.IsNullOrWhiteSpace(followUp))
-                    break;
+            // Dispatch follow-up and watch it live
+            agent.FollowUpInBackground(followUp);
+            var wasEscaped = await WatchAgentLive(agent);
+            if (wasEscaped)
+            {
+                AnsiConsole.MarkupLine("[dim]Agent continues in background.[/]");
+                await Task.Delay(500);
+                return;
+            }
+            // Loop back to show new response and prompt again
+        }
+    }
 
-                if (followUp.Equals("done", StringComparison.OrdinalIgnoreCase))
+    /// <summary>
+    /// Live-stream agent activity to the terminal. Returns true if user pressed Escape.
+    /// </summary>
+    private static async Task<bool> WatchAgentLive(BackgroundAgent agent)
+    {
+        var sb = new StringBuilder();
+        var cursor = 0;
+        var buffer = new List<AgentStreamEvent>();
+        var escaped = false;
+
+        await AnsiConsole.Live(BuildStreamPanel(sb, agent))
+            .AutoClear(false)
+            .StartAsync(async ctx =>
+            {
+                while (agent.State == AgentState.Running)
                 {
-                    await DismissWithStatusPrompt(picked, store);
-                    break;
+                    if (Console.KeyAvailable)
+                    {
+                        var key = Console.ReadKey(intercept: true);
+                        if (key.Key == ConsoleKey.Escape)
+                        {
+                            escaped = true;
+                            return;
+                        }
+                    }
+
+                    cursor = agent.ReadStreamEvents(cursor, buffer);
+                    foreach (var evt in buffer)
+                        FormatStreamEvent(sb, evt);
+                    buffer.Clear();
+
+                    ctx.UpdateTarget(BuildStreamPanel(sb, agent));
+                    await Task.Delay(100);
                 }
 
-                picked.FollowUpInBackground(followUp);
-                AnsiConsole.MarkupLine("[dim]Follow-up dispatched — agent is working in the background.[/]");
-                await Task.Delay(400);
-                break; // return to agent list / review loop
-            }
+                // Final flush after completion
+                cursor = agent.ReadStreamEvents(cursor, buffer);
+                foreach (var evt in buffer)
+                    FormatStreamEvent(sb, evt);
+                buffer.Clear();
+                ctx.UpdateTarget(BuildStreamPanel(sb, agent));
+            });
+
+        return escaped;
+    }
+
+    private static Panel BuildStreamPanel(StringBuilder sb, BackgroundAgent agent)
+    {
+        var icon = agent.State switch
+        {
+            AgentState.Running => "⟳",
+            AgentState.Done => "✓",
+            AgentState.Error => "✗",
+            _ => "?",
+        };
+
+        var text = sb.Length > 0 ? sb.ToString() : "Waiting for response...";
+
+        // Show last 40 lines to keep terminal manageable
+        var lines = text.Split('\n');
+        if (lines.Length > 40)
+            text = "...\n" + string.Join('\n', lines[^40..]);
+
+        var stateHint = agent.State == AgentState.Running ? " [dim](Esc to return to menu)[/]" : "";
+
+        return new Panel(Markup.Escape(text))
+        {
+            Header = new PanelHeader($"{icon} [bold]{Markup.Escape(agent.Label)}[/]{stateHint}"),
+            Border = BoxBorder.Rounded,
+            Padding = new Padding(1, 0),
+        };
+    }
+
+    private static void FormatStreamEvent(StringBuilder sb, AgentStreamEvent evt)
+    {
+        switch (evt.Type)
+        {
+            case "delta":
+                sb.Append(evt.Content);
+                break;
+            case "tool-start":
+                if (sb.Length > 0 && sb[^1] != '\n') sb.AppendLine();
+                sb.AppendLine($"🔧 {evt.ToolName}");
+                break;
+            case "tool-end":
+                sb.AppendLine(evt.ToolSuccess == true ? "  ✓ done" : "  ✗ failed");
+                break;
+            case "error":
+                if (sb.Length > 0 && sb[^1] != '\n') sb.AppendLine();
+                sb.AppendLine($"⚠ {evt.Content}");
+                break;
         }
     }
 
@@ -479,6 +589,10 @@ internal sealed class BackgroundAgent : IAsyncDisposable
     private ReviewSession? _session;
     private Task? _workTask;
 
+    // Stream event buffer for live watch mode
+    private readonly List<AgentStreamEvent> _streamEvents = new();
+    private readonly object _streamLock = new();
+
     private BackgroundAgent(List<WorkItem> items, string instruction)
     {
         Items = items;
@@ -500,6 +614,35 @@ internal sealed class BackgroundAgent : IAsyncDisposable
     }
 
     public Task WaitAsync() => _workTask ?? Task.CompletedTask;
+
+    /// <summary>
+    /// Read stream events since the given cursor. Returns the new cursor position.
+    /// </summary>
+    public int ReadStreamEvents(int cursor, List<AgentStreamEvent> buffer)
+    {
+        lock (_streamLock)
+        {
+            for (int i = cursor; i < _streamEvents.Count; i++)
+                buffer.Add(_streamEvents[i]);
+            return _streamEvents.Count;
+        }
+    }
+
+    private void OnStreamEvent(AgentStreamEvent evt)
+    {
+        lock (_streamLock)
+        {
+            _streamEvents.Add(evt);
+        }
+    }
+
+    private void ClearStreamBuffer()
+    {
+        lock (_streamLock)
+        {
+            _streamEvents.Clear();
+        }
+    }
 
     public void Dismiss() => State = AgentState.Dismissed;
 
@@ -523,6 +666,7 @@ internal sealed class BackgroundAgent : IAsyncDisposable
             throw new InvalidOperationException("Agent session is not available.");
 
         State = AgentState.Running;
+        ClearStreamBuffer();
         _workTask = Task.Run(async () =>
         {
             try
@@ -560,6 +704,8 @@ internal sealed class BackgroundAgent : IAsyncDisposable
                     "skills/suggest-next-actions",
                 ],
                 mcpServers);
+
+            _session.OnStream(OnStreamEvent);
 
             var prompt = ReviewCommand.BuildAgentPrompt(Items, instruction);
             LastResponse = await _session.SendAsync(prompt);

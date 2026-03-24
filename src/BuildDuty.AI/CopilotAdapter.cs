@@ -232,12 +232,51 @@ public class CopilotAdapter : IAsyncDisposable
 /// <summary>
 /// A long-lived session that supports multi-turn conversation with
 /// the AI agent. Created via <see cref="CopilotAdapter.CreateReviewSessionAsync"/>.
+/// Supports streaming events for live terminal rendering.
 /// </summary>
 public sealed class ReviewSession : IAsyncDisposable
 {
     private readonly CopilotSession _session;
+    private volatile Action<AgentStreamEvent>? _streamHandler;
 
-    internal ReviewSession(CopilotSession session) => _session = session;
+    internal ReviewSession(CopilotSession session)
+    {
+        _session = session;
+        _session.On(e =>
+        {
+            var handler = _streamHandler;
+            if (handler is null) return;
+
+            switch (e)
+            {
+                case AssistantMessageDeltaEvent delta:
+                    handler(new AgentStreamEvent { Type = "delta", Content = delta.Data?.DeltaContent });
+                    break;
+                case ToolExecutionStartEvent toolStart:
+                    var name = toolStart.Data?.McpToolName ?? toolStart.Data?.ToolName ?? "?";
+                    var server = toolStart.Data?.McpServerName;
+                    handler(new AgentStreamEvent
+                    {
+                        Type = "tool-start",
+                        ToolName = server is not null ? $"{server}/{name}" : name,
+                        ToolArgs = toolStart.Data?.Arguments?.ToString(),
+                    });
+                    break;
+                case ToolExecutionCompleteEvent toolEnd:
+                    handler(new AgentStreamEvent { Type = "tool-end", ToolSuccess = toolEnd.Data?.Success == true });
+                    break;
+                case AssistantMessageEvent msg:
+                    handler(new AgentStreamEvent { Type = "message", Content = msg.Data?.Content });
+                    break;
+                case SessionErrorEvent err:
+                    handler(new AgentStreamEvent { Type = "error", Content = err.Data?.ToString() });
+                    break;
+            }
+        });
+    }
+
+    /// <summary>Register a handler to receive streaming events (token deltas, tool calls, etc.).</summary>
+    public void OnStream(Action<AgentStreamEvent> handler) => _streamHandler = handler;
 
     /// <summary>Send a message and wait for the agent's response.</summary>
     public async Task<string> SendAsync(string prompt, CancellationToken ct = default)
