@@ -29,9 +29,9 @@ public class WorkItemStoreTests : IDisposable
             Status = "new",
             Title = "Round-trip test",
             CorrelationId = "corr_123",
-            Signals =
+            Sources =
             [
-                new SignalReference { Type = "pipeline-failure", Ref = "ado://run/42" }
+                new SourceReference { Type = "pipeline-failure", Ref = "ado://run/42" }
             ]
         };
 
@@ -44,8 +44,8 @@ public class WorkItemStoreTests : IDisposable
         Assert.False(loaded.IsResolved);
         Assert.Equal("Round-trip test", loaded.Title);
         Assert.Equal("corr_123", loaded.CorrelationId);
-        Assert.Single(loaded.Signals);
-        Assert.Equal("pipeline-failure", loaded.Signals[0].Type);
+        Assert.Single(loaded.Sources);
+        Assert.Equal("pipeline-failure", loaded.Sources[0].Type);
     }
 
     [Fact]

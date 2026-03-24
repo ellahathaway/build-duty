@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace BuildDuty.Core;
 
-public sealed class SignalReference
+public sealed class SourceReference
 {
     [JsonPropertyName("type")]
     public string Type { get; set; } = string.Empty;

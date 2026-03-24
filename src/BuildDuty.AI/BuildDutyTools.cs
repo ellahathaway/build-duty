@@ -22,7 +22,7 @@ public static class BuildDutyTools
                         : FormatWorkItem(item);
                 },
                 "get_work_item",
-                "Get full details of a work item by ID, including signals and history."),
+                "Get full details of a work item by ID, including sources and history."),
 
             AIFunctionFactory.Create(
                 async (string? status, int? limit) =>
@@ -69,10 +69,10 @@ public static class BuildDutyTools
         if (item.LinkedItems.Count > 0)
             lines.Add($"- **Linked:** {string.Join(", ", item.LinkedItems)}");
 
-        if (item.Signals.Count > 0)
+        if (item.Sources.Count > 0)
         {
-            lines.Add("- **Signals:**");
-            foreach (var s in item.Signals)
+            lines.Add("- **Sources:**");
+            foreach (var s in item.Sources)
                 lines.Add($"  - [{s.Type}] {s.Ref}");
         }
 

@@ -1,7 +1,7 @@
 ---
 name: diagnose-build-break
 description: >
-  Perform root-cause analysis on a build break using collected signals,
+  Perform root-cause analysis on a build break using collected sources,
   error logs, and correlated change history.
 ---
 
@@ -12,8 +12,8 @@ perform root-cause analysis.
 
 ## What to do
 
-1. Load the work item and its signals.
-2. For pipeline signals, get the failing build details and compare with
+1. Load the work item and its sources.
+2. For pipeline sources, get the failing build details and compare with
    recent builds on the same branch to identify when it started failing.
 3. Check if other pipelines/branches are also failing (shared root cause).
 4. Look at recent commits and PRs that may have introduced the regression.

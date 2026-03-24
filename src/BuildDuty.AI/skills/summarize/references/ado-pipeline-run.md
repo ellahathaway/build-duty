@@ -1,7 +1,7 @@
-# Reference: ado-pipeline-run signal
+# Reference: ado-pipeline-run source
 
-This reference applies when a work item has a signal of type `ado-pipeline-run`.
-The signal `ref` is a URL to an Azure DevOps build result.
+This reference applies when a work item has a source of type `ado-pipeline-run`.
+The source `ref` is a URL to an Azure DevOps build result.
 
 ## Extracting build info from URLs
 

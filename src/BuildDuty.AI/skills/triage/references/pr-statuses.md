@@ -1,6 +1,6 @@
 # GitHub PR Statuses
 
-Signal type: `github-pr`
+Source type: `github-pr`
 
 ## Valid statuses
 

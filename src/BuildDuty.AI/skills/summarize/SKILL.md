@@ -54,5 +54,5 @@ useless. Always include *what* failed, *why* it failed, and *where*.
 ## Guidelines
 - Be concise — engineers are triaging, not reading essays
 - Always include direct links to the relevant resources
-- When multiple signals exist, prioritize failures over successes
+- When multiple sources exist, prioritize failures over successes
 - Failure details are pre-collected — prefer them over re-fetching

@@ -2,7 +2,7 @@
 name: suggest-next-actions
 description: >
   Recommend concrete next steps for a build-duty engineer based on the
-  current investigation state and collected signals.
+  current investigation state and collected sources.
 ---
 
 # Suggest Next Actions
@@ -12,7 +12,7 @@ for a work item, suggest the most impactful next actions.
 
 ## What to do
 
-1. Load the work item and its signals to understand the current state.
+1. Load the work item and its sources to understand the current state.
 2. Use available tools to check the latest status:
    - Has a newer build succeeded on the same branch?
    - Is there already a fix PR open?

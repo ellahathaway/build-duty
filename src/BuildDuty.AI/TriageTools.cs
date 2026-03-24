@@ -27,13 +27,13 @@ public static class TriageTools
                     var item = await store.LoadAsync(workItemId);
                     if (item is null)
                         return $"Work item '{workItemId}' not found.";
-                    if (item.Signals.Count == 0)
-                        return "No signals collected for this work item.";
+                    if (item.Sources.Count == 0)
+                        return "No sources collected for this work item.";
 
-                    return string.Join('\n', item.Signals.Select(s => $"- [{s.Type}] {s.Ref}"));
+                    return string.Join('\n', item.Sources.Select(s => $"- [{s.Type}] {s.Ref}"));
                 },
-                "get_signals",
-                "Get the collected signals (pipeline URLs, issues, PRs) for a work item. Use the Azure DevOps MCP server to query build details from the URL."),
+                "get_sources",
+                "Get the collected sources (pipeline URLs, issues, PRs) for a work item. Use the Azure DevOps MCP server to query build details from the URL."),
         ];
     }
 }

@@ -53,8 +53,8 @@ public sealed class WorkItem
     [JsonPropertyName("linkedItems")]
     public List<string> LinkedItems { get; set; } = [];
 
-    [JsonPropertyName("signals")]
-    public List<SignalReference> Signals { get; set; } = [];
+    [JsonPropertyName("sources")]
+    public List<SourceReference> Sources { get; set; } = [];
 
     [JsonPropertyName("history")]
     public List<WorkItemHistoryEntry> History { get; set; } = [];
@@ -78,8 +78,8 @@ public sealed class WorkItem
             if (!SummarizedAtUtc.HasValue)
                 return true;
 
-            // Check if any signal source has been updated since the last summary
-            return Signals.Any(s =>
+            // Check if any source has been updated since the last summary
+            return Sources.Any(s =>
                 s.SourceUpdatedAtUtc.HasValue &&
                 s.SourceUpdatedAtUtc.Value > SummarizedAtUtc.Value);
         }

@@ -14,7 +14,7 @@ Terminal statuses indicate the item is done.
 | `merged` | PR merged |
 | `closed` | Issue or PR closed |
 
-### Active statuses (by signal type)
+### Active statuses (by source type)
 
 **Pipeline (`ado-pipeline-run`):** `new` → `needs-investigation` → `tracked` (when linked to issue/PR) → `fixed`
 Other pipeline statuses: `investigating`
@@ -34,5 +34,5 @@ Other PR statuses: `changes-requested`, `automerge`, `test-failures`, `merge-con
 
 ## Deduplication
 
-Existing work items are provided in the prompt. Skip signals whose ID
+Existing work items are provided in the prompt. Skip sources whose ID
 already appears in the existing items list.

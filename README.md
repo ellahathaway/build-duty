@@ -1,6 +1,6 @@
 # BuildDuty
 
-A .NET CLI tool that streamlines build-duty workflows by centralizing signal
+A .NET CLI tool that streamlines build-duty workflows by centralizing work item
 collection from Azure DevOps and GitHub, tracking work items through a clear
 lifecycle, and enabling AI-assisted triage — all driven by repository-owned
 YAML configuration.
@@ -142,7 +142,7 @@ branches for released previews and superseded versions.
 
 ### `build-duty triage`
 
-Run the full triage pipeline: collect signals and create work items, summarize
+Run the full triage pipeline: collect sources and create work items, summarize
 new items with AI, then triage with AI to determine statuses and cross-references.
 After triage, new correlations (links between items) are presented for
 confirmation. Optionally enter interactive review with `--review`.
@@ -174,7 +174,7 @@ List tracked work items. Resolved items are hidden by default.
 
 ### `build-duty workitems show`
 
-Show full details for a single work item, including signals, summary, and history.
+Show full details for a single work item, including sources, summary, and history.
 
 | Option | Description |
 |---|---|
@@ -199,7 +199,7 @@ SDK with bundled skills and MCP server integration.
 | Skill | Purpose |
 |---|---|
 | `summarize` | Fetch build logs, write concise work-item summaries |
-| `triage-signals` | Determine statuses, resolve stale items, cross-reference |
+| `triage` | Determine statuses, resolve stale items, cross-reference |
 | `diagnose-build-break` | Root-cause analysis with ranked likely causes |
 | `cluster-incidents` | Group related failures across pipelines/branches |
 | `suggest-next-actions` | Recommend concrete next steps |
@@ -208,7 +208,7 @@ SDK with bundled skills and MCP server integration.
 
 ```
 BuildDuty.Cli          CLI entry-point, commands, rendering (Spectre.Console)
-BuildDuty.Core         Domain model, work-item store, signal collectors, config
+BuildDuty.Core         Domain model, work-item store, work item collectors, config
 BuildDuty.AI           Copilot SDK adapter, skills, tools
 BuildDuty.Tests        xUnit tests
 ```
@@ -217,10 +217,10 @@ BuildDuty.Tests        xUnit tests
 
 ```
 build-duty triage
-  ├─ Step 1: Signal Collection  (deterministic, no AI)
-  │   ├─ AzureDevOpsSignalCollector  → ADO pipeline runs + failure details
-  │   ├─ GitHubIssueCollector        → GitHub issues
-  │   └─ GitHubPrCollector           → GitHub PRs
+  ├─ Step 1: Work Item Collection  (deterministic, no AI)
+  │   ├─ AzureDevOpsWorkItemCollector  → ADO pipeline runs + failure details
+  │   ├─ GitHubIssueCollector          → GitHub issues
+  │   └─ GitHubPrCollector             → GitHub PRs
   │   └─ WorkItemStore  ←── work items created, passing builds auto-resolved
   │
   ├─ Step 2: AI Summarize  (summarize skill)
@@ -229,11 +229,11 @@ build-duty triage
   │   │   └─ AzureDevOpsBuildClient → deterministic timeline/log fetching
   │   └─ WorkItemStore         ←── summaries written
   │
-  ├─ Step 3: AI Triage  (triage-signals skill)
+  ├─ Step 3: AI Triage  (triage skill)
   │   ├─ CopilotAdapter       → Copilot SDK session + MCP servers
   │   │   ├─ gh CLI / MCP     → GitHub issue/PR details
   │   │   └─ az CLI / MCP     → ADO pipeline details
-  │   ├─ SignalTriageTools     → resolve, status, links
+  │   ├─ WorkItemTriageTools   → resolve, status, links
   │   └─ WorkItemStore         ←── statuses updated, items linked/resolved
   │
   ├─ Correlation Confirmation  (human-in-the-loop)

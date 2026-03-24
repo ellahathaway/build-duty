@@ -1,7 +1,7 @@
-# Reference: github-issue signal
+# Reference: github-issue source
 
-This reference applies when a work item has a signal of type `github-issue`.
-The signal `ref` is a URL to a GitHub issue.
+This reference applies when a work item has a source of type `github-issue`.
+The source `ref` is a URL to a GitHub issue.
 
 ## Extracting issue info from URLs
 
@@ -38,9 +38,9 @@ Extract the **owner**, **repo**, and **issue number** from the URL.
 - **Correlated work items** — if this build-duty work item has a correlation
   ID, note other work items in the same cluster
 
-## Priority signals
+## Priority indicators
 
-| Signal | Meaning |
+| Indicator | Meaning |
 |--------|---------|
 | `priority/0` or `P0` label | Critical — needs immediate attention |
 | `blocking` label | Blocking other work |

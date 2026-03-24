@@ -7,12 +7,12 @@ namespace BuildDuty.AI;
 /// Tools for Step 3: AI triage of work items.
 /// Updates statuses, cross-references related items, and resolves stale items.
 /// </summary>
-public static class SignalTriageTools
+public static class WorkItemTriageTools
 {
-    /// <summary>Skills used for AI signal triage sessions.</summary>
+    /// <summary>Skills used for AI work item triage sessions.</summary>
     public static readonly IReadOnlyList<string> Skills =
     [
-        "skills/triage-signals",
+        "skills/triage",
     ];
 
     public static IReadOnlyList<AIFunction> Create(WorkItemStore store)

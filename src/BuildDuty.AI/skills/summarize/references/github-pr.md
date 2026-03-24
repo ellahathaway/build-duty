@@ -1,7 +1,7 @@
-# Reference: github-pr signal
+# Reference: github-pr source
 
-This reference applies when a work item has a signal of type `github-pr`.
-The signal `ref` is a URL to a GitHub pull request.
+This reference applies when a work item has a source of type `github-pr`.
+The source `ref` is a URL to a GitHub pull request.
 
 ## Extracting PR info from URLs
 

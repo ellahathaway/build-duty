@@ -116,14 +116,14 @@ internal sealed class WorkItemsShowCommand : AsyncCommand<WorkItemsShowSettings>
 
         AnsiConsole.Write(panel);
 
-        if (item.Signals.Count > 0)
+        if (item.Sources.Count > 0)
         {
-            var sigTable = new Table().Border(TableBorder.Simple).Title("[bold]Signals[/]");
-            sigTable.AddColumn("Type");
-            sigTable.AddColumn("Ref");
-            foreach (var sig in item.Signals)
-                sigTable.AddRow(Markup.Escape(sig.Type), Markup.Escape(sig.Ref));
-            AnsiConsole.Write(sigTable);
+            var srcTable = new Table().Border(TableBorder.Simple).Title("[bold]Sources[/]");
+            srcTable.AddColumn("Type");
+            srcTable.AddColumn("Ref");
+            foreach (var src in item.Sources)
+                srcTable.AddRow(Markup.Escape(src.Type), Markup.Escape(src.Ref));
+            AnsiConsole.Write(srcTable);
         }
 
         if (item.History.Count > 0)

@@ -5,14 +5,14 @@ using BuildDuty.Core.Models;
 namespace BuildDuty.Core;
 
 /// <summary>
-/// Deterministic signal collector for Azure DevOps pipelines.
+/// Deterministic work item collector for Azure DevOps pipelines.
 /// Uses <c>az pipelines</c> CLI to query builds — no AI involved.
 /// </summary>
-public sealed class AzureDevOpsSignalCollector
+public sealed class AzureDevOpsWorkItemCollector
 {
     private readonly AzureDevOpsConfig _config;
 
-    public AzureDevOpsSignalCollector(AzureDevOpsConfig config)
+    public AzureDevOpsWorkItemCollector(AzureDevOpsConfig config)
     {
         _config = config;
     }
@@ -20,7 +20,7 @@ public sealed class AzureDevOpsSignalCollector
     public async Task<CollectionResult> CollectAsync(WorkItemStore? store = null, CancellationToken ct = default)
     {
         var started = Stopwatch.StartNew();
-        var signals = new List<CollectedSignal>();
+        var sources = new List<CollectedSource>();
         int created = 0, resolved = 0;
 
         try
@@ -46,7 +46,7 @@ public sealed class AzureDevOpsSignalCollector
                             // Skip builds older than the configured age
                             if (cutoff.HasValue && build.FinishTimeUtc.HasValue && build.FinishTimeUtc < cutoff)
                                 continue;
-                            var signal = ToSignal(orgUrl, project.Name, pipeline, build, statusFilter);
+                            var source = ToSource(orgUrl, project.Name, pipeline, build, statusFilter);
 
                             if (statusFilter.Contains(build.Result))
                             {
@@ -65,7 +65,7 @@ public sealed class AzureDevOpsSignalCollector
                                     {
                                         var existingItems = await store.ListAsync();
                                         foreach (var item in existingItems.Where(i =>
-                                            i.CorrelationId == signal.CorrelationId && !i.IsResolved))
+                                            i.CorrelationId == source.CorrelationId && !i.IsResolved))
                                         {
                                             item.SetStatus("resolved",
                                                 $"Auto-resolved: filtered stages/jobs passed in build #{build.BuildNumber}");
@@ -79,7 +79,7 @@ public sealed class AzureDevOpsSignalCollector
                                     continue;
                                 }
 
-                                signals.Add(signal);
+                                sources.Add(source);
 
                                 // Create work item if it doesn't exist, or update
                                 // failure details on existing items that lack them
@@ -93,19 +93,19 @@ public sealed class AzureDevOpsSignalCollector
                                     if (failureInfo.Error is null && failureInfo.FailedTasks.Count > 0)
                                         metadata["failureDetails"] = FormatFailureDetails(failureInfo);
 
-                                    if (!store.Exists(signal.Id))
+                                    if (!store.Exists(source.Id))
                                     {
                                         await store.SaveAsync(new WorkItem
                                         {
-                                            Id = signal.Id,
+                                            Id = source.Id,
                                             Status = "new",
-                                            Title = signal.Title,
-                                            CorrelationId = signal.CorrelationId,
-                                            Signals = [new SignalReference
+                                            Title = source.Title,
+                                            CorrelationId = source.CorrelationId,
+                                            Sources = [new SourceReference
                                             {
-                                                Type = signal.SignalType,
-                                                Ref = signal.SignalRef,
-                                                SourceUpdatedAtUtc = signal.SourceUpdatedAtUtc,
+                                                Type = source.SourceType,
+                                                Ref = source.SourceRef,
+                                                SourceUpdatedAtUtc = source.SourceUpdatedAtUtc,
                                                 Metadata = metadata.Count > 0 ? metadata : null,
                                             }],
                                         });
@@ -114,18 +114,18 @@ public sealed class AzureDevOpsSignalCollector
                                     else if (metadata.ContainsKey("failureDetails"))
                                     {
                                         // Backfill failure details on existing items
-                                        var existing = await store.LoadAsync(signal.Id);
+                                        var existing = await store.LoadAsync(source.Id);
                                         if (existing is not null)
                                         {
-                                            var sig = existing.Signals.FirstOrDefault();
-                                            if (sig is not null)
+                                            var sourceRef = existing.Sources.FirstOrDefault();
+                                            if (sourceRef is not null)
                                             {
-                                                var existingDetails = sig.Metadata?.GetValueOrDefault("failureDetails");
+                                                var existingDetails = sourceRef.Metadata?.GetValueOrDefault("failureDetails");
                                                 if (string.IsNullOrWhiteSpace(existingDetails))
                                                 {
-                                                    sig.Metadata ??= new Dictionary<string, string>();
-                                                    sig.Metadata["failureDetails"] = metadata["failureDetails"];
-                                                    sig.SourceUpdatedAtUtc = DateTime.UtcNow;
+                                                    sourceRef.Metadata ??= new Dictionary<string, string>();
+                                                    sourceRef.Metadata["failureDetails"] = metadata["failureDetails"];
+                                                    sourceRef.SourceUpdatedAtUtc = DateTime.UtcNow;
                                                     await store.SaveAsync(existing);
                                                 }
                                             }
@@ -139,7 +139,7 @@ public sealed class AzureDevOpsSignalCollector
                                 // with the same correlation ID
                                 var existingItems = await store.ListAsync();
                                 foreach (var item in existingItems.Where(i =>
-                                    i.CorrelationId == signal.CorrelationId && !i.IsResolved))
+                                    i.CorrelationId == source.CorrelationId && !i.IsResolved))
                                 {
                                     item.SetStatus("resolved",
                                         $"Auto-resolved: latest build #{build.BuildNumber} {build.Result}");
@@ -159,7 +159,7 @@ public sealed class AzureDevOpsSignalCollector
             {
                 Source = "AzureDevOps",
                 Success = true,
-                Signals = signals,
+                Sources = sources,
                 Created = created,
                 Resolved = resolved,
                 Duration = started.Elapsed,
@@ -172,7 +172,7 @@ public sealed class AzureDevOpsSignalCollector
                 Source = "AzureDevOps",
                 Success = false,
                 Error = ex.Message,
-                Signals = signals,
+                Sources = sources,
                 Created = created,
                 Resolved = resolved,
                 Duration = started.Elapsed,
@@ -289,20 +289,20 @@ public sealed class AzureDevOpsSignalCollector
         return "unknown";
     }
 
-    private static CollectedSignal ToSignal(
+    private static CollectedSource ToSource(
         string orgUrl, string project, AzureDevOpsPipelineConfig pipeline, BuildInfo build,
         HashSet<string> statusFilter)
     {
         var shortBranch = build.SourceBranch;
         var sanitized = shortBranch.Replace('/', '_').Replace('\\', '_');
 
-        return new CollectedSignal
+        return new CollectedSource
         {
             Id = $"wi_ado_{build.Id}",
             Title = $"[{pipeline.Name}] {shortBranch} — Build #{build.BuildNumber} {build.Result}",
             CorrelationId = $"corr_ado_{pipeline.Id}_{sanitized}",
-            SignalType = "ado-pipeline-run",
-            SignalRef = $"{orgUrl.TrimEnd('/')}/{project}/_build/results?buildId={build.Id}",
+            SourceType = "ado-pipeline-run",
+            SourceRef = $"{orgUrl.TrimEnd('/')}/{project}/_build/results?buildId={build.Id}",
             Status = build.Result,
             SourceUpdatedAtUtc = build.FinishTimeUtc?.UtcDateTime,
             Metadata = new()

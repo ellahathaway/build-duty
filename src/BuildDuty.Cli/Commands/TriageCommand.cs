@@ -52,8 +52,8 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
 
         var store = _storeFactory(config.Name, configPath);
 
-        // === Step 1: Collect signals ===
-        AnsiConsole.MarkupLine("\n[bold]Step 1:[/] Collecting signals...");
+        // === Step 1: Gather work items ===
+        AnsiConsole.MarkupLine("\n[bold]Step 1:[/] Gathering work items...");
 
         var collectionResults = new List<CollectionResult>();
 
@@ -72,10 +72,10 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
                     var adoTask = ctx.AddTask("[bold]AzureDevOps[/]", maxValue: 1);
                     tasks.Add(Task.Run(async () =>
                     {
-                        var collector = new AzureDevOpsSignalCollector(config.AzureDevOps);
+                        var collector = new AzureDevOpsWorkItemCollector(config.AzureDevOps);
                         var result = await collector.CollectAsync(store, default);
                         adoTask.Description = result.Success
-                            ? $"[green]✓[/] AzureDevOps ({result.Signals.Count} signals)"
+                            ? $"[green]✓[/] AzureDevOps ({result.Sources.Count} sources)"
                             : $"[red]✗[/] AzureDevOps";
                         adoTask.Increment(1);
                         adoTask.StopTask();
@@ -85,7 +85,7 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
 
                 if (config.GitHub is not null)
                 {
-                    var ghCollector = new GitHubSignalCollector(config.GitHub);
+                    var ghCollector = new GitHubWorkItemCollector(config.GitHub);
                     var allRepos = config.GitHub.Organizations.SelectMany(o => o.Repositories);
 
                     if (allRepos.Any(r => r.Issues is not null))
@@ -95,7 +95,7 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
                         {
                             var result = await ghCollector.CollectIssuesAsync(store, default);
                             issueTask.Description = result.Success
-                                ? $"[green]✓[/] GitHub Issues ({result.Signals.Count} signals)"
+                                ? $"[green]✓[/] GitHub Issues ({result.Sources.Count} sources)"
                                 : $"[red]✗[/] GitHub Issues";
                             issueTask.Increment(1);
                             issueTask.StopTask();
@@ -110,7 +110,7 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
                         {
                             var result = await ghCollector.CollectPullRequestsAsync(store, default);
                             prTask.Description = result.Success
-                                ? $"[green]✓[/] GitHub PRs ({result.Signals.Count} signals)"
+                                ? $"[green]✓[/] GitHub PRs ({result.Sources.Count} sources)"
                                 : $"[red]✗[/] GitHub PRs";
                             prTask.Increment(1);
                             prTask.StopTask();
@@ -123,17 +123,17 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
             });
 
         // Show collection summary
-        var allSignals = collectionResults.SelectMany(r => r.Signals).ToList();
+        var allSources = collectionResults.SelectMany(r => r.Sources).ToList();
         var failedCollections = collectionResults.Where(r => !r.Success).ToList();
         var totalCreated = collectionResults.Sum(r => r.Created);
         var totalResolved = collectionResults.Sum(r => r.Resolved);
 
-        AnsiConsole.MarkupLine($"Collected [bold]{allSignals.Count}[/] signals — created [green]{totalCreated}[/] work items, resolved [blue]{totalResolved}[/].");
+        AnsiConsole.MarkupLine($"Gathered [bold]{allSources.Count}[/] sources — created [green]{totalCreated}[/] work items, resolved [blue]{totalResolved}[/].");
 
         foreach (var failure in failedCollections)
             AnsiConsole.MarkupLine($"  [red]✗[/] {failure.Source}: {Markup.Escape(failure.Error ?? "unknown error")}");
 
-        if (allSignals.Count == 0 && failedCollections.Count == 0 && totalCreated == 0)
+        if (allSources.Count == 0 && failedCollections.Count == 0 && totalCreated == 0)
         {
             AnsiConsole.MarkupLine("[green]No failures found.[/]");
             return 0;
@@ -167,14 +167,14 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
         {
             var itemsList = string.Join("\n\n", toSummarize.Select(i =>
             {
-                var sig = i.Signals.FirstOrDefault();
-                var signalRef = sig?.Ref ?? "(none)";
-                var signalType = sig?.Type ?? "(none)";
-                var failureDetails = sig?.Metadata?.GetValueOrDefault("failureDetails") ?? "";
+                var sourceRef = i.Sources.FirstOrDefault();
+                var refUrl = sourceRef?.Ref ?? "(none)";
+                var sourceType = sourceRef?.Type ?? "(none)";
+                var failureDetails = sourceRef?.Metadata?.GetValueOrDefault("failureDetails") ?? "";
                 var details = string.IsNullOrWhiteSpace(failureDetails)
                     ? ""
                     : $"\n  Failure details:\n  {failureDetails.Replace("\n", "\n  ")}";
-                return $"- {i.Id} | type={signalType} | ref={signalRef} | title={i.Title}{details}";
+                return $"- {i.Id} | type={sourceType} | ref={refUrl} | title={i.Title}{details}";
             }));
 
             var summarizePrompt = $"""
@@ -243,7 +243,7 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
             AnsiConsole.MarkupLine($"\n[red bold]Summarize error:[/] {Markup.Escape(r.Summary)}");
 
         // === Step 3: AI-powered triage ===
-        AnsiConsole.MarkupLine("\n[bold]Step 3:[/] Triaging signals...");
+        AnsiConsole.MarkupLine("\n[bold]Step 3:[/] Triaging work items...");
 
         // Capture pre-triage statuses to detect what the AI changed
         var preTriage = (await store.ListAsync(resolved: false))
@@ -268,16 +268,16 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
         {
             var existingList = string.Join("\n", toTriage.Select(i =>
             {
-                var sig = i.Signals.FirstOrDefault();
-                var signalRef = sig?.Ref ?? "(none)";
-                var signalType = sig?.Type ?? "(none)";
+                var sourceRef = i.Sources.FirstOrDefault();
+                var refUrl = sourceRef?.Ref ?? "(none)";
+                var sourceType = sourceRef?.Type ?? "(none)";
                 var summary = string.IsNullOrWhiteSpace(i.Summary) ? "(none)" : i.Summary;
                 var links = i.LinkedItems.Count > 0 ? string.Join(", ", i.LinkedItems) : "(none)";
-                var failureDetails = sig?.Metadata?.GetValueOrDefault("failureDetails");
+                var failureDetails = sourceRef?.Metadata?.GetValueOrDefault("failureDetails");
                 var detailsLine = string.IsNullOrWhiteSpace(failureDetails)
                     ? ""
                     : $"\n  failureDetails: {failureDetails.Replace("\n", "\n  ")}";
-                return $"- {i.Id} | status={i.Status} | type={signalType} | ref={signalRef} | links={links} | summary={summary} | title={i.Title}{detailsLine}";
+                return $"- {i.Id} | status={i.Status} | type={sourceType} | ref={refUrl} | links={links} | summary={summary} | title={i.Title}{detailsLine}";
             }));
 
             var feedbackSection = feedbackLines.Length > 0
@@ -289,7 +289,7 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
                 : "";
 
             var triagePrompt = $"""
-                Use the triage-signals skill to process the following work items.
+                Use the triage skill to process the following work items.
 
                 Work items have already been created by the collection step and
                 summarized by the summarize step. Your job is to:
@@ -328,7 +328,7 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
                 try
                 {
                     var result = await adapter.ScanSourceAsync(
-                        triagePrompt, "triage", SignalTriageTools.Skills,
+                        triagePrompt, "triage", WorkItemTriageTools.Skills,
                         mcpServers, ct: default);
 
                     progressTask.Description = result.Success
@@ -468,7 +468,7 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
             table.AddRow(
                 "Collection",
                 Markup.Escape(r.Source),
-                r.Success ? $"[green]✓[/] {r.Signals.Count} signals, {r.Created} new, {r.Resolved} resolved" : "[red]✗[/] failed",
+                r.Success ? $"[green]✓[/] {r.Sources.Count} sources, {r.Created} new, {r.Resolved} resolved" : "[red]✗[/] failed",
                 $"{r.Duration.TotalSeconds:F1}s");
 
         foreach (var r in summarizeResults)

@@ -24,7 +24,7 @@ services.AddSingleton<Func<BuildDutyConfig, WorkItemStore, CopilotAdapter>>(_ =>
     {
         var tools = BuildDutyTools.Create(wiStore)
             .Concat(TriageTools.Create(wiStore))
-            .Concat(SignalTriageTools.Create(wiStore))
+            .Concat(WorkItemTriageTools.Create(wiStore))
             .Concat(SummarizeTools.Create(wiStore))
             .ToList();
 
@@ -40,7 +40,7 @@ app.Configure(config =>
     config.SetApplicationName("build-duty");
 
     config.AddCommand<TriageCommand>("triage")
-        .WithDescription("Collect signals, triage with AI, and correlate work items");
+        .WithDescription("Gather work items, triage with AI, and correlate results");
 
     config.AddCommand<ReviewCommand>("review")
         .WithDescription("Interactively review and act on triaged work items");

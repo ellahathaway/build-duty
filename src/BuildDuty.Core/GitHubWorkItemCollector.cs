@@ -5,14 +5,14 @@ using BuildDuty.Core.Models;
 namespace BuildDuty.Core;
 
 /// <summary>
-/// Deterministic signal collector for GitHub issues and pull requests.
+/// Deterministic work item collector for GitHub issues and pull requests.
 /// Uses <c>gh</c> CLI — no AI involved.
 /// </summary>
-public sealed class GitHubSignalCollector
+public sealed class GitHubWorkItemCollector
 {
     private readonly GitHubConfig _config;
 
-    public GitHubSignalCollector(GitHubConfig config)
+    public GitHubWorkItemCollector(GitHubConfig config)
     {
         _config = config;
     }
@@ -20,7 +20,7 @@ public sealed class GitHubSignalCollector
     public async Task<CollectionResult> CollectIssuesAsync(WorkItemStore? store = null, CancellationToken ct = default)
     {
         var started = Stopwatch.StartNew();
-        var signals = new List<CollectedSignal>();
+        var sources = new List<CollectedSource>();
         int created = 0, resolved = 0;
 
         try
@@ -31,44 +31,44 @@ public sealed class GitHubSignalCollector
                 {
                     ct.ThrowIfCancellationRequested();
                     var issues = await FetchIssuesAsync(org.Organization, repo, repo.Issues!, ct);
-                    signals.AddRange(issues);
+                    sources.AddRange(issues);
 
                     if (store is not null)
                     {
                         var collectedIds = new HashSet<string>();
 
-                        foreach (var signal in issues)
+                        foreach (var source in issues)
                         {
-                            collectedIds.Add(signal.Id);
+                            collectedIds.Add(source.Id);
 
-                            if (!store.Exists(signal.Id))
+                            if (!store.Exists(source.Id))
                             {
                                 await store.SaveAsync(new WorkItem
                                 {
-                                    Id = signal.Id,
+                                    Id = source.Id,
                                     Status = "new",
-                                    Title = signal.Title,
-                                    CorrelationId = signal.CorrelationId,
-                                    Signals = [new SignalReference
+                                    Title = source.Title,
+                                    CorrelationId = source.CorrelationId,
+                                    Sources = [new SourceReference
                                     {
-                                        Type = signal.SignalType,
-                                        Ref = signal.SignalRef,
-                                        SourceUpdatedAtUtc = signal.SourceUpdatedAtUtc,
+                                        Type = source.SourceType,
+                                        Ref = source.SourceRef,
+                                        SourceUpdatedAtUtc = source.SourceUpdatedAtUtc,
                                     }],
                                 });
                                 created++;
                             }
-                            else if (signal.SourceUpdatedAtUtc.HasValue)
+                            else if (source.SourceUpdatedAtUtc.HasValue)
                             {
                                 // Refresh SourceUpdatedAtUtc so summarize can
                                 // detect when the source has changed since last summary.
-                                var existing = await store.LoadAsync(signal.Id);
+                                var existing = await store.LoadAsync(source.Id);
                                 if (existing is not null)
                                 {
-                                    var sig = existing.Signals.FirstOrDefault();
-                                    if (sig is not null && sig.SourceUpdatedAtUtc != signal.SourceUpdatedAtUtc)
+                                    var sourceRef = existing.Sources.FirstOrDefault();
+                                    if (sourceRef is not null && sourceRef.SourceUpdatedAtUtc != source.SourceUpdatedAtUtc)
                                     {
-                                        sig.SourceUpdatedAtUtc = signal.SourceUpdatedAtUtc;
+                                        sourceRef.SourceUpdatedAtUtc = source.SourceUpdatedAtUtc;
                                         await store.SaveAsync(existing);
                                     }
                                 }
@@ -87,7 +87,7 @@ public sealed class GitHubSignalCollector
             {
                 Source = "GitHub Issues",
                 Success = true,
-                Signals = signals,
+                Sources = sources,
                 Created = created,
                 Resolved = resolved,
                 Duration = started.Elapsed,
@@ -100,7 +100,7 @@ public sealed class GitHubSignalCollector
                 Source = "GitHub Issues",
                 Success = false,
                 Error = ex.Message,
-                Signals = signals,
+                Sources = sources,
                 Created = created,
                 Resolved = resolved,
                 Duration = started.Elapsed,
@@ -111,7 +111,7 @@ public sealed class GitHubSignalCollector
     public async Task<CollectionResult> CollectPullRequestsAsync(WorkItemStore? store = null, CancellationToken ct = default)
     {
         var started = Stopwatch.StartNew();
-        var signals = new List<CollectedSignal>();
+        var sources = new List<CollectedSource>();
         int created = 0, resolved = 0;
 
         try
@@ -122,42 +122,42 @@ public sealed class GitHubSignalCollector
                 {
                     ct.ThrowIfCancellationRequested();
                     var prs = await FetchPullRequestsAsync(org.Organization, repo, repo.PullRequests!, ct);
-                    signals.AddRange(prs);
+                    sources.AddRange(prs);
 
                     if (store is not null)
                     {
                         var collectedIds = new HashSet<string>();
 
-                        foreach (var signal in prs)
+                        foreach (var source in prs)
                         {
-                            collectedIds.Add(signal.Id);
+                            collectedIds.Add(source.Id);
 
-                            if (!store.Exists(signal.Id))
+                            if (!store.Exists(source.Id))
                             {
                                 await store.SaveAsync(new WorkItem
                                 {
-                                    Id = signal.Id,
+                                    Id = source.Id,
                                     Status = "new",
-                                    Title = signal.Title,
-                                    CorrelationId = signal.CorrelationId,
-                                    Signals = [new SignalReference
+                                    Title = source.Title,
+                                    CorrelationId = source.CorrelationId,
+                                    Sources = [new SourceReference
                                     {
-                                        Type = signal.SignalType,
-                                        Ref = signal.SignalRef,
-                                        SourceUpdatedAtUtc = signal.SourceUpdatedAtUtc,
+                                        Type = source.SourceType,
+                                        Ref = source.SourceRef,
+                                        SourceUpdatedAtUtc = source.SourceUpdatedAtUtc,
                                     }],
                                 });
                                 created++;
                             }
-                            else if (signal.SourceUpdatedAtUtc.HasValue)
+                            else if (source.SourceUpdatedAtUtc.HasValue)
                             {
-                                var existing = await store.LoadAsync(signal.Id);
+                                var existing = await store.LoadAsync(source.Id);
                                 if (existing is not null)
                                 {
-                                    var sig = existing.Signals.FirstOrDefault();
-                                    if (sig is not null && sig.SourceUpdatedAtUtc != signal.SourceUpdatedAtUtc)
+                                    var sourceRef = existing.Sources.FirstOrDefault();
+                                    if (sourceRef is not null && sourceRef.SourceUpdatedAtUtc != source.SourceUpdatedAtUtc)
                                     {
-                                        sig.SourceUpdatedAtUtc = signal.SourceUpdatedAtUtc;
+                                        sourceRef.SourceUpdatedAtUtc = source.SourceUpdatedAtUtc;
                                         await store.SaveAsync(existing);
                                     }
                                 }
@@ -176,7 +176,7 @@ public sealed class GitHubSignalCollector
             {
                 Source = "GitHub PRs",
                 Success = true,
-                Signals = signals,
+                Sources = sources,
                 Created = created,
                 Resolved = resolved,
                 Duration = started.Elapsed,
@@ -189,7 +189,7 @@ public sealed class GitHubSignalCollector
                 Source = "GitHub PRs",
                 Success = false,
                 Error = ex.Message,
-                Signals = signals,
+                Sources = sources,
                 Created = created,
                 Resolved = resolved,
                 Duration = started.Elapsed,
@@ -240,7 +240,7 @@ public sealed class GitHubSignalCollector
         }
     }
 
-    private static async Task<List<CollectedSignal>> FetchIssuesAsync(
+    private static async Task<List<CollectedSource>> FetchIssuesAsync(
         string owner, GitHubRepositoryConfig repo, GitHubIssueConfig config, CancellationToken ct)
     {
         var labelFilter = config.Labels.Count > 0
@@ -265,24 +265,24 @@ public sealed class GitHubSignalCollector
             var url = i.TryGetProperty("url", out var u) ? u.GetString() ?? "" : $"https://github.com/{owner}/{repo.Name}/issues/{number}";
             var updatedAt = i.TryGetProperty("updatedAt", out var ua) && ua.TryGetDateTime(out var dt) ? dt : (DateTime?)null;
 
-            return new CollectedSignal
+            return new CollectedSource
             {
                 Id = $"wi_gh_issue_{owner}_{repo.Name}_{number}",
                 Title = $"[{owner}/{repo.Name}#{number}] {title}",
                 CorrelationId = $"corr_gh_{owner}_{repo.Name}_issue_{number}",
-                SignalType = "github-issue",
-                SignalRef = url,
+                SourceType = "github-issue",
+                SourceRef = url,
                 Status = issueState,
                 SourceUpdatedAtUtc = updatedAt?.ToUniversalTime(),
             };
         }).ToList();
     }
 
-    private static async Task<List<CollectedSignal>> FetchPullRequestsAsync(
+    private static async Task<List<CollectedSource>> FetchPullRequestsAsync(
         string owner, GitHubRepositoryConfig repo, List<GitHubPullRequestPattern> patterns,
         CancellationToken ct)
     {
-        var signals = new List<CollectedSignal>();
+        var sources = new List<CollectedSource>();
 
         // Group patterns by state to minimize API calls
         var byState = patterns.GroupBy(p => p.EffectiveState, StringComparer.OrdinalIgnoreCase);
@@ -309,21 +309,21 @@ public sealed class GitHubSignalCollector
                     UpdatedAt: i.TryGetProperty("updatedAt", out var ua) && ua.TryGetDateTime(out var dt) ? dt : (DateTime?)null
                 ))
                 .Where(pr => MatchesAnyPattern(pr.Title, statePatterns))
-                .Select(pr => new CollectedSignal
+                .Select(pr => new CollectedSource
                 {
                     Id = $"wi_gh_pr_{owner}_{repo.Name}_{pr.Number}",
                     Title = $"[{owner}/{repo.Name}#{pr.Number}] {pr.Title}",
                     CorrelationId = $"corr_gh_{owner}_{repo.Name}_pr_{pr.Number}",
-                    SignalType = "github-pr",
-                    SignalRef = pr.Url,
+                    SourceType = "github-pr",
+                    SourceRef = pr.Url,
                     Status = pr.State,
                     SourceUpdatedAtUtc = pr.UpdatedAt?.ToUniversalTime(),
                 });
 
-            signals.AddRange(matched);
+            sources.AddRange(matched);
         }
 
-        return signals;
+        return sources;
     }
 
     /// <summary>

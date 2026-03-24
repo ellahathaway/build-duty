@@ -1,6 +1,6 @@
 # GitHub Issue Statuses
 
-Signal type: `github-issue`
+Source type: `github-issue`
 
 ## Valid statuses
 

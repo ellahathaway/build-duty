@@ -75,7 +75,7 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
 
                 // Group by type then status
                 var groups = availableItems
-                    .GroupBy(i => i.Signals.FirstOrDefault()?.Type ?? "(unknown)")
+                    .GroupBy(i => i.Sources.FirstOrDefault()?.Type ?? "(unknown)")
                     .OrderBy(g => g.Key)
                     .SelectMany(typeGroup => typeGroup
                         .GroupBy(i => i.Status)
@@ -386,19 +386,19 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
     {
         var itemContext = string.Join("\n\n", items.Select(item =>
         {
-            var sig = item.Signals.FirstOrDefault();
-            var failureDetails = sig?.Metadata?.GetValueOrDefault("failureDetails") ?? "";
+            var sourceRef = item.Sources.FirstOrDefault();
+            var failureDetails = sourceRef?.Metadata?.GetValueOrDefault("failureDetails") ?? "";
             var detailsBlock = string.IsNullOrWhiteSpace(failureDetails)
                 ? ""
                 : $"\n  Failure details:\n  {failureDetails.Replace("\n", "\n  ")}";
 
             return $"""
                 - **{item.Id}**
-                  Type: {sig?.Type ?? "(unknown)"}
+                  Type: {sourceRef?.Type ?? "(unknown)"}
                   Status: {item.Status}
                   Title: {item.Title}
                   Summary: {item.Summary ?? "(none)"}
-                  Ref: {sig?.Ref ?? "(none)"}
+                  Ref: {sourceRef?.Ref ?? "(none)"}
                   Links: {(item.LinkedItems.Count > 0 ? string.Join(", ", item.LinkedItems) : "(none)")}{detailsBlock}
                 """;
         }));
@@ -546,7 +546,7 @@ internal sealed class BackgroundAgent : IAsyncDisposable
 
             _session = await _adapter.CreateReviewSessionAsync(
                 [
-                    "skills/triage-signals",
+                    "skills/triage",
                     "skills/diagnose-build-break",
                     "skills/suggest-next-actions",
                 ],

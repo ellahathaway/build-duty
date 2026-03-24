@@ -68,7 +68,7 @@ public class CopilotAdapter : IAsyncDisposable
             }
 
             var prompt = $"""
-                Use the available tools to look up work item "{workItem.Id}" ({workItem.Title}) and its signals.
+                Use the available tools to look up work item "{workItem.Id}" ({workItem.Title}) and its sources.
                 Then perform the following action:
 
                 {action}
@@ -110,7 +110,7 @@ public class CopilotAdapter : IAsyncDisposable
     }
 
     /// <summary>
-    /// Run a scan agent — a free-form prompt for source-specific signal collection.
+    /// Run a scan agent — a free-form prompt for source-specific work item collection.
     /// </summary>
     public virtual async Task<ScanResult> ScanSourceAsync(
         string prompt,

@@ -26,9 +26,9 @@ public class ScanToolsTests : IDisposable
         new(pairs.ToDictionary(p => p.Key, p => (object?)p.Value));
 
     [Fact]
-    public void SignalTriageTools_ReturnsExpectedToolNames()
+    public void WorkItemTriageTools_ReturnsExpectedToolNames()
     {
-        var tools = SignalTriageTools.Create(_store);
+        var tools = WorkItemTriageTools.Create(_store);
         var names = tools.Select(t => t.Name).ToHashSet();
 
         Assert.Contains("resolve_work_item", names);
@@ -65,32 +65,32 @@ public class ScanToolsTests : IDisposable
         var tools = TriageTools.Create(_store);
         var names = tools.Select(t => t.Name).ToHashSet();
 
-        Assert.Contains("get_signals", names);
+        Assert.Contains("get_sources", names);
     }
 
     [Fact]
     public async Task CollectionCreatesWorkItems()
     {
         // Simulate what collectors do: create work items directly in the store
-        var signal = new CollectedSignal
+        var source = new CollectedSource
         {
             Id = "wi_test_1",
             Title = "Test failure",
             CorrelationId = "corr_test_1",
-            SignalType = "ado-pipeline-run",
-            SignalRef = "https://dev.azure.com/test",
+            SourceType = "ado-pipeline-run",
+            SourceRef = "https://dev.azure.com/test",
             Status = "failed",
         };
 
-        Assert.False(_store.Exists(signal.Id));
+        Assert.False(_store.Exists(source.Id));
 
         await _store.SaveAsync(new WorkItem
         {
-            Id = signal.Id,
+            Id = source.Id,
             Status = "new",
-            Title = signal.Title,
-            CorrelationId = signal.CorrelationId,
-            Signals = [new SignalReference { Type = signal.SignalType, Ref = signal.SignalRef }],
+            Title = source.Title,
+            CorrelationId = source.CorrelationId,
+            Sources = [new SourceReference { Type = source.SourceType, Ref = source.SourceRef }],
         });
 
         Assert.True(_store.Exists("wi_test_1"));
@@ -155,7 +155,7 @@ public class ScanToolsTests : IDisposable
             CorrelationId = "corr_resolve_1"
         });
 
-        var tools = SignalTriageTools.Create(_store);
+        var tools = WorkItemTriageTools.Create(_store);
         var resolveTool = tools.First(t => t.Name == "resolve_work_item");
 
         var result = await resolveTool.InvokeAsync(Args(
@@ -182,7 +182,7 @@ public class ScanToolsTests : IDisposable
         item.SetStatus("resolved", "test");
         await _store.SaveAsync(item);
 
-        var tools = SignalTriageTools.Create(_store);
+        var tools = WorkItemTriageTools.Create(_store);
         var resolveTool = tools.First(t => t.Name == "resolve_work_item");
 
         var result = await resolveTool.InvokeAsync(Args(

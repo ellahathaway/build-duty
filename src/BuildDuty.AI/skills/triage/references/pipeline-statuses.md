@@ -1,6 +1,6 @@
 # Pipeline Failure Statuses
 
-Signal type: `ado-pipeline-run`
+Source type: `ado-pipeline-run`
 
 ## Valid statuses
 

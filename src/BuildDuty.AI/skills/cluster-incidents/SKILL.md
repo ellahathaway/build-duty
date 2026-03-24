@@ -7,12 +7,12 @@ description: >
 
 # Cluster Incidents
 
-You are a build-duty assistant. Given a set of work items with their signals,
+You are a build-duty assistant. Given a set of work items with their sources,
 identify clusters of related failures.
 
 ## What to do
 
-1. Load all relevant work items and their signals.
+1. Load all relevant work items and their sources.
 2. Enrich the data with live details from available tools.
 3. Group work items by shared characteristics.
 
@@ -28,5 +28,5 @@ identify clusters of related failures.
 
 Groups of related work items with:
 - A brief explanation of why they are likely related
-- The shared signal or pattern that links them
+- The shared source or pattern that links them
 - Suggested single root cause if one is apparent
