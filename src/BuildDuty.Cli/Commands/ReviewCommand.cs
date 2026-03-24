@@ -431,14 +431,8 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                 }
                 break;
             case "tool-end":
-                if (evt.ToolSuccess == true)
-                    AnsiConsole.MarkupLine("  [green]✓ done[/]");
-                else
-                    AnsiConsole.MarkupLine("  [red]✗ failed[/]");
-                Console.WriteLine();
                 break;
             case "error":
-                AnsiConsole.MarkupLine($"[red]⚠ {Markup.Escape(evt.Content ?? "")}[/]");
                 break;
         }
     }
