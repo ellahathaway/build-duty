@@ -417,30 +417,27 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                 // Full message — only render if no deltas were received (SDK batched mode)
                 if (!hasDelta && !string.IsNullOrEmpty(evt.Content))
                 {
-                    Console.WriteLine();
                     Console.Write(evt.Content);
                     Console.WriteLine();
                 }
                 hasDelta = false; // reset for next message section
                 break;
             case "tool-start":
-                Console.WriteLine();
-                AnsiConsole.MarkupLine($"  [dim]┌─ 🔧 {Markup.Escape(evt.ToolName ?? "?")}[/]");
+                AnsiConsole.MarkupLine($"  [dim]🔧 {Markup.Escape(evt.ToolName ?? "?")}[/]");
                 if (!string.IsNullOrEmpty(evt.ToolArgs))
                 {
                     foreach (var argLine in FormatToolArgs(evt.ToolArgs))
-                        AnsiConsole.MarkupLine($"  [dim]│[/] {argLine}");
+                        AnsiConsole.MarkupLine($"     {argLine}");
                 }
                 break;
             case "tool-end":
                 if (evt.ToolSuccess == true)
-                    AnsiConsole.MarkupLine("  [dim]└─[/] [green]✓ done[/]");
+                    AnsiConsole.MarkupLine("  [green]✓ done[/]");
                 else
-                    AnsiConsole.MarkupLine("  [dim]└─[/] [red]✗ failed[/]");
+                    AnsiConsole.MarkupLine("  [red]✗ failed[/]");
                 Console.WriteLine();
                 break;
             case "error":
-                Console.WriteLine();
                 AnsiConsole.MarkupLine($"[red]⚠ {Markup.Escape(evt.Content ?? "")}[/]");
                 break;
         }
@@ -460,9 +457,9 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                     ? prop.Value.GetString() ?? ""
                     : prop.Value.GetRawText();
 
-                // Truncate very long values (URLs, large content)
-                if (val.Length > 100)
-                    val = val[..97] + "...";
+                // Truncate very long values
+                if (val.Length > 200)
+                    val = val[..197] + "...";
 
                 result.Add($"  [dim]{Markup.Escape(prop.Name)}:[/] {Markup.Escape(val)}");
             }
