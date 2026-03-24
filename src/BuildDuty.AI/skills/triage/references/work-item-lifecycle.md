@@ -49,6 +49,11 @@ Other PR statuses: `changes-requested`, `automerge`, `test-failures`, `merge-con
   Monitoring items WILL re-triage when state changes to `updated`, allowing
   the engineer to stay informed about changes.
 
+### Blocked transitions
+
+- `tracked` → `monitoring` is not allowed. If an item has a linked fix,
+  it should stay tracked until resolved.
+
 ## ID and Correlation Formats
 
 | Source | ID | Correlation ID |

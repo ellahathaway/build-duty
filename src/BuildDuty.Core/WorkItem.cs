@@ -129,10 +129,22 @@ public sealed class WorkItem
     }
 
     /// <summary>
+    /// Invalid status transitions.
+    /// </summary>
+    private static readonly Dictionary<string, HashSet<string>> BlockedTransitions = new()
+    {
+        ["tracked"] = ["monitoring"],
+    };
+
+    /// <summary>
     /// Update the status and append a history entry.
     /// </summary>
     public void SetStatus(string newStatus, string? note = null, string actor = "build-duty")
     {
+        if (BlockedTransitions.TryGetValue(Status, out var blocked) && blocked.Contains(newStatus))
+            throw new InvalidOperationException(
+                $"Cannot transition from '{Status}' to '{newStatus}'.");
+
         var old = Status;
         Status = newStatus;
         History.Add(new WorkItemHistoryEntry

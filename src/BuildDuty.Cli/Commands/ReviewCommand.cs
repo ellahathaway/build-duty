@@ -58,6 +58,7 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
 
                 var items = (await store.ListAsync(resolved: false))
                     .Where(i => includeAcknowledged || i.Status != "acknowledged")
+                    .Where(i => i.Status != "tracked")
                     .ToList();
 
                 // Exclude items already claimed by an active agent
@@ -353,16 +354,24 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
 
         if (actionable.Count > 0)
         {
+            var choices = new List<string>
+            {
+                "monitoring — watching, may return later",
+                "acknowledged — no action needed, ignore unless resolved",
+                "needs-investigation — needs deeper analysis",
+                "resolved — issue is done",
+                "leave as-is",
+            };
+
+            // Remove invalid transitions
+            if (actionable.Any(i => i.Status == "tracked"))
+                choices.Remove("monitoring — watching, may return later");
+
             var status = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
                     .Title("[bold]Set status for these items:[/]")
                     .HighlightStyle(new Style(Color.Cyan1))
-                    .AddChoices(
-                        "monitoring — watching, may return later",
-                        "acknowledged — no action needed, ignore unless resolved",
-                        "needs-investigation — needs deeper analysis",
-                        "resolved — issue is done",
-                        "leave as-is"));
+                    .AddChoices(choices));
 
             if (status != "leave as-is")
             {
