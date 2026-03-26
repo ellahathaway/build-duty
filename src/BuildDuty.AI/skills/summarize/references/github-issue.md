@@ -1,57 +1,34 @@
-# Reference: github-issue source
+# Reference: GitHub Issue
 
-This reference applies when a work item has a source of type `github-issue`.
-The source `ref` is a URL to a GitHub issue.
+## When to use
 
-## Extracting issue info from URLs
+Use this when the signal type is a GitHub issue signal (`github-issue`).
 
-GitHub issue URLs follow this pattern:
-- `https://github.com/{owner}/{repo}/issues/{number}`
+## Signal info
 
-Extract the **owner**, **repo**, and **issue number** from the URL.
+Signal info includes issue metadata, description, comments, and state.
+Use signal info as the primary source of truth.
 
-## What to include in the summary
+## Identify the signal
 
-### Basics
-- **Title** and **number**
-- **State** — open or closed
-- **Assignees** — who is responsible; flag if unassigned
-- **Labels** — especially priority, area, or triage labels
-- **Milestone** — if set, note the target date
+- URL format:
+	- `https://github.com/{owner}/{repo}/issues/{number}`
 
-### Activity
-- **Created** — when and by whom
-- **Last updated** — how recently; flag if stale (>7 days with no activity)
-- **Comment count** — is there active discussion?
-- **Latest comments** — summarize the most recent 2-3 comments for context
+Extract `owner`, `repo`, and `number` from the URL.
 
-### Content
-- **Description** — concise summary of the issue body
-- **Reproduction steps** — if present, note them
-- **Error messages** — quote key errors verbatim
+## Additional lookup
 
-### Cross-references
-- **Linked PRs** — any pull requests that reference or fix this issue
-- **Linked builds** — if the issue references a build failure, include
-  the build result/status
-- **Related issues** — mentioned or cross-referenced issues
-- **Correlated work items** — if this build-duty work item has a correlation
-  ID, note other work items in the same cluster
+Only fetch additional data if required context is missing from signal info.
 
-## Priority indicators
+## Summary focus
 
-| Indicator | Meaning |
-|--------|---------|
-| `priority/0` or `P0` label | Critical — needs immediate attention |
-| `blocking` label | Blocking other work |
-| `untriaged` label | Needs triage assignment |
-| Unassigned + open > 24h | May be falling through the cracks |
-| No activity > 7 days | Potentially stale |
+- Issue title/number and state (open/closed)
+- Most relevant problem details from body + latest comments
+- Key error/repro details if present
+- Whether there is an active linked PR/fix path
 
-## Suggested next steps
+## Output
 
-Based on the issue state, suggest appropriate actions:
-- **Open + unassigned** → assign to on-call or appropriate team
-- **Open + stale** → ping assignee or escalate
-- **Open + has fix PR** → check PR status, nudge review if needed
-- **Closed + recently** → verify the fix landed and no regressions
+Return 1-3 sentences focused on what is happening and why it matters.
+
+Do not include extra sections, bullets, or markdown tables in the final summary.
