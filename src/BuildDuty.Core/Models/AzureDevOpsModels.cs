@@ -1,4 +1,6 @@
 using YamlDotNet.Serialization;
+using Microsoft.TeamFoundation.Build.WebApi;
+using System.Text.RegularExpressions;
 
 namespace BuildDuty.Core.Models;
 
@@ -45,12 +47,11 @@ public sealed class AzureDevOpsPipelineConfig
     public ReleaseBranchConfig? Release { get; set; }
 
     /// <summary>
-    /// Pipeline run result statuses that should produce work items. Accepted values:
-    /// <c>failed</c>, <c>partiallySucceeded</c>, <c>canceled</c>, <c>succeeded</c>.
-    /// Defaults to <c>["failed", "partiallySucceeded"]</c> when omitted.
+    /// Pipeline run result statuses that should produce work items.
+    /// Defaults to <c>["failed", "partiallySucceeded", "canceled"]</c> when omitted.
     /// </summary>
     [YamlMember(Alias = "status")]
-    public List<string>? Status { get; set; }
+    public List<BuildResult> Status { get; set; } = new List<BuildResult> { BuildResult.Failed, BuildResult.PartiallySucceeded, BuildResult.Canceled };
 
     /// <summary>
     /// Maximum age of pipeline runs to consider (e.g. "7d", "24h", "2d12h").
@@ -61,75 +62,29 @@ public sealed class AzureDevOpsPipelineConfig
     public string? Age { get; set; }
 
     /// <summary>
-    /// Stage filters to focus on when analyzing build failures.
-    /// Each entry specifies a stage name pattern and optionally job patterns
-    /// within that stage. When empty, all stages are considered.
+    /// Timelines to focus on when analyzing build failures.
+    /// When empty, all timelines are considered.
     /// </summary>
-    [YamlMember(Alias = "stages")]
-    public List<StageFilterConfig>? Stages { get; set; }
-
-    /// <summary>
-    /// Returns the effective status filter, defaulting to
-    /// <c>["failed", "partiallySucceeded", "canceled"]</c>.
-    /// Canceled covers builds that timed out.
-    /// </summary>
-    public IReadOnlyList<string> EffectiveStatus =>
-        Status is { Count: > 0 } ? Status : ["failed", "partiallySucceeded", "canceled"];
-
-    /// <summary>
-    /// Parses the <see cref="Age"/> string into a <see cref="TimeSpan"/>.
-    /// Returns <c>null</c> when no age limit is configured.
-    /// </summary>
-    public TimeSpan? ParsedAge => ParseAge(Age);
-
-    private static TimeSpan? ParseAge(string? age)
-    {
-        if (string.IsNullOrWhiteSpace(age)) return null;
-
-        var span = TimeSpan.Zero;
-        var num = 0;
-
-        foreach (var c in age)
-        {
-            if (char.IsDigit(c))
-            {
-                num = num * 10 + (c - '0');
-            }
-            else
-            {
-                span += c switch
-                {
-                    'd' or 'D' => TimeSpan.FromDays(num),
-                    'h' or 'H' => TimeSpan.FromHours(num),
-                    'm' or 'M' => TimeSpan.FromMinutes(num),
-                    _ => TimeSpan.Zero,
-                };
-                num = 0;
-            }
-        }
-
-        return span > TimeSpan.Zero ? span : null;
-    }
+    [YamlMember(Alias = "timelineFilters")]
+    public List<TimelineFilter>? TimelineFilters { get; set; } = [];
 }
 
 /// <summary>
-/// Filter for a pipeline stage. Matches stages by name pattern and optionally
-/// restricts which jobs within the stage are investigated.
+/// Filter for a pipeline timeline. Matches timeline types by name patterns.
 /// </summary>
-public sealed class StageFilterConfig
+public sealed class TimelineFilter
 {
     /// <summary>
-    /// Stage name pattern. Supports glob-style wildcards (<c>*</c>).
+    /// Timeline name patterns. Supports glob-style wildcards (<c>*</c>).
     /// </summary>
-    [YamlMember(Alias = "name")]
-    public string Name { get; set; } = string.Empty;
+    [YamlMember(Alias = "names")]
+    public List<Regex> Names { get; set; } = new List<Regex> { new Regex(".*", RegexOptions.IgnoreCase) };
 
     /// <summary>
-    /// Job/leg name patterns within this stage. When empty, all jobs in the
-    /// stage are investigated. Supports glob-style wildcards (<c>*</c>).
+    /// Timeline type
     /// </summary>
-    [YamlMember(Alias = "jobs")]
-    public List<string>? Jobs { get; set; }
+    [YamlMember(Alias = "type")]
+    public TimelineRecordType Type { get; set; }
 }
 
 /// <summary>
@@ -141,16 +96,21 @@ public sealed class ReleaseBranchConfig
 {
     /// <summary>Azure DevOps Git repository name (e.g. "dotnet-dotnet").</summary>
     [YamlMember(Alias = "repository")]
-    public string Repository { get; set; } = "dotnet-dotnet";
+    public required string Repository { get; set; }
 
     /// <summary>
-    /// .NET support phases to include. Defaults to all phases:
-    /// <c>active</c>, <c>maintenance</c>, <c>preview</c>, <c>go-live</c>, <c>rc</c>.
+    /// .NET support phases to include
     /// </summary>
     [YamlMember(Alias = "supportPhases")]
-    public List<string>? SupportPhases { get; set; }
+    public required List<string> SupportPhases { get; set; }
 
     /// <summary>Minimum major version to include (e.g. 8).</summary>
     [YamlMember(Alias = "minVersion")]
     public int? MinVersion { get; set; }
+}
+
+public enum TimelineRecordType
+{
+    Stage,
+    Job,
 }
