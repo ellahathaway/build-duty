@@ -9,116 +9,49 @@ namespace BuildDuty.Core;
 
 public interface IBuildDutyConfigProvider
 {
-    BuildDutyConfig Get();
-    void SetConfigPath(string? configPath);
+    BuildDutyConfig GetConfig();
+    BuildDutyConfig InitializeConfig(string configPath);
 }
 
 public sealed class BuildDutyConfigProvider : IBuildDutyConfigProvider
 {
-    private string? _configPath;
-    private BuildDutyConfig? _cachedConfig;
+    private BuildDutyConfig? _config;
 
-    public BuildDutyConfigProvider()
+    public BuildDutyConfig GetConfig()
     {
-    }
-
-    public void SetConfigPath(string? configPath)
-    {
-        var normalized = string.IsNullOrWhiteSpace(configPath) ? null : configPath;
-        if (string.Equals(_configPath, normalized, StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-
-        _configPath = normalized;
-        _cachedConfig = null;
-    }
-
-    public BuildDutyConfig Get()
-    {
-        if (_cachedConfig is not null)
-        {
-            return _cachedConfig;
-        }
-
-        string path = DiscoverConfigPath();
-        _cachedConfig = LoadFromFile(path);
-        return _cachedConfig;
-    }
-
-    /// <summary>
-    /// Load a <see cref="BuildDutyConfig"/> from a YAML file, validating that a
-    /// non-empty <c>name</c> field is present.
-    /// </summary>
-    private static BuildDutyConfig LoadFromFile(string path)
-    {
-        if (!File.Exists(path))
-        {
-            throw new FileNotFoundException(
-                $"Config file not found: {path}", path);
-        }
-
-        string yaml;
-        try
-        {
-            yaml = File.ReadAllText(path);
-        }
-        catch (Exception ex)
+        if (_config is null)
         {
             throw new InvalidOperationException(
-                $"Could not read config file '{path}': {ex.Message}", ex);
+                "Config has not been initialized. Call InitializeConfig() with a valid config path before accessing Config.");
         }
 
-        BuildDutyConfig config;
-        try
-        {
-            config = BuildConfigDeserializer().Deserialize<BuildDutyConfig>(yaml)
-                ?? throw new InvalidOperationException("Deserialization returned null.");
-        }
-        catch (Exception ex) when (ex is not InvalidOperationException)
-        {
-            throw new InvalidOperationException(
-                $"Failed to parse config file '{path}': {ex.Message}", ex);
-        }
-
-        if (string.IsNullOrWhiteSpace(config.Name))
-        {
-            throw new InvalidOperationException(
-                $"Config file '{path}' is missing a required top-level 'name' field.");
-        }
-
-        return config;
+        return _config;
     }
 
-    private static IDeserializer BuildConfigDeserializer()
+    public BuildDutyConfig InitializeConfig(string configPath)
     {
-        return new DeserializerBuilder()
+        if (_config != null)
+        {
+            throw new InvalidOperationException("Config has already been initialized.");
+        }
+
+        var yaml = File.ReadAllText(configPath);
+        var deserializer = new DeserializerBuilder()
             .WithNamingConvention(CamelCaseNamingConvention.Instance)
             .WithTypeConverter(new RegexYamlTypeConverter())
             .IgnoreUnmatchedProperties()
             .Build();
-    }
 
-    private string DiscoverConfigPath()
-    {
-        if (!string.IsNullOrWhiteSpace(_configPath))
+        _config = deserializer.Deserialize<BuildDutyConfig>(yaml)
+            ?? throw new InvalidOperationException(
+                $"Failed to parse config file: {configPath}");
+
+        if (string.IsNullOrWhiteSpace(_config.Name))
         {
-            return _configPath;
+            throw new InvalidOperationException(
+                $"Config file '{configPath}' is missing a required top-level 'name' field.");
         }
-
-        var dir = new DirectoryInfo(Directory.GetCurrentDirectory());
-        while (dir is not null)
-        {
-            var path = Path.Combine(dir.FullName, ".build-duty.yml");
-            if (File.Exists(path))
-            {
-                return path;
-            }
-            dir = dir.Parent;
-        }
-
-        throw new InvalidOperationException(
-            "No .build-duty.yml found in the current directory or any parent directories. Use --config to specify a path.");
+        return _config;
     }
 }
 
