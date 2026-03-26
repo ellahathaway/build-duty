@@ -49,7 +49,9 @@ public sealed class ReleaseBranchResolver
         string? supportPhases, int? minVersion)
     {
         if (!org.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+        {
             org = $"https://dev.azure.com/{org}";
+        }
 
         var cacheKey = $"{org}|{project}|{pipelineId}|{supportPhases}|{minVersion}";
         return _resolvedCache.GetOrAdd(cacheKey,
@@ -67,7 +69,9 @@ public sealed class ReleaseBranchResolver
             _ => new Lazy<Task<string?>>(() => FetchPipelineRepoAsync(org, project, pipelineId))).Value;
 
         if (string.IsNullOrWhiteSpace(repoName))
+        {
             return ["main"];
+        }
 
         // Step 2: List branches (cached + locked per repo)
         var repoKey = $"{org}|{project}|{repoName}";
@@ -75,12 +79,16 @@ public sealed class ReleaseBranchResolver
             _ => new Lazy<Task<List<string>?>>(() => FetchRepoBranchesAsync(org, project, repoName))).Value;
 
         if (rawBranches is null)
+        {
             return ["main"];
+        }
 
         // Step 3: Get supported channels from releases index (cached globally)
         var supportedChannels = GetSupportedChannels(await _releasesIndex.Value, supportPhases, minVersion);
         if (supportedChannels is null)
+        {
             return ["main"];
+        }
 
         // Step 4: Filter branches
         var branches = new List<string> { "main" };
@@ -88,13 +96,18 @@ public sealed class ReleaseBranchResolver
         foreach (var line in rawBranches)
         {
             var match = ReleaseBranchPattern.Match(line);
-            if (!match.Success) continue;
+            if (!match.Success)
+            {
+                continue;
+            }
 
             var branchName = match.Groups[1].Value;
             var channel = $"{match.Groups[3].Value}.{match.Groups[4].Value}";
 
             if (supportedChannels.Contains(channel))
+            {
                 branches.Add(branchName);
+            }
         }
 
         return branches;
@@ -123,13 +136,20 @@ public sealed class ReleaseBranchResolver
         var internalOutput = await internalTask;
 
         if (releaseOutput is null && internalOutput is null)
+        {
             return null;
+        }
 
         var branches = new List<string>();
         if (releaseOutput is not null)
+        {
             branches.AddRange(releaseOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()));
+        }
+
         if (internalOutput is not null)
+        {
             branches.AddRange(internalOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()));
+        }
 
         return branches;
     }
@@ -151,11 +171,16 @@ public sealed class ReleaseBranchResolver
     private static HashSet<string>? GetSupportedChannels(
         List<IndexEntry>? entries, string? supportPhases, int? minVersion)
     {
-        if (entries is null) return null;
+        if (entries is null)
+        {
+            return null;
+        }
 
         var phases = DefaultPhases;
         if (!string.IsNullOrWhiteSpace(supportPhases))
+        {
             phases = supportPhases.Split(',').Select(p => p.Trim().ToLowerInvariant()).ToHashSet();
+        }
 
         return entries
             .Where(e => !string.IsNullOrEmpty(e.SupportPhase) && !string.IsNullOrEmpty(e.ChannelVersion))
@@ -182,7 +207,10 @@ public sealed class ReleaseBranchResolver
             };
 
             using var proc = Process.Start(psi);
-            if (proc is null) return null;
+            if (proc is null)
+            {
+                return null;
+            }
 
             var output = await proc.StandardOutput.ReadToEndAsync();
             await proc.WaitForExitAsync();
