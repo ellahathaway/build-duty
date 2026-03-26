@@ -1,64 +1,34 @@
-# Reference: github-pr source
+# Reference: GitHub Pull Request
 
-This reference applies when a work item has a source of type `github-pr`.
-The source `ref` is a URL to a GitHub pull request.
+## When to use
 
-## Extracting PR info from URLs
+Use this when the signal type is a GitHub pull request signal (`github-pr`).
 
-GitHub PR URLs follow this pattern:
-- `https://github.com/{owner}/{repo}/pull/{number}`
+## Signal info
 
-Extract the **owner**, **repo**, and **PR number** from the URL.
+Signal info includes PR metadata, description, review status, checks, and state.
+Use signal info as the primary source of truth.
 
-## What to include in the summary
+## Identify the signal
 
-### Basics
-- **Title** and **number**
-- **State** — open, closed, or merged
-- **Author** — who opened it
-- **Reviewers** — who's assigned to review; note approval status
-- **Labels** — especially priority, area, or status labels
-- **Target branch** — where this is merging into
+- URL format:
+	- `https://github.com/{owner}/{repo}/pull/{number}`
 
-### Review status
-- **Approved** / **Changes requested** / **Pending** — current review state
-- **Blocking reviewers** — anyone who requested changes or hasn't reviewed
-- **Review comments** — summarize unresolved threads
+Extract `owner`, `repo`, and `number` from the URL.
 
-### CI status
-- **Check runs** — pass/fail status of CI checks on the PR
-- If checks are failing, investigate the build failure details
-- Note which checks are required vs optional
+## Additional lookup
 
-### Content
-- **Description** — concise summary of what the PR does
-- **Changed files** — count and key areas affected
-- **Size** — additions/deletions; flag if unusually large
+Only fetch additional data if required context is missing from signal info.
 
-### Cross-references
-- **Linked issues** — issues this PR fixes or references
-- **Related PRs** — other PRs targeting the same area
-- **Correlated work items** — other build-duty items in the same cluster
+## Summary focus
 
-## Merge readiness
+- PR title/number and state (open/merged/closed)
+- Merge readiness (approvals, requested changes, draft/conflicts)
+- CI/check status, especially failing required checks
+- High-level change intent and unresolved review blockers
 
-Assess whether the PR is ready to merge:
+## Output
 
-| Condition | Status |
-|-----------|--------|
-| All required checks passing | ✅ Ready |
-| Has required approvals | ✅ Ready |
-| Changes requested | ❌ Blocked |
-| Merge conflicts | ❌ Blocked |
-| Draft PR | ⏸️ Not ready |
-| Missing reviews | ⚠️ Needs attention |
+Return 1-3 sentences focused on whether the PR is blocked or ready.
 
-## Suggested next steps
-
-Based on the PR state, suggest appropriate actions:
-- **Open + approved + checks green** → merge or set auto-merge
-- **Open + changes requested** → address feedback, re-request review
-- **Open + failing checks** → investigate CI failures
-- **Open + stale (no activity > 3 days)** → ping reviewers
-- **Merged + recently** → verify no regressions in post-merge CI
-- **Closed without merge** → note why (superseded, abandoned, etc.)
+Do not include extra sections, bullets, or markdown tables in the final summary.
