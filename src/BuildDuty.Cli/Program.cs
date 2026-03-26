@@ -28,7 +28,7 @@ services.AddSingleton<Func<BuildDutyConfig, WorkItemStore, CopilotAdapter>>(_ =>
             .Concat(SummarizeTools.Create(wiStore))
             .ToList();
 
-        return new CopilotAdapter(new CopilotClientOptions(), tools, config.Ai?.Model);
+        return new CopilotAdapter(new CopilotClientOptions { CliPath = "copilot" }, tools, config.Ai?.Model);
     };
 });
 
