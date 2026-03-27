@@ -1,43 +1,34 @@
+using System.Diagnostics.CodeAnalysis;
 using Octokit;
 
 namespace BuildDuty.Core;
 
-public abstract class GitHubSignal<TInfo> : Signal<GitHubSignalType, TInfo> where TInfo : class;
-
-public sealed class GitHubIssueSignal : GitHubSignal<Issue>
+public sealed class GitHubIssueSignal : Signal<Issue>
 {
-    public override GitHubSignalType Type => GitHubSignalType.Issue;
+    public override SignalType Type => SignalType.GitHubIssue;
 
-    public static GitHubIssueSignal Create(
-        Issue issue,
-        List<string>? workItemIds = null)
+    [SetsRequiredMembers]
+    public GitHubIssueSignal(Issue info)
     {
-        return new GitHubIssueSignal
+        if (info == null)
         {
-            Info = issue,
-            WorkItemIds = workItemIds ?? [],
-        };
+            throw new ArgumentNullException(nameof(info));
+        }
+        Info = info;
     }
 }
 
-public sealed class GitHubPullRequestSignal : GitHubSignal<PullRequest>
+public sealed class GitHubPullRequestSignal : Signal<PullRequest>
 {
-    public override GitHubSignalType Type => GitHubSignalType.PullRequest;
+    public override SignalType Type => SignalType.GitHubPullRequest;
 
-    public static GitHubPullRequestSignal Create(
-        PullRequest pr,
-        List<string>? workItemIds = null)
+    [SetsRequiredMembers]
+    public GitHubPullRequestSignal(PullRequest info)
     {
-        return new GitHubPullRequestSignal
+        if (info == null)
         {
-            Info = pr,
-            WorkItemIds = workItemIds ?? [],
-        };
+            throw new ArgumentNullException(nameof(info));
+        }
+        Info = info;
     }
-}
-
-public enum GitHubSignalType
-{
-    Issue,
-    PullRequest,
 }

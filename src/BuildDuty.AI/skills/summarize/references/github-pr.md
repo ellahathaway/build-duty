@@ -6,19 +6,8 @@ Use this when the signal type is a GitHub pull request signal (`github-pr`).
 
 ## Signal info
 
-Signal info includes PR metadata, description, review status, checks, and state.
-Use signal info as the primary source of truth.
-
-## Identify the signal
-
-- URL format:
-	- `https://github.com/{owner}/{repo}/pull/{number}`
-
-Extract `owner`, `repo`, and `number` from the URL.
-
-## Additional lookup
-
-Only fetch additional data if required context is missing from signal info.
+Use stored signal payload only (metadata, review status, checks, and state).
+Do not fetch external data during summarization.
 
 ## Summary focus
 
@@ -27,8 +16,7 @@ Only fetch additional data if required context is missing from signal info.
 - CI/check status, especially failing required checks
 - High-level change intent and unresolved review blockers
 
-## Output
-
-Return 1-3 sentences focused on whether the PR is blocked or ready.
-
-Do not include extra sections, bullets, or markdown tables in the final summary.
+## Keep it concise
+- 1 sentence preferred, max 2.
+- Focus on blocked vs ready and the top blocker.
+- No markdown or bullet formatting in final summary text.

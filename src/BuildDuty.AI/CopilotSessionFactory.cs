@@ -1,4 +1,5 @@
 using GitHub.Copilot.SDK;
+using Microsoft.Extensions.AI;
 
 namespace BuildDuty.AI;
 
@@ -33,8 +34,8 @@ public static class CopilotSessionFactory
         CopilotClient client,
         IEnumerable<string> skills,
         Dictionary<string, object> mcpServers,
-        string? model = null,
-        CancellationToken ct = default)
+        ICollection<AIFunction>? tools = null,
+        string? model = null)
     {
         var skillDirs = skills
             .Select(s => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, s)))
@@ -49,6 +50,7 @@ public static class CopilotSessionFactory
             {
                 Content = DefaultInstructions,
             },
+            Tools = tools
         };
 
         if (model is not null)
@@ -56,13 +58,13 @@ public static class CopilotSessionFactory
             config.Model = model;
         }
 
-        var session = await client.CreateSessionAsync(config, ct);
+        var session = await client.CreateSessionAsync(config);
 
         // Enable all configured skills via RPC
         foreach (var skillDir in skillDirs)
         {
             var skillName = Path.GetFileName(skillDir);
-            await session.Rpc.Skills.EnableAsync(skillName, ct);
+            await session.Rpc.Skills.EnableAsync(skillName);
         }
 
         return session;

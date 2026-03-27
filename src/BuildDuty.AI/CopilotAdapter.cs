@@ -1,8 +1,6 @@
 using BuildDuty.Core;
 using GitHub.Copilot.SDK;
 using Microsoft.Extensions.AI;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace BuildDuty.AI;
 
@@ -14,110 +12,136 @@ namespace BuildDuty.AI;
 public class CopilotAdapter : IAsyncDisposable
 {
     private readonly IBuildDutyConfigProvider _configProvider;
+    private readonly IStorageProvider _storageProvider;
+    private readonly StorageTools _storageTools;
     private CopilotClient? _client;
 
-    public CopilotAdapter(IBuildDutyConfigProvider configProvider)
+    public CopilotAdapter(
+        IBuildDutyConfigProvider configProvider,
+        IStorageProvider storageProvider,
+        StorageTools storageTools)
     {
         _configProvider = configProvider;
+        _storageProvider = storageProvider;
+        _storageTools = storageTools;
     }
 
     /// <summary>
     /// Run an AI action on a signal.
     /// </summary>
-    public virtual async Task<SignalResult> RunSignalActionAsync(
-        ISignal signal,
-        string action,
-        CancellationToken ct = default)
+    public virtual async Task<string> RunSignalActionAsync(
+        string signalId,
+        string action)
     {
-        try
+        ArgumentException.ThrowIfNullOrWhiteSpace(signalId);
+
+        _client ??= new CopilotClient(new CopilotClientOptions());
+        await _client.StartAsync();
+
+        var skills = new[]
         {
-            _client ??= new CopilotClient(new CopilotClientOptions());
-            await _client.StartAsync(ct);
+            "skills/summarize",
+        };
 
-            var mcpServers = signal switch
-            {
-                AzureDevOpsPipelineSignal pipelineSignal => GetAzureDevOpsPipelineServer(pipelineSignal),
-                _ => new Dictionary<string, object>(),
-            };
+        var signal = await _storageProvider.GetSignalAsync(signalId);
+        var summarizeMcpServers = signal.Type == SignalType.AzureDevOpsPipeline
+            ? AzureDevOpsPipelineServers()
+            : new Dictionary<string, object>();
 
-            var skills = new[]
-            {
-                "skills/summarize",
-                "skills/cluster",
-            };
+        await using var session = await CopilotSessionFactory.CreateAsync(
+            _client,
+            skills: skills,
+            mcpServers: summarizeMcpServers,
+            tools: _storageTools.GetTools(),
+            model: _configProvider.Get().Ai?.Model);
 
-            await using var session = await CopilotSessionFactory.CreateAsync(
-                _client,
-                skills: skills,
-                mcpServers: mcpServers,
-                model: _configProvider.GetConfig().Ai?.Model,
-                ct: ct);
+        var prompt = $"""
+            Perform the following action on the given signal id:
 
-            var signalPayload = JsonSerializer.Serialize(signal, new JsonSerializerOptions
-            {
-                WriteIndented = true,
-                Converters = { new JsonStringEnumConverter() },
-            });
+            {action}
 
-            var prompt = $"""
-                Perform the following action on the given signal:
+            SignalId: {signalId}
+            """;
 
-                {action}
+        var response = await session.SendAndWaitAsync(
+            new MessageOptions { Prompt = prompt },
+            timeout: TimeSpan.FromMinutes(5));
 
-                Signal payload (JSON):
-                {signalPayload}
-                """;
+        return response?.Data?.Content ?? "(no response)";
+    }
 
-            var response = await session.SendAndWaitAsync(
-                new MessageOptions { Prompt = prompt },
-                timeout: TimeSpan.FromMinutes(5),
-                cancellationToken: ct);
-
-            var content = response?.Data?.Content ?? "(no response)";
-
-            return new SignalResult
-            {
-                Signal = signal,
-                Action = action,
-                Success = true,
-                Response = content,
-            };
-        }
-        catch (Exception ex)
+    /// <summary>
+    /// Run an AI action across a set of signals.
+    /// </summary>
+    public virtual async Task<string> RunSignalSetActionAsync(
+        IReadOnlyList<string> signalIds,
+        string action)
+    {
+        if (signalIds.Count == 0)
         {
-            return new SignalResult
-            {
-                Signal = signal,
-                Action = action,
-                Success = false,
-                Response = $"Error: {ex.Message}",
-            };
+            return "(no signals)";
         }
+
+        _client ??= new CopilotClient(new CopilotClientOptions());
+        await _client.StartAsync();
+
+        var skills = new[]
+        {
+            "skills/reconcile-work-items",
+        };
+
+        await using var session = await CopilotSessionFactory.CreateAsync(
+            _client,
+            skills: skills,
+            mcpServers: AzureDevOpsPipelineServers(),
+            tools: _storageTools.GetTools(),
+            model: _configProvider.Get().Ai?.Model);
+
+        var prompt = $"""
+            Perform the following action on the given set of signal ids:
+
+            {action}
+
+            SignalIds:
+            {string.Join('\n', signalIds.Select(id => $"- {id}"))}
+            """;
+
+        var response = await session.SendAndWaitAsync(
+            new MessageOptions { Prompt = prompt },
+            timeout: TimeSpan.FromMinutes(10));
+
+        return response?.Data?.Content ?? "(no response)";
     }
 
     public async ValueTask DisposeAsync()
     {
         if (_client is IAsyncDisposable d)
+        {
             await d.DisposeAsync();
+        }
         GC.SuppressFinalize(this);
     }
 
-    private static Dictionary<string, object> GetAzureDevOpsPipelineServer(AzureDevOpsPipelineSignal signal)
+    private Dictionary<string, object> AzureDevOpsPipelineServers()
     {
-        string org = signal.Info.Build.Url.Split('/')[3];
-        return new Dictionary<string, object>
+        var orgs = _configProvider.Get().AzureDevOps?.Organizations;
+        if (orgs is null || orgs.Count == 0)
         {
-            ["azure-devops"] = new McpLocalServerConfig
+            return [];
+        }
+
+        return orgs.ToDictionary(
+            org => $"azure-devops-{new Uri(org.Url).Host}",
+            org => (object)new McpLocalServerConfig
             {
                 Command = "npx",
-                Args = ["-y", "@azure-devops/mcp", org, "-a", "azcli", "-d", "pipelines"],
+                Args = ["-y", "@azure-devops/mcp", "-a", "azcli", "-d", "pipelines", "-o", org.Url],
                 Tools = ["*"],
                 Env = new Dictionary<string, string>
                 {
                     ["GIT_TERMINAL_PROMPT"] = "0",
                 },
-            }
-        };
+            });
     }
 
 //     /// <summary>
@@ -127,7 +151,7 @@ public class CopilotAdapter : IAsyncDisposable
 //     public async Task<ReviewSession> CreateReviewSessionAsync(
 //         IReadOnlyList<string> skills,
 //         Dictionary<string, object> mcpServers,
-//         CancellationToken ct = default)
+//         )
 //     {
 //         _client ??= new CopilotClient(_clientOptions);
 //         await _client.StartAsync(ct);
@@ -195,7 +219,7 @@ public class CopilotAdapter : IAsyncDisposable
 //     public void OnStream(Action<AgentStreamEvent> handler) => _streamHandler = handler;
 
 //     /// <summary>Send a message and wait for the agent's response.</summary>
-//     public async Task<string> SendAsync(string prompt, CancellationToken ct = default)
+//     public async Task<string> SendAsync(string prompt, )
 //     {
 //         var response = await _session.SendAndWaitAsync(
 //             new MessageOptions { Prompt = prompt },
