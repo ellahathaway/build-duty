@@ -4,22 +4,22 @@ namespace BuildDuty.Core;
 
 public interface ISignalCollectorFactory
 {
-    ISignalCollector CreateCollector(object config);
+    ISignalCollector CreateCollector<TConfig>() where TConfig : class;
 }
 
-public sealed class SignalCollectorFactory(
-    Func<AzureDevOpsConfig, AzureDevOpsSignalCollector> azureDevOpsCollectorFactory,
-    Func<GitHubConfig, GitHubSignalCollector> gitHubCollectorFactory) : ISignalCollectorFactory
+public sealed class SignalCollectorFactory(IServiceProvider serviceProvider) : ISignalCollectorFactory
 {
-    public ISignalCollector CreateCollector(object config)
+    public ISignalCollector CreateCollector<TConfig>() where TConfig : class
     {
-        ArgumentNullException.ThrowIfNull(config);
-
-        return config switch
+        return typeof(TConfig) switch
         {
-            AzureDevOpsConfig azureDevOpsConfig => azureDevOpsCollectorFactory(azureDevOpsConfig),
-            GitHubConfig gitHubConfig => gitHubCollectorFactory(gitHubConfig),
-            _ => throw new NotSupportedException($"Unsupported collector config type: {config.GetType().Name}"),
+            var t when t == typeof(AzureDevOpsConfig) =>
+                (ISignalCollector)serviceProvider.GetService(typeof(AzureDevOpsSignalCollector))!
+                    ?? throw new InvalidOperationException("AzureDevOpsSignalCollector is not registered."),
+            var t when t == typeof(GitHubConfig) =>
+                (ISignalCollector)serviceProvider.GetService(typeof(GitHubSignalCollector))!
+                    ?? throw new InvalidOperationException("GitHubSignalCollector is not registered."),
+            _ => throw new NotSupportedException($"Unsupported collector config type: {typeof(TConfig).Name}"),
         };
     }
 }

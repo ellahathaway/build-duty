@@ -1,9 +1,7 @@
 using System.ComponentModel;
-using System.Collections.Concurrent;
 using BuildDuty.AI;
 using BuildDuty.Core;
 using BuildDuty.Core.Models;
-using Microsoft.TeamFoundation.TestManagement.WebApi;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -22,177 +20,83 @@ internal sealed class TriageSettings : CommandSettings
 
 internal sealed class TriageCommand : AsyncCommand<TriageSettings>
 {
-    private readonly IBuildDutyConfigProvider _configProvider;
     private readonly ISignalCollectorFactory _signalCollectorFactory;
+    private readonly IStorageProvider _storageProvider;
+    private readonly CopilotAdapter _copilotAdapter;
 
     public TriageCommand(
-        IBuildDutyConfigProvider configProvider,
-        ISignalCollectorFactory signalCollectorFactory)
+        ISignalCollectorFactory signalCollectorFactory,
+        IStorageProvider storageProvider,
+        CopilotAdapter copilotAdapter)
     {
-        _configProvider = configProvider;
         _signalCollectorFactory = signalCollectorFactory;
+        _storageProvider = storageProvider;
+        _copilotAdapter = copilotAdapter;
     }
 
     public override async Task<int> ExecuteAsync(CommandContext context, TriageSettings settings)
     {
-        var configPath = settings.Config ?? Paths.ConfigPath();
-        if (configPath is null)
-        {
-            AnsiConsole.MarkupLine("[red bold]Error:[/] No .build-duty.yml found in the repository root. Use --config to specify a path.");
-            return 1;
-        }
+        // Start a new triage run
+        var triageRun = new TriageRun();
+        await _storageProvider.SaveTriageRunAsync(triageRun);
 
-        if (!File.Exists(configPath))
-        {
-            AnsiConsole.MarkupLine($"[red bold]Error:[/] Config file not found: {configPath}");
-            return 1;
-        }
+        // === Collect signals ===
+        AnsiConsole.MarkupLine("\n[bold][/]Collecting signals...");
 
-        try
-        {
-            _configProvider.InitializeConfig(configPath);
-        }
-        catch (Exception ex)
-        {
-            AnsiConsole.WriteException(ex);
-            return 1;
-        }
+        triageRun.Status = TriageRunStatus.CollectingSignals;
+        await _storageProvider.SaveTriageRunAsync(triageRun);
+        var collectedSignalIds = new List<string>();
 
-        var config = _configProvider.GetConfig();
-        AnsiConsole.MarkupLine($"Using config: [bold]{configPath}[/] (name: [bold]{Markup.Escape(config.Name)}[/])");
-
-        // === Gather signals ===
-        AnsiConsole.MarkupLine("\n[bold][/]Gathering signals...");
-
-        var results = new List<SignalCollectionResult>();
-
-        await AnsiConsole.Progress()
-            .AutoClear(false)
-            .Columns(
-                new TaskDescriptionColumn(),
-                new SpinnerColumn(),
-                new ElapsedTimeColumn())
-            .StartAsync(async ctx =>
+        await RunWithProgressAsync(async ctx =>
             {
-                var tasks = new List<Task<SignalCollectionResult>>();
+                var azureDevOpsSignalsTask = CollectSignalsAsync<AzureDevOpsConfig>(ctx);
+                var githubSignalsTask = CollectSignalsAsync<GitHubConfig>(ctx);
 
-                if (config.AzureDevOps is not null)
-                {
-                    tasks.Add(CollectSignalsAsync(config.AzureDevOps, ctx));
-                }
-
-                if (config.GitHub is not null)
-                {
-                    tasks.Add(CollectSignalsAsync(config.GitHub, ctx));
-                }
-
-                results = (await Task.WhenAll(tasks)).ToList();
+                var results = await Task.WhenAll(azureDevOpsSignalsTask, githubSignalsTask);
+                collectedSignalIds.AddRange(results.SelectMany(ids => ids));
             });
 
-        // Show collection summary
-        var allSignals = results.Sum(r => r.Signals.Count);
-        var failedCollections = results.Where(r => !r.Success).ToList();
-        AnsiConsole.MarkupLine($"Gathered [bold]{allSignals}[/] signals.");
-
-        foreach (var failure in failedCollections)
-        {
-            AnsiConsole.MarkupLine($"  [red]✗[/] {failure.Source}: {Markup.Escape(failure.Error ?? "unknown error")}");
-        }
-
-        if (failedCollections.Count > 0)
-        {
-            AnsiConsole.MarkupLine("\n[red bold]Error:[/] Signal collection failed for one or more sources. Triage cannot proceed.");
-            return 1;
-        }
-
-        if (allSignals == 0)
+        triageRun.SignalIds = collectedSignalIds;
+        if (collectedSignalIds.Count == 0)
         {
             AnsiConsole.MarkupLine("[dim]No signals collected. Nothing to triage.[/]");
+            triageRun.Status = TriageRunStatus.Done;
+            await _storageProvider.SaveTriageRunAsync(triageRun);
             return 0;
         }
+
+        triageRun.Status = TriageRunStatus.SummarizingSignals;
+        await _storageProvider.SaveTriageRunAsync(triageRun);
 
         // === AI-powered summarization ===
         AnsiConsole.MarkupLine("\n[bold][/] Summarizing signals...");
 
-        var summarizeResults = new List<SignalResult>();
-        var collectedSignals = results.SelectMany(r => r.Signals).ToList();
-        var summarizePrompt = "Use the summarize skill to write a concise summary for this signal.";
-
-        await AnsiConsole.Progress()
-            .AutoClear(false)
-            .Columns(
-                new TaskDescriptionColumn(),
-                new SpinnerColumn(),
-                new ElapsedTimeColumn())
-            .StartAsync(async ctx =>
+        await RunWithProgressAsync(async ctx =>
             {
-                var progressTask = ctx.AddTask("[bold]Summarization[/]", maxValue: collectedSignals.Count);
+                var progressTask = ctx.AddTask("[bold]Summarization[/]", maxValue: collectedSignalIds.Count);
 
-                var resultsByIndex = new ConcurrentDictionary<int, SignalResult>();
                 var progressLock = new object();
-                var maxParallelSummaries = Math.Max(1, Math.Min(8, collectedSignals.Count));
+                var maxParallelSummaries = Math.Max(1, Math.Min(8, Environment.ProcessorCount - 1));
                 using var semaphore = new SemaphoreSlim(maxParallelSummaries);
 
-                var summarizeTasks = collectedSignals.Select((signal, index) => Task.Run(async () =>
+                string summarizePrompt = """
+                    Summarize the following given signal.
+                    """;
+
+                var summarizeTasks = collectedSignalIds.Select(signalId => Task.Run(async () =>
                 {
                     await semaphore.WaitAsync();
-                    try
-                    {
-                        SignalResult result;
-                        await using (var adapter = new CopilotAdapter(_configProvider))
-                        {
-                            result = await adapter.RunSignalActionAsync(
-                                signal,
-                                summarizePrompt,
-                                ct: default);
-                        }
-
-                        resultsByIndex[index] = result;
-                    }
-                    catch (Exception ex)
-                    {
-                        resultsByIndex[index] = new SignalResult
-                        {
-                            Signal = signal,
-                            Action = summarizePrompt,
-                            Success = false,
-                            Response = $"Error: {ex.Message}",
-                        };
-                    }
-                    finally
-                    {
-                        lock (progressLock)
-                        {
-                            progressTask.Increment(1);
-                        }
-
-                        semaphore.Release();
-                    }
+                    await _copilotAdapter.RunSignalActionAsync(signalId, summarizePrompt);
+                    semaphore.Release();
                 }));
 
                 await Task.WhenAll(summarizeTasks);
 
-                summarizeResults.AddRange(resultsByIndex.OrderBy(kvp => kvp.Key).Select(kvp => kvp.Value));
-
-                var failed = summarizeResults.Count(r => !r.Success);
-                progressTask.Description = failed == 0
-                    ? "[green]✓[/] Summarization"
-                    : $"[red]✗[/] Summarization ({failed} failed)";
-
                 progressTask.StopTask();
             });
 
-        foreach (var summarizeResult in summarizeResults.Where(r => !r.Success))
-        {
-            AnsiConsole.MarkupLine($"[red]✗[/] Summarization failed for signal [bold]{Markup.Escape(summarizeResult.Signal.Type.ToString())}[/]: {Markup.Escape(summarizeResult.Response)}");
-        }
+        AnsiConsole.MarkupLine($"[green]✓[/] Summarized [bold]{collectedSignalIds.Count}[/] signals.");
 
-        if (summarizeResults.Any(r => !r.Success))
-        {
-            return 1;
-        }
-
-        AnsiConsole.MarkupLine($"[green]✓[/] Summarized [bold]{summarizeResults.Count}[/] signals.");
         return 0;
 
         // // Report Step 2 errors
@@ -238,7 +142,6 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
         //         var linkedPrsLine = string.IsNullOrWhiteSpace(linkedPrs)
         //             ? ""
         //             : $"\n  linkedPrs: {linkedPrs}";
-        //         return $"- {i.Id} | status={i.Status} | state={i.State ?? "(none)"} | type={sourceType} | ref={refUrl} | links={links} | summary={summary} | title={i.Title}{detailsLine}{linkedPrsLine}";
         //     }
 
         //     var triageList = string.Join("\n", toTriage.Select(FormatItem));
@@ -517,40 +420,38 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
     }
 
     /// <summary>Extract org name from an AzDO URL like "https://dev.azure.com/dnceng".</summary>
-    private static string ExtractOrgName(string url)
-    {
-        if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
-            return uri.AbsolutePath.Trim('/').Split('/')[0];
-        return url;
-    }
 
-    private async Task<SignalCollectionResult> CollectSignalsAsync(object config, dynamic ctx, CancellationToken ct = default)
+    private async Task<List<string>> CollectSignalsAsync<TConfig>(dynamic ctx) where TConfig : class
     {
-        string source = config.GetType().Name;
-        var started = DateTime.UtcNow;
-        var signals = new List<ISignal>();
-        string? errorMessage = null;
-
+        string source = typeof(TConfig).Name;
         var configTask = ctx.AddTask($"[bold]{source}[/]", maxValue: 1);
         try
         {
-            var signalCollector = _signalCollectorFactory.CreateCollector(config);
-            signals = await signalCollector.CollectAsync(ct);
-            configTask.Description = $"[green]✓[/] {source} ({signals.Count} signals)";
+            var signalCollector = _signalCollectorFactory.CreateCollector<TConfig>();
+            var signalIds = await signalCollector.CollectAsync();
+            configTask.Description = $"[green]✓[/] {source} ({signalIds.Count} signals)";
+            return signalIds;
         }
         catch (Exception ex)
         {
-            errorMessage = ex.Message;
             configTask.Description = $"[red]✗[/] {source}";
+            throw new Exception($"Error collecting signals from {source}: {ex.Message}", ex);
         }
         finally
         {
             configTask.Increment(1);
             configTask.StopTask();
         }
-        
-        return new SignalCollectionResult(source, signals, errorMessage == null, DateTime.UtcNow - started, errorMessage);
     }
 
-    private record SignalCollectionResult(string Source, List<ISignal> Signals, bool Success, TimeSpan Duration, string? Error = null);
+    private static async Task RunWithProgressAsync(Func<ProgressContext, Task> action)
+    {
+        await AnsiConsole.Progress()
+            .AutoClear(false)
+            .Columns(
+                new TaskDescriptionColumn(),
+                new SpinnerColumn(),
+                new ElapsedTimeColumn())
+            .StartAsync(action);
+    }
 }

@@ -1,4 +1,3 @@
-using BuildDuty.Cli;
 using BuildDuty.Cli.Commands;
 using BuildDuty.Cli.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
@@ -33,6 +32,8 @@ app.Configure(config =>
     //     wi.AddCommand<WorkItemsShowCommand>("show")
     //         .WithDescription("Inspect a single work item");
     // });
+
+    config.SetInterceptor(registrar.Resolve<ConfigInterceptor>());
 });
 
 return await app.RunAsync(args);

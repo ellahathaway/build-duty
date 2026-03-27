@@ -9,33 +9,34 @@ namespace BuildDuty.Core;
 
 public interface IBuildDutyConfigProvider
 {
+    string? ConfigPath { get; set; }
     BuildDutyConfig GetConfig();
-    BuildDutyConfig InitializeConfig(string configPath);
 }
 
 public sealed class BuildDutyConfigProvider : IBuildDutyConfigProvider
 {
     private BuildDutyConfig? _config;
 
+    public string? ConfigPath { get; set; }
+
     public BuildDutyConfig GetConfig()
     {
-        if (_config is null)
+        if (_config is not null)
         {
-            throw new InvalidOperationException(
-                "Config has not been initialized. Call InitializeConfig() with a valid config path before accessing Config.");
+            return _config;
         }
 
-        return _config;
-    }
+        var path = ConfigPath ?? DiscoverConfigPath()
+            ?? throw new InvalidOperationException(
+                "No .build-duty.yml found in the current directory. Use --config to specify a path.");
 
-    public BuildDutyConfig InitializeConfig(string configPath)
-    {
-        if (_config != null)
+        if (!File.Exists(path))
         {
-            throw new InvalidOperationException("Config has already been initialized.");
+            throw new FileNotFoundException(
+                $"Config file not found: {path}", path);
         }
 
-        var yaml = File.ReadAllText(configPath);
+        var yaml = File.ReadAllText(path);
         var deserializer = new DeserializerBuilder()
             .WithNamingConvention(CamelCaseNamingConvention.Instance)
             .WithTypeConverter(new RegexYamlTypeConverter())
@@ -44,14 +45,30 @@ public sealed class BuildDutyConfigProvider : IBuildDutyConfigProvider
 
         _config = deserializer.Deserialize<BuildDutyConfig>(yaml)
             ?? throw new InvalidOperationException(
-                $"Failed to parse config file: {configPath}");
+                $"Failed to parse config file: {path}");
 
         if (string.IsNullOrWhiteSpace(_config.Name))
         {
             throw new InvalidOperationException(
-                $"Config file '{configPath}' is missing a required top-level 'name' field.");
+                $"Config file '{path}' is missing a required top-level 'name' field.");
         }
+
         return _config;
+    }
+
+    private static string? DiscoverConfigPath()
+    {
+        var dir = new DirectoryInfo(Directory.GetCurrentDirectory());
+        while (dir is not null)
+        {
+            var path = Path.Combine(dir.FullName, ".build-duty.yml");
+            if (File.Exists(path))
+            {
+                return path;
+            }
+            dir = dir.Parent;
+        }
+        return null;
     }
 }
 

@@ -25,8 +25,12 @@ Extract `org`, `project`, and `buildId` from the URL.
 ## Additional lookup
 
 Only fetch additional data if required context is missing from signal info.
-You can pull timeline logs when needed to help diagnose and summarize the run,
-but only for records that are present in signal info timeline records.
+
+Use the Azure DevOps MCP server tools to pull timeline logs when needed to help diagnose and summarize the run.
+Only fetch logs for records that are present in signal info timeline records.
+
+Always fetch logs for timeline records that have a non-success result (`Failed`, `SucceededWithIssues`, `Canceled`)
+when the record's `Issues` list is empty or does not explain the failure.
 
 ## Summary focus
 

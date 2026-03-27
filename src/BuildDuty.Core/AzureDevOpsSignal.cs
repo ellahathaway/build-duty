@@ -1,29 +1,21 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.TeamFoundation.Build.WebApi;
 
 namespace BuildDuty.Core;
 
-public abstract class AzureDevOpsSignal<TInfo> : Signal<AzureDevOpsSignalType, TInfo> where TInfo : class;
-
 public record AzureDevOpsPipelineInfo(Build Build, List<TimelineRecord>? TimelineRecords);
 
-public sealed class AzureDevOpsPipelineSignal : AzureDevOpsSignal<AzureDevOpsPipelineInfo>
+public sealed class AzureDevOpsPipelineSignal : Signal<AzureDevOpsPipelineInfo>
 {
-    public override AzureDevOpsSignalType Type => AzureDevOpsSignalType.Pipeline;
+    public override SignalType Type => SignalType.AzureDevOpsPipeline;
 
-    public static AzureDevOpsPipelineSignal Create(
-        Build build,
-        List<TimelineRecord>? timelineRecords = null,
-        List<string>? workItemIds = null)
+    [SetsRequiredMembers]
+    public AzureDevOpsPipelineSignal(AzureDevOpsPipelineInfo info)
     {
-        return new AzureDevOpsPipelineSignal
+        if (info == null)
         {
-            Info = new AzureDevOpsPipelineInfo(build, timelineRecords),
-            WorkItemIds = workItemIds ?? [],
-        };
+            throw new ArgumentNullException(nameof(info));
+        }
+        Info = info;
     }
-}
-
-public enum AzureDevOpsSignalType
-{
-    Pipeline
 }

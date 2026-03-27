@@ -2,24 +2,32 @@ namespace BuildDuty.Core;
 
 public interface ISignal
 {
-    DateTime CollectionTime { get; }
-    Enum Type { get; }
+    string Id { get; }
+    SignalType Type { get; }
     object Info { get; }
+    string? Summary { get; set; }
     List<string> WorkItemIds { get; }
 }
 
-public abstract class Signal<TType, TInfo> : ISignal
-    where TType : struct, Enum
+public abstract class Signal<TInfo> : ISignal
     where TInfo : class
 {
-    public DateTime CollectionTime { get; init; } = DateTime.UtcNow;
+    public string Id { get; init; } = IdGenerator.NewSignalId();
 
-    public abstract TType Type { get; }
+    public abstract SignalType Type { get; }
 
-    public required TInfo Info { get; init; }
+    public required TInfo Info { get; set; }
 
-    public List<string> WorkItemIds { get; init; } = [];
+    public string? Summary { get; set; }
 
-    Enum ISignal.Type => Type;
+    public List<string> WorkItemIds { get; set; } = [];
+
     object ISignal.Info => Info;
+}
+
+public enum SignalType
+{
+    GitHubIssue,
+    GitHubPullRequest,
+    AzureDevOpsPipeline
 }

@@ -1,26 +1,40 @@
-using System.Diagnostics;
+using BuildDuty.Core.Models;
 using Maestro.Common;
 
 namespace BuildDuty.Core;
 
 public interface ISignalCollector
 {
-    Task<List<ISignal>> CollectAsync(CancellationToken ct = default);
+    Task<List<string>> CollectAsync();
 }
 
-public abstract class SignalCollector<TConfig>(TConfig config, IRemoteTokenProvider tokenProvider, IWorkItemsProvider workItemsProvider) : ISignalCollector
+public abstract class SignalCollector<TConfig>(
+    IBuildDutyConfigProvider configProvider,
+    IRemoteTokenProvider tokenProvider,
+    IStorageProvider storageProvider) : ISignalCollector
+    where TConfig : class
 {
-    protected TConfig Config { get; } = config;
+    private TConfig? _config;
+
+    protected TConfig Config => _config ??= ResolveConfig(configProvider.GetConfig());
 
     protected IRemoteTokenProvider TokenProvider { get; } = tokenProvider;
 
-    protected IWorkItemsProvider WorkItemsProvider { get; } = workItemsProvider;
+    protected IStorageProvider StorageProvider { get; } = storageProvider;
 
-    public async Task<List<ISignal>> CollectAsync(CancellationToken ct = default)
+    protected abstract TConfig ResolveConfig(BuildDutyConfig config);
+
+    public async Task<List<string>> CollectAsync()
     {
         try
         {
-            return await CollectCoreAsync(ct);
+            var signals = await CollectCoreAsync();
+            foreach (var signal in signals)
+            {
+                await StorageProvider.SaveSignalAsync(signal);
+            }
+
+            return signals.Select(s => s.Id).ToList();
         }
         catch (Exception ex)
         {
@@ -29,5 +43,5 @@ public abstract class SignalCollector<TConfig>(TConfig config, IRemoteTokenProvi
         }
     }
 
-    protected abstract Task<List<ISignal>> CollectCoreAsync(CancellationToken ct = default);
+    protected abstract Task<List<ISignal>> CollectCoreAsync();
 }

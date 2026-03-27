@@ -3,29 +3,28 @@ using Maestro.Common;
 using Microsoft.TeamFoundation.Build.WebApi;
 using Microsoft.VisualStudio.Services.OAuth;
 using Microsoft.VisualStudio.Services.WebApi;
-using Octokit;
 
 namespace BuildDuty.Core;
 
 public class AzureDevOpsSignalCollector(
-    AzureDevOpsConfig config,
+    IBuildDutyConfigProvider configProvider,
     IRemoteTokenProvider tokenProvider,
-    IWorkItemsProvider workItemsProvider,
+    IStorageProvider storageProvider,
     ReleaseBranchResolver branchResolver)
-    : SignalCollector<AzureDevOpsConfig>(config, tokenProvider, workItemsProvider)
+    : SignalCollector<AzureDevOpsConfig>(configProvider, tokenProvider, storageProvider)
 {
-    protected override async Task<List<ISignal>> CollectCoreAsync(CancellationToken ct = default)
+    protected override AzureDevOpsConfig ResolveConfig(BuildDutyConfig config) =>
+        config.AzureDevOps ?? throw new InvalidOperationException("AzureDevOps config not found.");
+    protected override async Task<List<ISignal>> CollectCoreAsync()
     {
-        var existingPipelineSignals = (await WorkItemsProvider.GetWorkItemsAsync(AzureDevOpsSignalType.Pipeline, ct))
-            .SelectMany(item => item.Signals)
-            .OfType<AzureDevOpsPipelineSignal>()
-            .ToList();
+        var pipelineSignals = (await StorageProvider.GetSignalsFromWorkItemsAsync())
+            .Where(s => s.Type == SignalType.AzureDevOpsPipeline)
+            .OfType<AzureDevOpsPipelineSignal>();
 
-        var signals = new List<ISignal>();
-
+        var collectedSignals = new List<ISignal>();
         foreach (var organization in Config.Organizations)
         {
-            var buildClient = await GetBuildClientAsync(organization.Url, ct);
+            var buildClient = await GetBuildClientAsync(organization.Url);
 
             foreach (var project in organization.Projects)
             {
@@ -36,24 +35,21 @@ public class AzureDevOpsSignalCollector(
                     BuildClient = buildClient,
                 };
 
-                signals.AddRange(await CollectPipelineSignalsAsync(context, project.Pipelines, existingPipelineSignals, ct));
+                var projectSignals = await CollectPipelineSignalsAsync(context, project.Pipelines, pipelineSignals);
+                collectedSignals.AddRange(projectSignals);
             }
         }
 
-        return signals;
+        return collectedSignals;
     }
 
     private async Task<List<AzureDevOpsPipelineSignal>> CollectPipelineSignalsAsync(
         OrganizationProjectContext context,
         List<AzureDevOpsPipelineConfig> pipelines,
-        List<AzureDevOpsPipelineSignal> existingPipelineSignals,
-        CancellationToken ct)
+        IEnumerable<AzureDevOpsPipelineSignal> existingSignals
+        )
     {
-        var existingByBuildId = existingPipelineSignals
-            .ToDictionary(signal => signal.Info.Build.Id);
-
-        var pipelineTasks = pipelines.Select(pipeline =>
-            CollectSinglePipelineSignalsAsync(context, pipeline, existingByBuildId, ct));
+        var pipelineTasks = pipelines.Select(pipeline => CollectSinglePipelineSignalsAsync(context, pipeline, existingSignals));
 
         var results = await Task.WhenAll(pipelineTasks);
         return results.SelectMany(s => s).ToList();
@@ -62,38 +58,42 @@ public class AzureDevOpsSignalCollector(
     private async Task<List<AzureDevOpsPipelineSignal>> CollectSinglePipelineSignalsAsync(
         OrganizationProjectContext context,
         AzureDevOpsPipelineConfig pipeline,
-        Dictionary<int, AzureDevOpsPipelineSignal> existingByBuildId,
-        CancellationToken ct)
+        IEnumerable<AzureDevOpsPipelineSignal> existingSignals
+        )
     {
         var signals = new List<AzureDevOpsPipelineSignal>();
         var branches = await ResolveBranchesAsync(context, pipeline);
 
         foreach (var branch in branches)
         {
-            ct.ThrowIfCancellationRequested();
-
-            var build = await GetLatestBuildAsync(context, pipeline.Id, branch, pipeline.Age, ct);
+            var build = await GetLatestBuildAsync(context, pipeline.Id, branch, pipeline.Age);
             if (build == null || build.Result is not BuildResult buildResult || pipeline.Status?.Contains(buildResult) != true)
             {
                 continue;
             }
 
-            var timelineRecords = await GetTimelineRecordsAsync(context, build.Id, pipeline.TimelineFilters, pipeline.Status, ct);
+            var timelineRecords = await GetTimelineRecordsAsync(context, build.Id, pipeline.TimelineFilters, pipeline.Status);
             if (timelineRecords.Count == 0)
             {
                 continue;
             }
 
-            if (existingByBuildId.TryGetValue(build.Id, out var existingSignal))
+            var existingSignal = existingSignals.FirstOrDefault(s => s.Info.Build.Id == build.Id);
+
+            if (existingSignal == null)
             {
-                if (existingSignal.Info.Build.Result == buildResult &&
-                    HasSameTimelineRecords(existingSignal.Info.TimelineRecords, timelineRecords))
-                {
-                    continue;
-                }
+                signals.Add(new AzureDevOpsPipelineSignal(new AzureDevOpsPipelineInfo(build, timelineRecords)));
+                continue;
+            }
+            
+            if (existingSignal.Info.Build.Result == buildResult
+                && HasSameTimelineRecords(existingSignal.Info.TimelineRecords, timelineRecords))
+            {
+                continue;
             }
 
-            signals.Add(AzureDevOpsPipelineSignal.Create(build, timelineRecords, existingSignal?.WorkItemIds));
+            existingSignal.Info = new AzureDevOpsPipelineInfo(build, timelineRecords);
+            signals.Add(existingSignal);
         }
 
         return signals;
@@ -119,16 +119,15 @@ public class AzureDevOpsSignalCollector(
         OrganizationProjectContext context,
         int definitionId,
         string branch,
-        string? maxAge,
-        CancellationToken ct = default)
+        string? maxAge
+        )
     {
         var builds = await context.BuildClient.GetBuildsAsync(
             project: context.ProjectName,
             definitions: [definitionId],
             branchName: branch.StartsWith("refs/", StringComparison.OrdinalIgnoreCase) ? branch : $"refs/heads/{branch}",
             queryOrder: BuildQueryOrder.FinishTimeDescending,
-            top: 1,
-            cancellationToken: ct);
+            top: 1);
 
         var build = builds?.FirstOrDefault();
         if (build == null)
@@ -177,10 +176,10 @@ public class AzureDevOpsSignalCollector(
         OrganizationProjectContext context,
         int buildId,
         List<TimelineFilter>? filters,
-        List<BuildResult>? status,
-        CancellationToken ct = default)
+        List<BuildResult>? status
+        )
     {
-        var timeline = await context.BuildClient.GetBuildTimelineAsync(context.ProjectName, buildId, cancellationToken: ct)
+        var timeline = await context.BuildClient.GetBuildTimelineAsync(context.ProjectName, buildId)
             ?? throw new InvalidOperationException($"Failed to retrieve timeline for build {buildId} in project {context.ProjectName}.");
 
         List<TimelineRecord> matchingRecords = new List<TimelineRecord>();
@@ -219,7 +218,7 @@ public class AzureDevOpsSignalCollector(
         }
     }
 
-    protected virtual async Task<BuildHttpClient> GetBuildClientAsync(string organizationUrl, CancellationToken ct = default)
+    protected virtual async Task<BuildHttpClient> GetBuildClientAsync(string organizationUrl)
     {
         // Ensure trailing slash so Maestro's AzureDevOpsTokenProvider regex can extract the account name
         var repoUrl = organizationUrl.TrimEnd('/') + "/";

@@ -109,9 +109,9 @@ public class GitHubSignalTests
 
         public TestableGitHubCollector(
             GitHubConfig config,
-            IWorkItemsProvider workItemsProvider,
+            IStorageProvider storageProvider,
             IGitHubClient client)
-            : base(config, Substitute.For<IRemoteTokenProvider>(), workItemsProvider)
+            : base(MockConfigProvider(config), Substitute.For<IRemoteTokenProvider>(), storageProvider)
         {
             _client = client;
         }
@@ -127,6 +127,13 @@ public class GitHubSignalTests
         }
     }
 
+    private static IBuildDutyConfigProvider MockConfigProvider(GitHubConfig config)
+    {
+        var provider = Substitute.For<IBuildDutyConfigProvider>();
+        provider.GetConfig().Returns(new BuildDutyConfig { Name = "test", GitHub = config });
+        return provider;
+    }
+
     [Fact]
     public async Task CollectAsync_NewIssues_NoExistingWorkItems_CreatesSignals()
     {
@@ -137,15 +144,21 @@ public class GitHubSignalTests
         client.Issue.GetAllForRepository("dotnet", "runtime", Arg.Any<RepositoryIssueRequest>())
             .Returns([issue1, issue2]);
 
-        var workItemsProvider = Substitute.For<IWorkItemsProvider>();
-        workItemsProvider.GetWorkItemsAsync(Arg.Any<Enum>(), Arg.Any<CancellationToken>())
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync()
             .Returns([]);
+        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
 
-        var collector = new TestableGitHubCollector(CreateIssueConfig(), workItemsProvider, client);
-        var signals = await collector.CollectAsync();
+        var collector = new TestableGitHubCollector(CreateIssueConfig(), storageProvider, client);
+        await collector.CollectAsync();
 
-        Assert.Equal(2, signals.Count);
-        Assert.All(signals, s =>
+        var savedSignals = storageProvider.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
+            .Select(call => (ISignal)call.GetArguments()[0]!)
+            .ToList();
+
+        Assert.Equal(2, savedSignals.Count);
+        Assert.All(savedSignals, s =>
         {
             var issueSignal = Assert.IsType<GitHubIssueSignal>(s);
             Assert.Empty(issueSignal.WorkItemIds);
@@ -156,29 +169,43 @@ public class GitHubSignalTests
     public async Task CollectAsync_ExistingIssue_SameState_SkipsSignal()
     {
         var issue = CreateIssue(1, ItemState.Open);
-        var existingSignal = GitHubIssueSignal.Create(issue, ["wi-1"]);
+        var existingSignal = new GitHubIssueSignal(issue)
+        {
+            WorkItemIds = ["wi-1"],
+        };
 
         var client = Substitute.For<IGitHubClient>();
         client.Issue.GetAllForRepository("dotnet", "runtime", Arg.Any<RepositoryIssueRequest>())
             .Returns([issue]);
 
-        var workItemsProvider = Substitute.For<IWorkItemsProvider>();
-        workItemsProvider.GetWorkItemsAsync(GitHubSignalType.Issue, Arg.Any<CancellationToken>())
-            .Returns([new WorkItem { Id = "wi-1", Signals = [existingSignal] }]);
-        workItemsProvider.GetWorkItemsAsync(GitHubSignalType.PullRequest, Arg.Any<CancellationToken>())
-            .Returns([]);
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns([
+            new WorkItem
+            {
+                Id = "wi-1",
+                SignalIds = [existingSignal.Id],
+            }
+        ]);
+        storageProvider.GetSignalAsync(existingSignal.Id).Returns(existingSignal);
+        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
 
-        var collector = new TestableGitHubCollector(CreateIssueConfig(), workItemsProvider, client);
-        var signals = await collector.CollectAsync();
+        var collector = new TestableGitHubCollector(CreateIssueConfig(), storageProvider, client);
+        await collector.CollectAsync();
 
-        Assert.Empty(signals);
+        var savedCount = storageProvider.ReceivedCalls()
+            .Count(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync));
+
+        Assert.Equal(0, savedCount);
     }
 
     [Fact]
     public async Task CollectAsync_ExistingIssue_DifferentState_CollectsWithPreservedWorkItemIds()
     {
         var openIssue = CreateIssue(1, ItemState.Open);
-        var existingSignal = GitHubIssueSignal.Create(openIssue, ["wi-1", "wi-2"]);
+        var existingSignal = new GitHubIssueSignal(openIssue)
+        {
+            WorkItemIds = ["wi-1", "wi-2"],
+        };
 
         var closedIssue = CreateIssue(1, ItemState.Closed);
 
@@ -186,14 +213,24 @@ public class GitHubSignalTests
         client.Issue.GetAllForRepository("dotnet", "runtime", Arg.Any<RepositoryIssueRequest>())
             .Returns([closedIssue]);
 
-        var workItemsProvider = Substitute.For<IWorkItemsProvider>();
-        workItemsProvider.GetWorkItemsAsync(GitHubSignalType.Issue, Arg.Any<CancellationToken>())
-            .Returns([new WorkItem { Id = "wi-1", Signals = [existingSignal] }]);
-        workItemsProvider.GetWorkItemsAsync(GitHubSignalType.PullRequest, Arg.Any<CancellationToken>())
-            .Returns([]);
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns([
+            new WorkItem
+            {
+                Id = "wi-1",
+                SignalIds = [existingSignal.Id],
+            }
+        ]);
+        storageProvider.GetSignalAsync(existingSignal.Id).Returns(existingSignal);
+        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
 
-        var collector = new TestableGitHubCollector(CreateIssueConfig(), workItemsProvider, client);
-        var signals = await collector.CollectAsync();
+        var collector = new TestableGitHubCollector(CreateIssueConfig(), storageProvider, client);
+        await collector.CollectAsync();
+
+        var signals = storageProvider.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
+            .Select(call => (ISignal)call.GetArguments()[0]!)
+            .ToList();
 
         var signal = Assert.Single(signals);
         var issueSignal = Assert.IsType<GitHubIssueSignal>(signal);
@@ -211,12 +248,17 @@ public class GitHubSignalTests
         client.Issue.GetAllForRepository("dotnet", "runtime", Arg.Any<RepositoryIssueRequest>())
             .Returns([realIssue, prAsIssue]);
 
-        var workItemsProvider = Substitute.For<IWorkItemsProvider>();
-        workItemsProvider.GetWorkItemsAsync(Arg.Any<Enum>(), Arg.Any<CancellationToken>())
-            .Returns([]);
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns([]);
+        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
 
-        var collector = new TestableGitHubCollector(CreateIssueConfig(), workItemsProvider, client);
-        var signals = await collector.CollectAsync();
+        var collector = new TestableGitHubCollector(CreateIssueConfig(), storageProvider, client);
+        await collector.CollectAsync();
+
+        var signals = storageProvider.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
+            .Select(call => (ISignal)call.GetArguments()[0]!)
+            .ToList();
 
         var signal = Assert.Single(signals);
         var issueSignal = Assert.IsType<GitHubIssueSignal>(signal);
@@ -238,12 +280,17 @@ public class GitHubSignalTests
         client.PullRequest.GetAllForRepository("dotnet", "sdk", Arg.Any<PullRequestRequest>())
             .Returns([matchPr, noMatchPr]);
 
-        var workItemsProvider = Substitute.For<IWorkItemsProvider>();
-        workItemsProvider.GetWorkItemsAsync(Arg.Any<Enum>(), Arg.Any<CancellationToken>())
-            .Returns([]);
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns([]);
+        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
 
-        var collector = new TestableGitHubCollector(CreatePrConfig(patterns: patterns), workItemsProvider, client);
-        var signals = await collector.CollectAsync();
+        var collector = new TestableGitHubCollector(CreatePrConfig(patterns: patterns), storageProvider, client);
+        await collector.CollectAsync();
+
+        var signals = storageProvider.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
+            .Select(call => (ISignal)call.GetArguments()[0]!)
+            .ToList();
 
         var signal = Assert.Single(signals);
         var prSignal = Assert.IsType<GitHubPullRequestSignal>(signal);
@@ -254,29 +301,43 @@ public class GitHubSignalTests
     public async Task CollectAsync_ExistingPr_SameState_SkipsSignal()
     {
         var pr = CreatePullRequest(1, ItemState.Open, title: "Update deps");
-        var existingSignal = GitHubPullRequestSignal.Create(pr, ["wi-3"]);
+        var existingSignal = new GitHubPullRequestSignal(pr)
+        {
+            WorkItemIds = ["wi-3"],
+        };
 
         var client = Substitute.For<IGitHubClient>();
         client.PullRequest.GetAllForRepository("dotnet", "sdk", Arg.Any<PullRequestRequest>())
             .Returns([pr]);
 
-        var workItemsProvider = Substitute.For<IWorkItemsProvider>();
-        workItemsProvider.GetWorkItemsAsync(GitHubSignalType.Issue, Arg.Any<CancellationToken>())
-            .Returns([]);
-        workItemsProvider.GetWorkItemsAsync(GitHubSignalType.PullRequest, Arg.Any<CancellationToken>())
-            .Returns([new WorkItem { Id = "wi-3", Signals = [existingSignal] }]);
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns([
+            new WorkItem
+            {
+                Id = "wi-3",
+                SignalIds = [existingSignal.Id],
+            }
+        ]);
+        storageProvider.GetSignalAsync(existingSignal.Id).Returns(existingSignal);
+        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
 
-        var collector = new TestableGitHubCollector(CreatePrConfig(), workItemsProvider, client);
-        var signals = await collector.CollectAsync();
+        var collector = new TestableGitHubCollector(CreatePrConfig(), storageProvider, client);
+        await collector.CollectAsync();
 
-        Assert.Empty(signals);
+        var savedCount = storageProvider.ReceivedCalls()
+            .Count(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync));
+
+        Assert.Equal(0, savedCount);
     }
 
     [Fact]
     public async Task CollectAsync_ExistingPr_DifferentState_CollectsWithPreservedWorkItemIds()
     {
         var openPr = CreatePullRequest(1, ItemState.Open, title: "Update deps");
-        var existingSignal = GitHubPullRequestSignal.Create(openPr, ["wi-3"]);
+        var existingSignal = new GitHubPullRequestSignal(openPr)
+        {
+            WorkItemIds = ["wi-3"],
+        };
 
         var closedPr = CreatePullRequest(1, ItemState.Closed, merged: true, title: "Update deps");
 
@@ -284,14 +345,24 @@ public class GitHubSignalTests
         client.PullRequest.GetAllForRepository("dotnet", "sdk", Arg.Any<PullRequestRequest>())
             .Returns([closedPr]);
 
-        var workItemsProvider = Substitute.For<IWorkItemsProvider>();
-        workItemsProvider.GetWorkItemsAsync(GitHubSignalType.Issue, Arg.Any<CancellationToken>())
-            .Returns([]);
-        workItemsProvider.GetWorkItemsAsync(GitHubSignalType.PullRequest, Arg.Any<CancellationToken>())
-            .Returns([new WorkItem { Id = "wi-3", Signals = [existingSignal] }]);
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns([
+            new WorkItem
+            {
+                Id = "wi-3",
+                SignalIds = [existingSignal.Id],
+            }
+        ]);
+        storageProvider.GetSignalAsync(existingSignal.Id).Returns(existingSignal);
+        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
 
-        var collector = new TestableGitHubCollector(CreatePrConfig(), workItemsProvider, client);
-        var signals = await collector.CollectAsync();
+        var collector = new TestableGitHubCollector(CreatePrConfig(), storageProvider, client);
+        await collector.CollectAsync();
+
+        var signals = storageProvider.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
+            .Select(call => (ISignal)call.GetArguments()[0]!)
+            .ToList();
 
         var signal = Assert.Single(signals);
         var prSignal = Assert.IsType<GitHubPullRequestSignal>(signal);
@@ -311,12 +382,17 @@ public class GitHubSignalTests
         client.PullRequest.GetAllForRepository("dotnet", "runtime", Arg.Any<PullRequestRequest>())
             .Returns([pr]);
 
-        var workItemsProvider = Substitute.For<IWorkItemsProvider>();
-        workItemsProvider.GetWorkItemsAsync(Arg.Any<Enum>(), Arg.Any<CancellationToken>())
-            .Returns([]);
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns([]);
+        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
 
-        var collector = new TestableGitHubCollector(CreateMixedConfig(), workItemsProvider, client);
-        var signals = await collector.CollectAsync();
+        var collector = new TestableGitHubCollector(CreateMixedConfig(), storageProvider, client);
+        await collector.CollectAsync();
+
+        var signals = storageProvider.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
+            .Select(call => (ISignal)call.GetArguments()[0]!)
+            .ToList();
 
         Assert.Equal(2, signals.Count);
         Assert.Contains(signals, s => s is GitHubIssueSignal);
@@ -330,7 +406,10 @@ public class GitHubSignalTests
         var updatedTime = new DateTimeOffset(2026, 3, 15, 0, 0, 0, TimeSpan.Zero);
 
         var originalIssue = CreateIssue(1, ItemState.Open, updatedAt: originalTime);
-        var existingSignal = GitHubIssueSignal.Create(originalIssue, ["wi-1"]);
+        var existingSignal = new GitHubIssueSignal(originalIssue)
+        {
+            WorkItemIds = ["wi-1"],
+        };
 
         var updatedIssue = CreateIssue(1, ItemState.Open, updatedAt: updatedTime);
 
@@ -338,14 +417,24 @@ public class GitHubSignalTests
         client.Issue.GetAllForRepository("dotnet", "runtime", Arg.Any<RepositoryIssueRequest>())
             .Returns([updatedIssue]);
 
-        var workItemsProvider = Substitute.For<IWorkItemsProvider>();
-        workItemsProvider.GetWorkItemsAsync(GitHubSignalType.Issue, Arg.Any<CancellationToken>())
-            .Returns([new WorkItem { Id = "wi-1", Signals = [existingSignal] }]);
-        workItemsProvider.GetWorkItemsAsync(GitHubSignalType.PullRequest, Arg.Any<CancellationToken>())
-            .Returns([]);
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns([
+            new WorkItem
+            {
+                Id = "wi-1",
+                SignalIds = [existingSignal.Id],
+            }
+        ]);
+        storageProvider.GetSignalAsync(existingSignal.Id).Returns(existingSignal);
+        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
 
-        var collector = new TestableGitHubCollector(CreateIssueConfig(), workItemsProvider, client);
-        var signals = await collector.CollectAsync();
+        var collector = new TestableGitHubCollector(CreateIssueConfig(), storageProvider, client);
+        await collector.CollectAsync();
+
+        var signals = storageProvider.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
+            .Select(call => (ISignal)call.GetArguments()[0]!)
+            .ToList();
 
         // Issue was updated (e.g. new comment) even though state is still Open — should be collected
         var signal = Assert.Single(signals);
@@ -361,7 +450,10 @@ public class GitHubSignalTests
         var updatedTime = new DateTimeOffset(2026, 3, 15, 0, 0, 0, TimeSpan.Zero);
 
         var originalPr = CreatePullRequest(1, ItemState.Open, title: "Update deps", updatedAt: originalTime);
-        var existingSignal = GitHubPullRequestSignal.Create(originalPr, ["wi-5"]);
+        var existingSignal = new GitHubPullRequestSignal(originalPr)
+        {
+            WorkItemIds = ["wi-5"],
+        };
 
         var updatedPr = CreatePullRequest(1, ItemState.Open, title: "Update deps", updatedAt: updatedTime);
 
@@ -369,14 +461,24 @@ public class GitHubSignalTests
         client.PullRequest.GetAllForRepository("dotnet", "sdk", Arg.Any<PullRequestRequest>())
             .Returns([updatedPr]);
 
-        var workItemsProvider = Substitute.For<IWorkItemsProvider>();
-        workItemsProvider.GetWorkItemsAsync(GitHubSignalType.Issue, Arg.Any<CancellationToken>())
-            .Returns([]);
-        workItemsProvider.GetWorkItemsAsync(GitHubSignalType.PullRequest, Arg.Any<CancellationToken>())
-            .Returns([new WorkItem { Id = "wi-5", Signals = [existingSignal] }]);
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns([
+            new WorkItem
+            {
+                Id = "wi-5",
+                SignalIds = [existingSignal.Id],
+            }
+        ]);
+        storageProvider.GetSignalAsync(existingSignal.Id).Returns(existingSignal);
+        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
 
-        var collector = new TestableGitHubCollector(CreatePrConfig(), workItemsProvider, client);
-        var signals = await collector.CollectAsync();
+        var collector = new TestableGitHubCollector(CreatePrConfig(), storageProvider, client);
+        await collector.CollectAsync();
+
+        var signals = storageProvider.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
+            .Select(call => (ISignal)call.GetArguments()[0]!)
+            .ToList();
 
         // PR was updated (e.g. new review comment) even though state is still Open — should be collected
         var signal = Assert.Single(signals);
