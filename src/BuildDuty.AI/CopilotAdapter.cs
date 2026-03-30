@@ -167,7 +167,10 @@ public class CopilotAdapter : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         if (_client is IAsyncDisposable d)
+        {
             await d.DisposeAsync();
+        }
+
         GC.SuppressFinalize(this);
     }
 
@@ -211,7 +214,10 @@ public sealed class ReviewSession : IAsyncDisposable
         _session.On(e =>
         {
             var handler = _streamHandler;
-            if (handler is null) return;
+            if (handler is null)
+            {
+                return;
+            }
 
             switch (e)
             {

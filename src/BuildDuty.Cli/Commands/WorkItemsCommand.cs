@@ -128,7 +128,10 @@ internal sealed class WorkItemsShowCommand : AsyncCommand<WorkItemsShowSettings>
             srcTable.AddColumn("Type");
             srcTable.AddColumn("Ref");
             foreach (var src in item.Sources)
+            {
                 srcTable.AddRow(Markup.Escape(src.Type), Markup.Escape(src.Ref));
+            }
+
             AnsiConsole.Write(srcTable);
         }
 

@@ -83,13 +83,19 @@ public sealed class WorkItem
         {
             // Closed or stable items don't need summarization
             if (State is "closed" or "stable")
+            {
                 return false;
+            }
 
             if (string.IsNullOrWhiteSpace(Summary))
+            {
                 return true;
+            }
 
             if (!SummarizedAtUtc.HasValue)
+            {
                 return true;
+            }
 
             // Check if any source has been updated since the last summary
             return Sources.Any(s =>
@@ -110,18 +116,26 @@ public sealed class WorkItem
         {
             // Stable items don't need triage
             if (State == "stable")
+            {
                 return false;
+            }
 
             // Acknowledged items ignore updates — only triage on "closed" (to resolve)
             if (Status == "acknowledged")
+            {
                 return State == "closed";
+            }
 
             // Items with a pending collection state need triage
             if (State is not null)
+            {
                 return true;
+            }
 
             if (!TriagedAtUtc.HasValue)
+            {
                 return true;
+            }
 
             // Re-triage if the summary was updated since the last triage
             return SummarizedAtUtc.HasValue && SummarizedAtUtc.Value > TriagedAtUtc.Value;
@@ -142,8 +156,10 @@ public sealed class WorkItem
     public void SetStatus(string newStatus, string? note = null, string actor = "build-duty")
     {
         if (BlockedTransitions.TryGetValue(Status, out var blocked) && blocked.Contains(newStatus))
+        {
             throw new InvalidOperationException(
                 $"Cannot transition from '{Status}' to '{newStatus}'.");
+        }
 
         var old = Status;
         Status = newStatus;

@@ -42,7 +42,10 @@ public static class CopilotSessionFactory
     public static Dictionary<string, object> AllServers(string? adoOrganizationName = null)
     {
         if (adoOrganizationName is not null)
+        {
             return AdoPipelineServers(adoOrganizationName);
+        }
+
         return NoExtraServers();
     }
 
@@ -93,10 +96,14 @@ public static class CopilotSessionFactory
         };
 
         if (tools is not null)
+        {
             config.Tools = tools.ToList();
+        }
 
         if (model is not null)
+        {
             config.Model = model;
+        }
 
         var session = await client.CreateSessionAsync(config, ct);
 

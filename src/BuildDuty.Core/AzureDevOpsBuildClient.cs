@@ -19,12 +19,16 @@ public static class AzureDevOpsBuildClient
         // https://dev.azure.com/{org}/{project}/_build/results?buildId={id}
         var m = Regex.Match(url, @"https://dev\.azure\.com/([^/]+)/([^/]+)/_build/results\?buildId=(\d+)");
         if (m.Success)
+        {
             return ($"https://dev.azure.com/{m.Groups[1].Value}", m.Groups[2].Value, int.Parse(m.Groups[3].Value));
+        }
 
         // https://{org}.visualstudio.com/{project}/_build/results?buildId={id}
         m = Regex.Match(url, @"https://([^.]+)\.visualstudio\.com/([^/]+)/_build/results\?buildId=(\d+)");
         if (m.Success)
+        {
             return ($"https://dev.azure.com/{m.Groups[1].Value}", m.Groups[2].Value, int.Parse(m.Groups[3].Value));
+        }
 
         return null;
     }
@@ -43,7 +47,9 @@ public static class AzureDevOpsBuildClient
             $"--org {orgUrl} -o json");
 
         if (timelineJson is null)
+        {
             return new PipelineFailureInfo { BuildId = buildId, Error = "Failed to fetch build timeline." };
+        }
 
         try
         {
@@ -56,7 +62,9 @@ public static class AzureDevOpsBuildClient
             {
                 var id = rec.GetProperty("id").GetString();
                 if (id is not null)
+                {
                     byId[id] = rec;
+                }
             }
 
             // Parse stage filter patterns
@@ -70,7 +78,9 @@ public static class AzureDevOpsBuildClient
 
                 // Include failed, canceled (timeout), and succeededWithIssues tasks
                 if (type != "Task" || (result != "failed" && result != "canceled" && result != "succeededWithIssues"))
+                {
                     continue;
+                }
 
                 var taskName = rec.GetProperty("name").GetString() ?? "(unknown)";
                 var logId = rec.TryGetProperty("log", out var log) && log.TryGetProperty("id", out var lid)
@@ -91,7 +101,10 @@ public static class AzureDevOpsBuildClient
                     {
                         var curParentId = current.TryGetProperty("parentId", out var cpid) ? cpid.GetString() : null;
                         if (curParentId is null || !byId.TryGetValue(curParentId, out var parentRec))
+                        {
                             break;
+                        }
+
                         var parentType = parentRec.TryGetProperty("type", out var pt) ? pt.GetString() : null;
                         if (parentType == "Stage")
                         {
@@ -104,7 +117,9 @@ public static class AzureDevOpsBuildClient
 
                 // Apply stage/job filters
                 if (filters.Count > 0 && !MatchesFilters(stageName, jobName, filters))
+                {
                     continue;
+                }
 
                 // Extract inline issues (error messages) from the task record
                 var issues = new List<string>();
@@ -118,7 +133,9 @@ public static class AzureDevOpsBuildClient
                         {
                             var msg = issue.TryGetProperty("message", out var im) ? im.GetString() : null;
                             if (msg is not null)
+                            {
                                 issues.Add(msg.Length > 500 ? msg[..500] : msg);
+                            }
                         }
                     }
                 }
@@ -158,7 +175,9 @@ public static class AzureDevOpsBuildClient
             $"--org {orgUrl} -o json");
 
         if (output is null)
+        {
             return "Failed to fetch log.";
+        }
 
         try
         {
@@ -180,7 +199,9 @@ public static class AzureDevOpsBuildClient
     private static List<(string StagePattern, List<string>? JobPatterns)> ParseStageFilters(string? stageFilters)
     {
         if (string.IsNullOrWhiteSpace(stageFilters))
+        {
             return [];
+        }
 
         var result = new List<(string, List<string>?)>();
         foreach (var segment in stageFilters.Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
@@ -208,22 +229,33 @@ public static class AzureDevOpsBuildClient
         string? stageName, string? jobName,
         List<(string StagePattern, List<string>? JobPatterns)> filters)
     {
-        if (stageName is null) return true; // can't filter without a stage name
+        if (stageName is null)
+        {
+            return true; // can't filter without a stage name
+        }
 
         foreach (var (stagePattern, jobPatterns) in filters)
         {
             if (!GlobMatch(stageName, stagePattern))
+            {
                 continue;
+            }
 
             // Stage matches — check jobs
             if (jobPatterns is null)
+            {
                 return true; // all jobs in this stage
+            }
 
             if (jobName is null)
+            {
                 return true; // can't filter jobs without a name
+            }
 
             if (jobPatterns.Any(jp => GlobMatch(jobName, jp)))
+            {
                 return true;
+            }
         }
 
         return false;
@@ -248,7 +280,10 @@ public static class AzureDevOpsBuildClient
             };
 
             using var proc = Process.Start(psi);
-            if (proc is null) return null;
+            if (proc is null)
+            {
+                return null;
+            }
 
             var output = await proc.StandardOutput.ReadToEndAsync();
             await proc.WaitForExitAsync();

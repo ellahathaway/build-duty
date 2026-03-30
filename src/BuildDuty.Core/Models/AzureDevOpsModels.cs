@@ -84,7 +84,10 @@ public sealed class AzureDevOpsPipelineConfig
 
     private static TimeSpan? ParseAge(string? age)
     {
-        if (string.IsNullOrWhiteSpace(age)) return null;
+        if (string.IsNullOrWhiteSpace(age))
+        {
+            return null;
+        }
 
         var span = TimeSpan.Zero;
         var num = 0;

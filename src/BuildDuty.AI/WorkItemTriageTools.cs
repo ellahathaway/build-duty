@@ -24,10 +24,13 @@ public static class WorkItemTriageTools
                 {
                     var item = await store.LoadAsync(id);
                     if (item is null)
+                    {
                         return $"Work item '{id}' not found.";
+                    }
                     if (item.IsResolved)
-                        return $"Work item '{id}' is already resolved (status: {item.Status}).";
-
+                    {
+                        return $"Work item '{id}' is already resolved.";
+                    }
                     item.SetStatus("resolved", reason);
                     item.TriagedAtUtc = DateTime.UtcNow;
                     item.State = "stable";
@@ -42,8 +45,9 @@ public static class WorkItemTriageTools
                 {
                     var item = await store.LoadAsync(id);
                     if (item is null)
+                    {
                         return $"Work item '{id}' not found.";
-
+                    }
                     var old = item.Status;
                     item.SetStatus(status);
                     item.TriagedAtUtc = DateTime.UtcNow;
@@ -59,12 +63,14 @@ public static class WorkItemTriageTools
                 {
                     var item = await store.LoadAsync(id);
                     if (item is null)
+                    {
                         return $"Work item '{id}' not found.";
-
+                    }
                     var linked = await store.LoadAsync(linkedId);
                     if (linked is null)
+                    {
                         return $"Work item '{linkedId}' not found.";
-
+                    }
                     if (!item.LinkedItems.Contains(linkedId))
                     {
                         item.LinkedItems.Add(linkedId);
@@ -107,8 +113,9 @@ public static class SummarizeTools
                 {
                     var item = await store.LoadAsync(id);
                     if (item is null)
+                    {
                         return $"Work item '{id}' not found.";
-
+                    }
                     item.Summary = summary;
                     item.SummarizedAtUtc = DateTime.UtcNow;
                     await store.SaveAsync(item);
@@ -122,8 +129,9 @@ public static class SummarizeTools
                 {
                     var parsed = AzureDevOpsBuildClient.ParseBuildUrl(buildUrl);
                     if (parsed is null)
+                    {
                         return $"Could not parse build URL: {buildUrl}";
-
+                    }
                     var (orgUrl, project, buildId) = parsed.Value;
                     return await AzureDevOpsBuildClient.GetTaskLogAsync(
                         orgUrl, project, buildId, logId, tailLines ?? 50);

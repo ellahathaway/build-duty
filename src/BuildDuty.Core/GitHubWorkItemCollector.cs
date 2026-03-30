@@ -67,7 +67,10 @@ public sealed class GitHubWorkItemCollector
                             {
                                 issueItem = (await store.LoadAsync(source.Id))!;
                                 var sourceRef = issueItem.Sources.FirstOrDefault();
-                                if (sourceRef is null) continue;
+                                if (sourceRef is null)
+                                {
+                                    continue;
+                                }
 
                                 var changed = false;
 
@@ -86,16 +89,24 @@ public sealed class GitHubWorkItemCollector
                                 {
                                     sourceRef.Metadata ??= new Dictionary<string, string>();
                                     if (newLinkedPrs.Length > 0)
+                                    {
                                         sourceRef.Metadata["linkedPrs"] = newLinkedPrs;
+                                    }
                                     else
+                                    {
                                         sourceRef.Metadata.Remove("linkedPrs");
+                                    }
+
                                     changed = true;
                                 }
 
                                 if (changed)
                                 {
                                     if (issueItem.State != "new")
+                                    {
                                         issueItem.State = "updated";
+                                    }
+
                                     await store.SaveAsync(issueItem);
                                     updated++;
                                 }
@@ -108,7 +119,10 @@ public sealed class GitHubWorkItemCollector
                                 foreach (var prUrl in linkedPrUrls.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
                                 {
                                     var parsed = ParseGitHubPrUrl(prUrl);
-                                    if (parsed is null) continue;
+                                    if (parsed is null)
+                                    {
+                                        continue;
+                                    }
 
                                     var (prOwner, prRepo, prNumber) = parsed.Value;
                                     var prId = $"wi_gh_pr_{prOwner}_{prRepo}_{prNumber}";
@@ -140,7 +154,10 @@ public sealed class GitHubWorkItemCollector
                                     {
                                         issueItem.LinkedItems.Add(prId);
                                         if (issueItem.State != "new")
+                                        {
                                             issueItem.State = "updated";
+                                        }
+
                                         await store.SaveAsync(issueItem);
                                     }
                                 }
@@ -241,7 +258,10 @@ public sealed class GitHubWorkItemCollector
                                     {
                                         sourceRef.SourceUpdatedAtUtc = source.SourceUpdatedAtUtc;
                                         if (existing.State != "new")
+                                        {
                                             existing.State = "updated";
+                                        }
+
                                         await store.SaveAsync(existing);
                                         updated++;
                                     }
@@ -304,7 +324,10 @@ public sealed class GitHubWorkItemCollector
             $"issue list --repo {owner}/{repo.Name} --state {state} {labelFilter} " +
             "--json number,title,state,url,updatedAt --limit 100");
 
-        if (output is null) return [];
+        if (output is null)
+        {
+            return [];
+        }
 
         var items = JsonSerializer.Deserialize<List<JsonElement>>(output) ?? [];
 
@@ -327,7 +350,9 @@ public sealed class GitHubWorkItemCollector
             var metadata = new Dictionary<string, string>();
             var linkedPrs = linkedPrResults[idx];
             if (linkedPrs.Count > 0)
+            {
                 metadata["linkedPrs"] = string.Join(", ", linkedPrs);
+            }
 
             return new CollectedSource
             {
@@ -366,7 +391,10 @@ public sealed class GitHubWorkItemCollector
         // Pass query directly - no shell quoting needed since UseShellExecute=false
         var output = await RunGhWithArgsAsync(
             ["api", "graphql", "-f", $"query={query}"]);
-        if (output is null) return [];
+        if (output is null)
+        {
+            return [];
+        }
 
         try
         {
@@ -384,12 +412,16 @@ public sealed class GitHubWorkItemCollector
                 // CrossReferencedEvent → source.url
                 if (node.TryGetProperty("source", out var source) &&
                     source.TryGetProperty("url", out var srcUrl))
+                {
                     prs.Add(srcUrl.GetString()!);
+                }
 
                 // ConnectedEvent → subject.url
                 if (node.TryGetProperty("subject", out var subject) &&
                     subject.TryGetProperty("url", out var subUrl))
+                {
                     prs.Add(subUrl.GetString()!);
+                }
             }
             return prs.ToList();
         }
@@ -417,7 +449,10 @@ public sealed class GitHubWorkItemCollector
                 $"pr list --repo {owner}/{repo.Name} --state {state} " +
                 "--json number,title,state,url,updatedAt --limit 200");
 
-            if (output is null) continue;
+            if (output is null)
+            {
+                continue;
+            }
 
             var items = JsonSerializer.Deserialize<List<JsonElement>>(output) ?? [];
 
@@ -461,13 +496,17 @@ public sealed class GitHubWorkItemCollector
                 // Wildcard prefix — match as "contains" on the remainder
                 var suffix = p.Name[1..];
                 if (title.Contains(suffix, StringComparison.OrdinalIgnoreCase))
+                {
                     return true;
+                }
             }
             else
             {
                 // Exact match
                 if (title.Equals(p.Name, StringComparison.OrdinalIgnoreCase))
+                {
                     return true;
+                }
             }
         }
         return false;
@@ -485,7 +524,10 @@ public sealed class GitHubWorkItemCollector
             };
 
             using var proc = Process.Start(psi);
-            if (proc is null) return null;
+            if (proc is null)
+            {
+                return null;
+            }
 
             var output = await proc.StandardOutput.ReadToEndAsync();
             await proc.WaitForExitAsync();
@@ -513,10 +555,15 @@ public sealed class GitHubWorkItemCollector
                 UseShellExecute = false,
             };
             foreach (var arg in args)
+            {
                 psi.ArgumentList.Add(arg);
+            }
 
             using var proc = Process.Start(psi);
-            if (proc is null) return null;
+            if (proc is null)
+            {
+                return null;
+            }
 
             var output = await proc.StandardOutput.ReadToEndAsync();
             await proc.WaitForExitAsync();
@@ -535,7 +582,11 @@ public sealed class GitHubWorkItemCollector
         // https://github.com/{owner}/{repo}/pull/{number}
         var match = System.Text.RegularExpressions.Regex.Match(
             url, @"github\.com/([^/]+)/([^/]+)/pull/(\d+)");
-        if (!match.Success) return null;
+        if (!match.Success)
+        {
+            return null;
+        }
+
         return (match.Groups[1].Value, match.Groups[2].Value, int.Parse(match.Groups[3].Value));
     }
 

@@ -131,12 +131,22 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
         var totalClosed = collectionResults.Sum(r => r.Closed);
 
         var parts = new List<string> { $"created [green]{totalCreated}[/]" };
-        if (totalUpdated > 0) parts.Add($"updated [yellow]{totalUpdated}[/]");
-        if (totalClosed > 0) parts.Add($"closed [dim]{totalClosed}[/]");
+        if (totalUpdated > 0)
+        {
+            parts.Add($"updated [yellow]{totalUpdated}[/]");
+        }
+
+        if (totalClosed > 0)
+        {
+            parts.Add($"closed [dim]{totalClosed}[/]");
+        }
+
         AnsiConsole.MarkupLine($"Gathered [bold]{allSources.Count}[/] sources — {string.Join(", ", parts)}.");
 
         foreach (var failure in failedCollections)
+        {
             AnsiConsole.MarkupLine($"  [red]✗[/] {failure.Source}: {Markup.Escape(failure.Error ?? "unknown error")}");
+        }
 
         if (allSources.Count == 0 && failedCollections.Count == 0 && totalCreated == 0)
         {
@@ -245,7 +255,9 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
 
         // Report Step 2 errors
         foreach (var r in summarizeResults.Where(r => !r.Success))
+        {
             AnsiConsole.MarkupLine($"\n[red bold]Summarize error:[/] {Markup.Escape(r.Summary)}");
+        }
 
         // === Step 3: AI-powered triage ===
         AnsiConsole.MarkupLine("\n[bold]Step 3:[/] Triaging work items...");
@@ -419,14 +431,18 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
         foreach (var item in postTriageItems)
         {
             if (!preTriage.TryGetValue(item.Id, out var pre))
+            {
                 continue;
+            }
 
             var newLinks = item.LinkedItems.Except(pre.LinkedItems).ToList();
             foreach (var lid in newLinks)
             {
                 var linked = await store.LoadAsync(lid);
                 if (linked is not null)
+                {
                     correlationsToConfirm.Add((item, lid, linked));
+                }
             }
         }
 
@@ -440,7 +456,9 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
             {
                 // Skip if the link was already removed by a previous rejection in this loop
                 if (!item.LinkedItems.Contains(linkedId))
+                {
                     continue;
+                }
 
                 var grid = new Grid();
                 grid.AddColumn();
@@ -521,30 +539,38 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
         table.AddColumn("Duration");
 
         foreach (var r in collectionResults)
+        {
             table.AddRow(
                 "Collection",
                 Markup.Escape(r.Source),
                 r.Success ? $"[green]✓[/] {r.Sources.Count} sources, {r.Created} new, {r.Updated} updated" + (r.Closed > 0 ? $", {r.Closed} closed" : "") : "[red]✗[/] failed",
                 $"{r.Duration.TotalSeconds:F1}s");
+        }
 
         foreach (var r in summarizeResults)
+        {
             table.AddRow(
                 "Summarize",
                 Markup.Escape(r.Source),
                 r.Success ? "[green]✓[/] complete" : "[red]✗[/] failed",
                 $"{r.Duration.TotalSeconds:F1}s");
+        }
 
         foreach (var r in triageResults)
+        {
             table.AddRow(
                 "Triage",
                 Markup.Escape(r.Source),
                 r.Success ? "[green]✓[/] complete" : "[red]✗[/] failed",
                 $"{r.Duration.TotalSeconds:F1}s");
+        }
 
         AnsiConsole.Write(table);
 
         foreach (var r in summarizeResults.Concat(triageResults).Where(r => !r.Success))
+        {
             AnsiConsole.MarkupLine($"\n[red bold]Error ({Markup.Escape(r.Source)}):[/] {Markup.Escape(r.Summary)}");
+        }
 
         AnsiConsole.MarkupLine($"\n[bold]Triage complete.[/] New items: [green]{newCount}[/] | Resolved: [blue]{resolvedCount}[/] | Total tracked: {afterIds.Count}");
 
@@ -568,7 +594,10 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
     private static string ExtractOrgName(string url)
     {
         if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
             return uri.AbsolutePath.Trim('/').Split('/')[0];
+        }
+
         return url;
     }
 }
