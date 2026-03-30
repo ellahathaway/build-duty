@@ -1,0 +1,41 @@
+name: PR Build and Pack
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-pack-linux:
+    name: Build and Pack (Linux)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Build and Pack
+        run: ./eng/build.sh --pack
+
+  build-and-pack-windows:
+    name: Build and Pack (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Build and Pack
+        shell: pwsh
+        run: ./eng/build.ps1 -Pack
