@@ -31,6 +31,7 @@ public static class WorkItemTriageTools
                     {
                         return $"Work item '{id}' is already resolved.";
                     }
+                    item.SetStatus("resolved", reason);
                     item.TriagedAtUtc = DateTime.UtcNow;
                     item.State = "stable";
                     await store.SaveAsync(item);
