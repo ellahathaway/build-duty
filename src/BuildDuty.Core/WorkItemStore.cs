@@ -36,7 +36,9 @@ public sealed class WorkItemStore
     {
         var path = GetPath(id);
         if (!File.Exists(path))
+        {
             return null;
+        }
 
         await using var stream = File.OpenRead(path);
         return await JsonSerializer.DeserializeAsync<WorkItem>(stream, s_options, ct);
@@ -48,7 +50,9 @@ public sealed class WorkItemStore
         CancellationToken ct = default)
     {
         if (!Directory.Exists(_directory))
+        {
             return [];
+        }
 
         var files = Directory.GetFiles(_directory, "*.json");
         var items = new List<WorkItem>();
@@ -57,10 +61,21 @@ public sealed class WorkItemStore
         {
             await using var stream = File.OpenRead(file);
             var item = await JsonSerializer.DeserializeAsync<WorkItem>(stream, s_options, ct);
-            if (item is null) continue;
-            if (resolved.HasValue && item.IsResolved != resolved.Value) continue;
+            if (item is null)
+            {
+                continue;
+            }
+
+            if (resolved.HasValue && item.IsResolved != resolved.Value)
+            {
+                continue;
+            }
+
             items.Add(item);
-            if (limit.HasValue && items.Count >= limit.Value) break;
+            if (limit.HasValue && items.Count >= limit.Value)
+            {
+                break;
+            }
         }
 
         return items;

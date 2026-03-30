@@ -62,7 +62,10 @@ public sealed class AzureDevOpsWorkItemCollector
                     {
                         // Skip builds older than the configured age
                         if (cutoff.HasValue && build.FinishTimeUtc.HasValue && build.FinishTimeUtc < cutoff)
+                        {
                             continue;
+                        }
+
                         var source = ToSource(orgUrl, project.Name, pipeline, build, statusFilter);
 
                         if (statusFilter.Contains(build.Result))
@@ -101,7 +104,9 @@ public sealed class AzureDevOpsWorkItemCollector
                             {
                                 var metadata = new Dictionary<string, string>();
                                 if (hasStageFilters)
+                                {
                                     metadata["stageFilters"] = stageFilterStr;
+                                }
 
                                 if (!store.Exists(source.Id))
                                 {
@@ -141,11 +146,16 @@ public sealed class AzureDevOpsWorkItemCollector
                                             {
                                                 sourceRef.Metadata ??= new Dictionary<string, string>();
                                                 foreach (var kv in metadata)
+                                                {
                                                     sourceRef.Metadata[kv.Key] = kv.Value;
+                                                }
                                             }
                                             existing.Title = source.Title;
                                             if (existing.State is not "new")
+                                            {
                                                 existing.State = "updated";
+                                            }
+
                                             await store.SaveAsync(existing);
                                             updated++;
                                         }
@@ -199,7 +209,9 @@ public sealed class AzureDevOpsWorkItemCollector
         string orgUrl, string project, AzureDevOpsPipelineConfig pipeline, CancellationToken ct)
     {
         if (pipeline.Branches is { Count: > 0 })
+        {
             return pipeline.Branches;
+        }
 
         if (pipeline.Release is not null)
         {
@@ -225,12 +237,18 @@ public sealed class AzureDevOpsWorkItemCollector
                 $"--query-order FinishTimeDesc " +
                 $"--org {orgUrl} --project {project} -o json");
 
-            if (output is null) return null;
+            if (output is null)
+            {
+                return null;
+            }
 
             try
             {
                 var builds = JsonSerializer.Deserialize<List<JsonElement>>(output);
-                if (builds is null || builds.Count == 0) return null;
+                if (builds is null || builds.Count == 0)
+                {
+                    return null;
+                }
 
                 var b = builds[0];
                 var finishStr = b.TryGetProperty("finishTime", out var ft) ? ft.GetString() : null;
@@ -257,11 +275,15 @@ public sealed class AzureDevOpsWorkItemCollector
     private static string ParseResult(JsonElement build)
     {
         if (!build.TryGetProperty("result", out var resultProp))
+        {
             return "unknown";
+        }
 
         // az CLI returns string results (e.g. "succeeded", "failed")
         if (resultProp.ValueKind == JsonValueKind.String)
+        {
             return resultProp.GetString()?.ToLowerInvariant() ?? "unknown";
+        }
 
         // MCP/REST returns numeric enums
         if (resultProp.ValueKind == JsonValueKind.Number)
@@ -313,7 +335,10 @@ public sealed class AzureDevOpsWorkItemCollector
     /// </summary>
     private static string FormatStageFilters(List<StageFilterConfig>? stages)
     {
-        if (stages is not { Count: > 0 }) return "";
+        if (stages is not { Count: > 0 })
+        {
+            return "";
+        }
 
         return string.Join("; ", stages.Select(s =>
             s.Jobs is { Count: > 0 }
@@ -359,7 +384,10 @@ public sealed class AzureDevOpsWorkItemCollector
             };
 
             using var proc = Process.Start(psi);
-            if (proc is null) return null;
+            if (proc is null)
+            {
+                return null;
+            }
 
             var output = await proc.StandardOutput.ReadToEndAsync();
             await proc.WaitForExitAsync();

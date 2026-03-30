@@ -26,10 +26,13 @@ public static class TriageTools
                 {
                     var item = await store.LoadAsync(workItemId);
                     if (item is null)
+                    {
                         return $"Work item '{workItemId}' not found.";
+                    }
                     if (item.Sources.Count == 0)
+                    {
                         return "No sources collected for this work item.";
-
+                    }
                     return string.Join('\n', item.Sources.Select(s => $"- [{s.Type}] {s.Ref}"));
                 },
                 "get_sources",

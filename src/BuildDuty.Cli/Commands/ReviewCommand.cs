@@ -100,9 +100,20 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                     var errored = activeAgents.Count(a => a.State == AgentState.Error);
 
                     var parts = new List<string>();
-                    if (running > 0) parts.Add($"[yellow]{running} running[/]");
-                    if (done > 0) parts.Add($"[green]{done} done[/]");
-                    if (errored > 0) parts.Add($"[red]{errored} error[/]");
+                    if (running > 0)
+                    {
+                        parts.Add($"[yellow]{running} running[/]");
+                    }
+
+                    if (done > 0)
+                    {
+                        parts.Add($"[green]{done} done[/]");
+                    }
+
+                    if (errored > 0)
+                    {
+                        parts.Add($"[red]{errored} error[/]");
+                    }
 
                     agentLabel = $"Check agents ({Markup.Remove(string.Join(", ", parts))})";
                     choices.Add(agentLabel);
@@ -121,7 +132,9 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                 {
                     var running = activeAgents.Count(a => a.State == AgentState.Running);
                     if (running > 0)
+                    {
                         titleParts.Add($"[yellow]{running} agent(s) working[/]");
+                    }
                 }
 
                 var selectedChoice = AnsiConsole.Prompt(
@@ -164,7 +177,10 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                 // Find which group was selected
                 var groupIdx = choices.IndexOf(selectedChoice) - (agentLabel is not null ? 1 : 0);
                 if (groupIdx < 0 || groupIdx >= groups.Count)
+                {
                     continue;
+                }
+
                 var group = groups[groupIdx];
 
                 // Step 2: Pick items within the group
@@ -188,7 +204,9 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                         .AddChoices(itemChoices));
 
                 if (selectedLabels.Count == 0)
+                {
                     continue;
+                }
 
                 var selectedSet = selectedLabels.ToHashSet();
                 var selectedItems = group.Items
@@ -198,7 +216,10 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                 // Show selected and ask for instruction
                 AnsiConsole.WriteLine();
                 foreach (var item in selectedItems)
+                {
                     AnsiConsole.MarkupLine($"  [bold]•[/] {Markup.Escape(item.Id)}: {Markup.Escape(Truncate(item.Summary ?? item.Title, 80))}");
+                }
+
                 AnsiConsole.WriteLine();
 
                 // Check for a saved session matching these items
@@ -214,7 +235,9 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                             .AddChoices("Resume prior session", "Start new session", "Go back"));
 
                     if (resumeChoice == "Go back")
+                    {
                         continue;
+                    }
 
                     if (adapterFactory is null)
                     {
@@ -240,7 +263,9 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                 var instruction = AnsiConsole.Ask<string>("[bold]What should I do with these?[/]");
 
                 if (string.IsNullOrWhiteSpace(instruction))
+                {
                     continue;
+                }
 
                 if (adapterFactory is null)
                 {
@@ -263,7 +288,9 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
         {
             // Dispose all agents on exit
             foreach (var a in agents)
+            {
                 await a.DisposeAsync();
+            }
         }
     }
 
@@ -276,7 +303,9 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
         {
             var visible = agents.Where(a => a.State != AgentState.Dismissed).ToList();
             if (visible.Count == 0)
+            {
                 return;
+            }
 
             AnsiConsole.Clear();
             AnsiConsole.Write(new Rule("[bold]Background Agents[/]") { Justification = Justify.Left });
@@ -313,11 +342,15 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                     .AddChoices(choices));
 
             if (selected == backLabel)
+            {
                 return;
+            }
 
             var agentIdx = choices.IndexOf(selected);
             if (agentIdx < 0 || agentIdx >= visible.Count)
+            {
                 continue;
+            }
 
             await InteractWithAgent(visible[agentIdx], store);
         }
@@ -331,7 +364,10 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
         AnsiConsole.Clear();
 
         foreach (var item in agent.Items)
+        {
             AnsiConsole.MarkupLine($"  [dim]•[/] {Markup.Escape(item.Id)}");
+        }
+
         AnsiConsole.WriteLine();
 
         // If running, stream the current turn
@@ -371,7 +407,10 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                         .Title("What would you like to do?")
                         .AddChoices("Dismiss", "← Back"));
                 if (errorAction == "Dismiss")
+                {
                     await DismissWithStatusPrompt(agent, store);
+                }
+
                 return;
             }
 
@@ -383,7 +422,9 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                     .AllowEmpty());
 
             if (string.IsNullOrWhiteSpace(followUp))
+            {
                 return;
+            }
 
             if (followUp.Equals("done", StringComparison.OrdinalIgnoreCase))
             {
@@ -426,12 +467,17 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
             {
                 var key = Console.ReadKey(intercept: true);
                 if (key.Key == ConsoleKey.Escape)
+                {
                     return true;
+                }
             }
 
             cursor = agent.ReadStreamEvents(cursor, buffer);
             foreach (var evt in buffer)
+            {
                 WriteStreamEvent(evt, ref hasDelta);
+            }
+
             buffer.Clear();
             await Task.Delay(100);
         }
@@ -439,7 +485,10 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
         // Final flush
         cursor = agent.ReadStreamEvents(cursor, buffer);
         foreach (var evt in buffer)
+        {
             WriteStreamEvent(evt, ref hasDelta);
+        }
+
         buffer.Clear();
 
         return false;
@@ -471,7 +520,9 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                 if (!string.IsNullOrEmpty(evt.ToolArgs))
                 {
                     foreach (var argLine in FormatToolArgs(evt.ToolArgs))
+                    {
                         AnsiConsole.MarkupLine($"     {argLine}");
+                    }
                 }
                 break;
             case "tool-end":
@@ -497,7 +548,9 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
 
                 // Truncate very long values
                 if (val.Length > 200)
+                {
                     val = val[..197] + "...";
+                }
 
                 result.Add($"  [dim]{Markup.Escape(prop.Name)}:[/] {Markup.Escape(val)}");
             }
@@ -545,7 +598,9 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
 
             // Remove invalid transitions
             if (actionable.Any(i => i.Status == "tracked"))
+            {
                 choices.Remove("monitoring — watching, may return later");
+            }
 
             var status = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
@@ -635,7 +690,10 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
     private static string ExtractOrgName(string url)
     {
         if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
             return uri.AbsolutePath.Trim('/').Split('/')[0];
+        }
+
         return url;
     }
 
@@ -671,12 +729,18 @@ internal sealed class SavedSession
         var dir = Path.Combine(basePath, "review-sessions");
         // Clear old sessions
         if (Directory.Exists(dir))
+        {
             Directory.Delete(dir, recursive: true);
+        }
 
         var toSave = agents.Where(a =>
             a.State != AgentState.Dismissed && a.ConversationHistory.Count > 0).ToList();
 
-        if (toSave.Count == 0) return;
+        if (toSave.Count == 0)
+        {
+            return;
+        }
+
         Directory.CreateDirectory(dir);
 
         for (int i = 0; i < toSave.Count; i++)
@@ -700,7 +764,10 @@ internal sealed class SavedSession
     public static async Task<SavedSession?> FindAsync(string basePath, IEnumerable<string> workItemIds)
     {
         var dir = Path.Combine(basePath, "review-sessions");
-        if (!Directory.Exists(dir)) return null;
+        if (!Directory.Exists(dir))
+        {
+            return null;
+        }
 
         var targetSet = workItemIds.ToHashSet();
 
@@ -711,7 +778,9 @@ internal sealed class SavedSession
                 var json = await File.ReadAllTextAsync(file);
                 var session = JsonSerializer.Deserialize<SavedSession>(json);
                 if (session is not null && session.WorkItemIds.ToHashSet().SetEquals(targetSet))
+                {
                     return session;
+                }
             }
             catch { }
         }
@@ -726,7 +795,9 @@ internal sealed class SavedSession
     {
         var dir = Path.Combine(basePath, "review-sessions");
         if (Directory.Exists(dir))
+        {
             Directory.Delete(dir, recursive: true);
+        }
     }
 }
 
@@ -799,7 +870,10 @@ internal sealed class BackgroundAgent : IAsyncDisposable
         lock (_streamLock)
         {
             for (int i = cursor; i < _streamEvents.Count; i++)
+            {
                 buffer.Add(_streamEvents[i]);
+            }
+
             return _streamEvents.Count;
         }
     }
@@ -825,7 +899,9 @@ internal sealed class BackgroundAgent : IAsyncDisposable
     public async Task<string> FollowUpAsync(string prompt)
     {
         if (_session is null)
+        {
             throw new InvalidOperationException("Agent session is not available.");
+        }
 
         ConversationHistory.Add(new SavedSession.ConversationTurn { Role = "user", Content = prompt });
         var response = await _session.SendAsync(prompt);
@@ -841,7 +917,9 @@ internal sealed class BackgroundAgent : IAsyncDisposable
     public void FollowUpInBackground(string prompt)
     {
         if (_session is null)
+        {
             throw new InvalidOperationException("Agent session is not available.");
+        }
 
         ConversationHistory.Add(new SavedSession.ConversationTurn { Role = "user", Content = prompt });
         State = AgentState.Running;
@@ -957,9 +1035,14 @@ internal sealed class BackgroundAgent : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         if (_session is not null)
+        {
             await _session.DisposeAsync();
+        }
+
         if (_adapter is not null)
+        {
             await _adapter.DisposeAsync();
+        }
     }
 
     private static string Truncate(string text, int max)
@@ -971,7 +1054,10 @@ internal sealed class BackgroundAgent : IAsyncDisposable
     private static string ExtractOrgName(string url)
     {
         if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
             return uri.AbsolutePath.Trim('/').Split('/')[0];
+        }
+
         return url;
     }
 }

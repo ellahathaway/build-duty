@@ -36,8 +36,9 @@ public static class BuildDutyTools
 
                     var items = await store.ListAsync(resolved, limit ?? 200);
                     if (items.Count == 0)
+                    {
                         return "No work items found.";
-
+                    }
                     return string.Join("\n", items.Select(i =>
                         $"- {i.Id} [{i.Status}] {i.Title} (corr: {i.CorrelationId ?? "none"})"));
                 },
@@ -64,23 +65,31 @@ public static class BuildDutyTools
         };
 
         if (!string.IsNullOrWhiteSpace(item.Summary))
+        {
             lines.Add($"- **Summary:** {item.Summary}");
+        }
 
         if (item.LinkedItems.Count > 0)
+        {
             lines.Add($"- **Linked:** {string.Join(", ", item.LinkedItems)}");
+        }
 
         if (item.Sources.Count > 0)
         {
             lines.Add("- **Sources:**");
             foreach (var s in item.Sources)
+            {
                 lines.Add($"  - [{s.Type}] {s.Ref}");
+            }
         }
 
         if (item.History.Count > 0)
         {
             lines.Add("- **History:**");
             foreach (var h in item.History)
+            {
                 lines.Add($"  - {h.TimestampUtc:u} {h.Action}: {h.From} → {h.To} ({h.Note ?? "—"})");
+            }
         }
 
         return string.Join('\n', lines);

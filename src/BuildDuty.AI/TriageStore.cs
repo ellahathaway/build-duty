@@ -34,7 +34,9 @@ public sealed class TriageStore
     {
         var path = Path.Combine(_directory, $"{runId}.json");
         if (!File.Exists(path))
+        {
             return null;
+        }
 
         await using var stream = File.OpenRead(path);
         return await JsonSerializer.DeserializeAsync<TriageResult>(stream, s_options, ct);
@@ -46,7 +48,9 @@ public sealed class TriageStore
     public async Task<TriageResult?> FindLatestForWorkItemAsync(string workItemId, CancellationToken ct = default)
     {
         if (!Directory.Exists(_directory))
+        {
             return null;
+        }
 
         TriageResult? latest = null;
         foreach (var file in Directory.EnumerateFiles(_directory, "*.json"))

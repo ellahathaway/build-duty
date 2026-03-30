@@ -19,7 +19,9 @@ public class ScanToolsTests : IDisposable
     public void Dispose()
     {
         if (Directory.Exists(_tempDir))
+        {
             Directory.Delete(_tempDir, recursive: true);
+        }
     }
 
     private static AIFunctionArguments Args(params (string Key, object Value)[] pairs) =>

@@ -22,6 +22,8 @@ internal sealed class TypeResolver : ITypeResolver, IDisposable
     public void Dispose()
     {
         if (_provider is IDisposable disposable)
+        {
             disposable.Dispose();
+        }
     }
 }
