@@ -17,13 +17,13 @@ public class CopilotAdapter : IAsyncDisposable
     private CopilotClient? _client;
 
     public CopilotAdapter(
+        IBuildDutyConfigProvider configProvider,
         CopilotClientOptions clientOptions,
-        IReadOnlyList<AIFunction> tools,
-        string? model = null)
+        IReadOnlyList<AIFunction> tools)
     {
         _clientOptions = clientOptions;
         _tools = tools;
-        _model = model;
+        _model = configProvider.Get().Ai?.Model;
     }
 
     /// <summary>

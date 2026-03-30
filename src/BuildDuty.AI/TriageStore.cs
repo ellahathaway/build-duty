@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using BuildDuty.Core;
 
 namespace BuildDuty.AI;
 
@@ -15,24 +16,23 @@ public sealed class TriageStore
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
-    private readonly string _directory;
+    private readonly IBuildDutyConfigProvider _configProvider;
 
-    public TriageStore(string directory)
+    public TriageStore(IBuildDutyConfigProvider configProvider)
     {
-        _directory = directory;
-        Directory.CreateDirectory(_directory);
+        _configProvider = configProvider;
     }
 
     public async Task SaveAsync(TriageResult result, CancellationToken ct = default)
     {
-        var path = Path.Combine(_directory, $"{result.RunId}.json");
+        var path = Path.Combine(GetDirectory(), $"{result.RunId}.json");
         await using var stream = File.Create(path);
         await JsonSerializer.SerializeAsync(stream, result, s_options, ct);
     }
 
     public async Task<TriageResult?> LoadAsync(string runId, CancellationToken ct = default)
     {
-        var path = Path.Combine(_directory, $"{runId}.json");
+        var path = Path.Combine(GetDirectory(), $"{runId}.json");
         if (!File.Exists(path))
         {
             return null;
@@ -47,13 +47,14 @@ public sealed class TriageStore
     /// </summary>
     public async Task<TriageResult?> FindLatestForWorkItemAsync(string workItemId, CancellationToken ct = default)
     {
-        if (!Directory.Exists(_directory))
+        var directory = GetDirectory();
+        if (!Directory.Exists(directory))
         {
             return null;
         }
 
         TriageResult? latest = null;
-        foreach (var file in Directory.EnumerateFiles(_directory, "*.json"))
+        foreach (var file in Directory.EnumerateFiles(directory, "*.json"))
         {
             try
             {
@@ -69,5 +70,17 @@ public sealed class TriageStore
         }
 
         return latest;
+    }
+
+    private string GetDirectory()
+    {
+        var config = _configProvider.Get();
+        var directory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".build-duty",
+            config.Name,
+            "triage-runs");
+        Directory.CreateDirectory(directory);
+        return directory;
     }
 }

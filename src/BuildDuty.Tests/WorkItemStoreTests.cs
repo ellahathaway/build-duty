@@ -1,4 +1,5 @@
 using BuildDuty.Core;
+using BuildDuty.Core.Models;
 using Xunit;
 
 namespace BuildDuty.Tests;
@@ -10,7 +11,8 @@ public class WorkItemStoreTests : IDisposable
 
     public WorkItemStoreTests()
     {
-        _tempDir = Path.Combine(Path.GetTempPath(), $"buildduty_test_{Guid.NewGuid():N}");
+        _tempDir = Path.Combine(Path.GetTempPath(), $"buildduty_store_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_tempDir);
         _store = new WorkItemStore(_tempDir);
     }
 

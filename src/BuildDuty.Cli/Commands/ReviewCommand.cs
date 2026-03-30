@@ -9,47 +9,42 @@ using Spectre.Console.Cli;
 
 namespace BuildDuty.Cli.Commands;
 
-internal sealed class ReviewSettings : CommandSettings
+internal sealed class ReviewSettings : BaseSettings
 {
-    [CommandOption("--config")]
-    [Description("Path to .build-duty.yml config file")]
-    public string? Config { get; set; }
-
     [CommandOption("--include-acknowledged")]
     [Description("Include acknowledged items in the review list")]
     public bool IncludeAcknowledged { get; set; }
 }
 
-internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
+internal sealed class ReviewCommand : BaseCommand<ReviewSettings>
 {
-    private readonly Func<string, string?, WorkItemStore> _storeFactory;
-    private readonly Func<BuildDutyConfig, WorkItemStore, CopilotAdapter> _adapterFactory;
+    private readonly IBuildDutyConfigProvider _configProvider;
+    private readonly WorkItemStore _store;
+    private readonly Func<WorkItemStore, CopilotAdapter> _adapterFactory;
 
     public ReviewCommand(
-        Func<string, string?, WorkItemStore> storeFactory,
-        Func<BuildDutyConfig, WorkItemStore, CopilotAdapter> adapterFactory)
+        IBuildDutyConfigProvider configProvider,
+        WorkItemStore store,
+        Func<WorkItemStore, CopilotAdapter> adapterFactory) : base(configProvider)
     {
-        _storeFactory = storeFactory;
+        _configProvider = configProvider;
+        _store = store;
         _adapterFactory = adapterFactory;
     }
 
-    public override async Task<int> ExecuteAsync(CommandContext context, ReviewSettings settings)
+    protected override async Task<int> ExecuteCommandAsync(CommandContext context, ReviewSettings settings)
     {
-        var configPath = settings.Config ?? Paths.ConfigPath()
-            ?? throw new InvalidOperationException("No .build-duty.yml found.");
-        var config = BuildDutyConfig.LoadFromFile(configPath);
-        var store = _storeFactory(config.Name, configPath);
-
-        return await RunReviewAsync(config, store, _adapterFactory,
-            includeAcknowledged: settings.IncludeAcknowledged);
+        return await RunReviewAsync(_configProvider, _store, _adapterFactory, settings);
     }
 
     public static async Task<int> RunReviewAsync(
-        BuildDutyConfig config,
+        IBuildDutyConfigProvider configProvider,
         WorkItemStore store,
-        Func<BuildDutyConfig, WorkItemStore, CopilotAdapter>? adapterFactory = null,
-        bool includeAcknowledged = false)
+        Func<WorkItemStore, CopilotAdapter> adapterFactory,
+        ReviewSettings? settings = null)
     {
+        settings ??= new ReviewSettings();
+        var basePath = GetBasePath(configProvider);
         var agents = new List<BackgroundAgent>();
 
         try
@@ -59,7 +54,7 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                 AnsiConsole.Clear();
 
                 var items = (await store.ListAsync(resolved: false))
-                    .Where(i => includeAcknowledged || i.Status != "acknowledged")
+                    .Where(i => settings.IncludeAcknowledged || i.Status != "acknowledged")
                     .Where(i => i.Status != "tracked")
                     .ToList();
 
@@ -159,7 +154,7 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                             await Task.WhenAll(running.Select(a => a.WaitAsync()));
                         }
 
-                        await SavedSession.SaveAllAsync(store.BasePath, agents);
+                        await SavedSession.SaveAllAsync(basePath, agents);
                         AnsiConsole.MarkupLine(
                             $"[dim]{saveable.Count} agent session(s) saved — resume next time you review those items.[/]");
                     }
@@ -224,7 +219,7 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
 
                 // Check for a saved session matching these items
                 var savedSession = await SavedSession.FindAsync(
-                    store.BasePath, selectedItems.Select(i => i.Id));
+                    basePath, selectedItems.Select(i => i.Id));
 
                 if (savedSession is not null)
                 {
@@ -248,9 +243,9 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                     if (resumeChoice == "Resume prior session")
                     {
                         var agent = BackgroundAgent.StartWithHistory(
-                            config, store, selectedItems, savedSession, adapterFactory);
+                            configProvider, store, selectedItems, savedSession, adapterFactory);
                         agents.Add(agent);
-                        SavedSession.ClearAll(store.BasePath);
+                        SavedSession.ClearAll(basePath);
 
                         AnsiConsole.MarkupLine(
                             $"[green]✓ Agent resumed:[/] [dim]{Markup.Escape(agent.Label)}[/]");
@@ -275,7 +270,7 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
 
                 // Dispatch as background agent
                 var newAgent = BackgroundAgent.Start(
-                    config, store, selectedItems, instruction, adapterFactory);
+                    configProvider, store, selectedItems, instruction, adapterFactory);
                 agents.Add(newAgent);
 
                 AnsiConsole.MarkupLine(
@@ -292,6 +287,15 @@ internal sealed class ReviewCommand : AsyncCommand<ReviewSettings>
                 await a.DisposeAsync();
             }
         }
+    }
+
+    private static string GetBasePath(IBuildDutyConfigProvider configProvider)
+    {
+        var config = configProvider.Get();
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".build-duty",
+            config.Name);
     }
 
     /// <summary>
@@ -816,13 +820,15 @@ internal sealed class BackgroundAgent : IAsyncDisposable
     private CopilotAdapter? _adapter;
     private ReviewSession? _session;
     private Task? _workTask;
+    private readonly BuildDutyConfig _config;
 
     // Stream event buffer for live watch mode
     private readonly List<AgentStreamEvent> _streamEvents = new();
     private readonly object _streamLock = new();
 
-    private BackgroundAgent(List<WorkItem> items, string instruction)
+    private BackgroundAgent(IBuildDutyConfigProvider configProvider, List<WorkItem> items, string instruction)
     {
+        _config = configProvider.Get();
         Items = items;
         Instruction = instruction;
         Label = items.Count == 1
@@ -831,14 +837,14 @@ internal sealed class BackgroundAgent : IAsyncDisposable
     }
 
     public static BackgroundAgent Start(
-        BuildDutyConfig config,
+        IBuildDutyConfigProvider configProvider,
         WorkItemStore store,
         List<WorkItem> items,
         string instruction,
-        Func<BuildDutyConfig, WorkItemStore, CopilotAdapter> adapterFactory)
+        Func<WorkItemStore, CopilotAdapter> adapterFactory)
     {
-        var agent = new BackgroundAgent(items, instruction);
-        agent._workTask = agent.RunAsync(config, store, instruction, adapterFactory);
+        var agent = new BackgroundAgent(configProvider, items, instruction);
+        agent._workTask = agent.RunAsync(store, instruction, adapterFactory);
         return agent;
     }
 
@@ -847,16 +853,16 @@ internal sealed class BackgroundAgent : IAsyncDisposable
     /// and sends the resume prompt.
     /// </summary>
     public static BackgroundAgent StartWithHistory(
-        BuildDutyConfig config,
+        IBuildDutyConfigProvider configProvider,
         WorkItemStore store,
         List<WorkItem> items,
         SavedSession saved,
-        Func<BuildDutyConfig, WorkItemStore, CopilotAdapter> adapterFactory)
+        Func<WorkItemStore, CopilotAdapter> adapterFactory)
     {
-        var agent = new BackgroundAgent(items, saved.Instruction);
+        var agent = new BackgroundAgent(configProvider, items, saved.Instruction);
         agent.ConversationHistory.AddRange(saved.History);
         agent.LastResponse = saved.History.LastOrDefault(t => t.Role == "assistant")?.Content;
-        agent._workTask = agent.ResumeAsync(config, store, saved, adapterFactory);
+        agent._workTask = agent.ResumeAsync(store, saved, adapterFactory);
         return agent;
     }
 
@@ -941,16 +947,15 @@ internal sealed class BackgroundAgent : IAsyncDisposable
     }
 
     private async Task RunAsync(
-        BuildDutyConfig config,
         WorkItemStore store,
         string instruction,
-        Func<BuildDutyConfig, WorkItemStore, CopilotAdapter> adapterFactory)
+        Func<WorkItemStore, CopilotAdapter> adapterFactory)
     {
         try
         {
-            _adapter = adapterFactory(config, store);
+            _adapter = adapterFactory(store);
 
-            var adoOrgUrl = config.AzureDevOps?.Organizations.FirstOrDefault()?.Url;
+            var adoOrgUrl = _config.AzureDevOps?.Organizations.FirstOrDefault()?.Url;
             var mcpServers = adoOrgUrl is not null
                 ? CopilotSessionFactory.AdoPipelineServers(ExtractOrgName(adoOrgUrl))
                 : CopilotSessionFactory.NoExtraServers();
@@ -979,16 +984,15 @@ internal sealed class BackgroundAgent : IAsyncDisposable
     }
 
     private async Task ResumeAsync(
-        BuildDutyConfig config,
         WorkItemStore store,
         SavedSession saved,
-        Func<BuildDutyConfig, WorkItemStore, CopilotAdapter> adapterFactory)
+        Func<WorkItemStore, CopilotAdapter> adapterFactory)
     {
         try
         {
-            _adapter = adapterFactory(config, store);
+            _adapter = adapterFactory(store);
 
-            var adoOrgUrl = config.AzureDevOps?.Organizations.FirstOrDefault()?.Url;
+            var adoOrgUrl = _config.AzureDevOps?.Organizations.FirstOrDefault()?.Url;
             var mcpServers = adoOrgUrl is not null
                 ? CopilotSessionFactory.AdoPipelineServers(ExtractOrgName(adoOrgUrl))
                 : CopilotSessionFactory.NoExtraServers();
