@@ -1,5 +1,6 @@
 using BuildDuty.AI;
 using BuildDuty.Core;
+using BuildDuty.Core.Models;
 using Microsoft.Extensions.AI;
 using Xunit;
 
@@ -13,6 +14,7 @@ public class ScanToolsTests : IDisposable
     public ScanToolsTests()
     {
         _tempDir = Path.Combine(Path.GetTempPath(), $"buildduty_scan_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_tempDir);
         _store = new WorkItemStore(_tempDir);
     }
 

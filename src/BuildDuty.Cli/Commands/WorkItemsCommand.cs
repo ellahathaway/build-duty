@@ -1,12 +1,11 @@
 using System.ComponentModel;
 using BuildDuty.Core;
-using BuildDuty.Core.Models;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
 namespace BuildDuty.Cli.Commands;
 
-internal sealed class WorkItemsListSettings : CommandSettings
+internal sealed class WorkItemsListSettings : BaseSettings
 {
     [CommandOption("--limit")]
     [Description("Maximum number of items to display")]
@@ -17,23 +16,20 @@ internal sealed class WorkItemsListSettings : CommandSettings
     public bool ShowResolved { get; set; }
 }
 
-internal sealed class WorkItemsListCommand : AsyncCommand<WorkItemsListSettings>
+internal sealed class WorkItemsListCommand : BaseCommand<WorkItemsListSettings>
 {
-    private readonly Func<string, string?, WorkItemStore> _storeFactory;
+    private readonly WorkItemStore _store;
 
-    public WorkItemsListCommand(Func<string, string?, WorkItemStore> storeFactory)
+    public WorkItemsListCommand(
+        IBuildDutyConfigProvider configProvider,
+        WorkItemStore store) : base(configProvider)
     {
-        _storeFactory = storeFactory;
+        _store = store;
     }
 
-    public override async Task<int> ExecuteAsync(CommandContext context, WorkItemsListSettings settings)
+    protected override async Task<int> ExecuteCommandAsync(CommandContext context, WorkItemsListSettings settings)
     {
-        var configPath = Paths.ConfigPath()
-            ?? throw new InvalidOperationException("No .build-duty.yml found.");
-        var config = BuildDutyConfig.LoadFromFile(configPath);
-        var store = _storeFactory(config.Name, configPath);
-
-        var items = await store.ListAsync(
+        var items = await _store.ListAsync(
             resolved: settings.ShowResolved ? null : false,
             limit: settings.Limit);
 
@@ -71,7 +67,7 @@ internal sealed class WorkItemsListCommand : AsyncCommand<WorkItemsListSettings>
     }
 }
 
-internal sealed class WorkItemsShowSettings : CommandSettings
+internal sealed class WorkItemsShowSettings : BaseSettings
 {
     [CommandOption("--id")]
     [Description("Work item ID")]
@@ -85,22 +81,21 @@ internal sealed class WorkItemsShowSettings : CommandSettings
     }
 }
 
-internal sealed class WorkItemsShowCommand : AsyncCommand<WorkItemsShowSettings>
+internal sealed class WorkItemsShowCommand : BaseCommand<WorkItemsShowSettings>
 {
-    private readonly Func<string, string?, WorkItemStore> _storeFactory;
+    private readonly WorkItemStore _store;
 
-    public WorkItemsShowCommand(Func<string, string?, WorkItemStore> storeFactory)
+    public WorkItemsShowCommand(
+        IBuildDutyConfigProvider configProvider,
+        WorkItemStore store) : base(configProvider)
     {
-        _storeFactory = storeFactory;
+        _store = store;
+
     }
 
-    public override async Task<int> ExecuteAsync(CommandContext context, WorkItemsShowSettings settings)
+    protected override async Task<int> ExecuteCommandAsync(CommandContext context, WorkItemsShowSettings settings)
     {
-        var configPath = Paths.ConfigPath()
-            ?? throw new InvalidOperationException("No .build-duty.yml found.");
-        var config = BuildDutyConfig.LoadFromFile(configPath);
-        var store = _storeFactory(config.Name, configPath);
-        var item = await store.LoadAsync(settings.Id);
+        var item = await _store.LoadAsync(settings.Id);
 
         if (item is null)
         {

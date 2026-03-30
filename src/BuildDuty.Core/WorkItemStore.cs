@@ -15,26 +15,31 @@ public sealed class WorkItemStore
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
-    private readonly string _directory;
+    private readonly IBuildDutyConfigProvider? _configProvider;
+    private readonly string? _directoryOverride;
 
-    public WorkItemStore(string directory)
+    public WorkItemStore(IBuildDutyConfigProvider configProvider)
     {
-        _directory = directory;
-        Directory.CreateDirectory(_directory);
+        _configProvider = configProvider;
     }
 
-    public string BasePath => _directory;
+    internal WorkItemStore(string directory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(directory);
+        _directoryOverride = directory;
+    }
 
     public async Task SaveAsync(WorkItem item, CancellationToken ct = default)
     {
-        var path = GetPath(item.Id);
+        var directory = GetDirectory();
+        var path = Path.Combine(directory, $"{item.Id}.json");
         await using var stream = File.Create(path);
         await JsonSerializer.SerializeAsync(stream, item, s_options, ct);
     }
 
     public async Task<WorkItem?> LoadAsync(string id, CancellationToken ct = default)
     {
-        var path = GetPath(id);
+        var path = Path.Combine(GetDirectory(), $"{id}.json");
         if (!File.Exists(path))
         {
             return null;
@@ -49,12 +54,13 @@ public sealed class WorkItemStore
         int? limit = null,
         CancellationToken ct = default)
     {
-        if (!Directory.Exists(_directory))
+        var directory = GetDirectory();
+        if (!Directory.Exists(directory))
         {
             return [];
         }
 
-        var files = Directory.GetFiles(_directory, "*.json");
+        var files = Directory.GetFiles(directory, "*.json");
         var items = new List<WorkItem>();
 
         foreach (var file in files.OrderBy(f => f))
@@ -81,7 +87,28 @@ public sealed class WorkItemStore
         return items;
     }
 
-    public bool Exists(string id) => File.Exists(GetPath(id));
+    public bool Exists(string id) => File.Exists(Path.Combine(GetDirectory(), $"{id}.json"));
 
-    private string GetPath(string id) => Path.Combine(_directory, $"{id}.json");
+    private string GetDirectory()
+    {
+        if (!string.IsNullOrWhiteSpace(_directoryOverride))
+        {
+            Directory.CreateDirectory(_directoryOverride);
+            return _directoryOverride;
+        }
+
+        if (_configProvider is null)
+        {
+            throw new InvalidOperationException("Config provider was not initialized.");
+        }
+
+        var config = _configProvider.Get();
+        var directory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".build-duty",
+            config.Name,
+            "work-items");
+        Directory.CreateDirectory(directory);
+        return directory;
+    }
 }

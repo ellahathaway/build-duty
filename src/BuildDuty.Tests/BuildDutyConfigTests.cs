@@ -1,3 +1,4 @@
+using BuildDuty.Core;
 using BuildDuty.Core.Models;
 using Xunit;
 
@@ -25,7 +26,7 @@ public class BuildDutyConfigTests : IDisposable
     public void LoadFromFile_ParsesName()
     {
         var path = WriteConfig("name: my-project\nAzureDevOps:\n  organizations: []");
-        var config = BuildDutyConfig.LoadFromFile(path);
+        var config = LoadConfig(path);
         Assert.Equal("my-project", config.Name);
     }
 
@@ -33,7 +34,7 @@ public class BuildDutyConfigTests : IDisposable
     public void LoadFromFile_MissingName_Throws()
     {
         var path = WriteConfig("AzureDevOps:\n  organizations: []");
-        var ex = Assert.Throws<InvalidOperationException>(() => BuildDutyConfig.LoadFromFile(path));
+        var ex = Assert.Throws<InvalidOperationException>(() => LoadConfig(path));
         Assert.Contains("name", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -41,7 +42,7 @@ public class BuildDutyConfigTests : IDisposable
     public void LoadFromFile_EmptyName_Throws()
     {
         var path = WriteConfig("name: \"\"\nAzureDevOps:\n  organizations: []");
-        var ex = Assert.Throws<InvalidOperationException>(() => BuildDutyConfig.LoadFromFile(path));
+        var ex = Assert.Throws<InvalidOperationException>(() => LoadConfig(path));
         Assert.Contains("name", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -65,7 +66,7 @@ public class BuildDutyConfigTests : IDisposable
                             - failed
             """;
         var path = WriteConfig(yaml);
-        var config = BuildDutyConfig.LoadFromFile(path);
+        var config = LoadConfig(path);
 
         Assert.NotNull(config.AzureDevOps);
         var org = Assert.Single(config.AzureDevOps.Organizations);
@@ -113,5 +114,12 @@ public class BuildDutyConfigTests : IDisposable
         var path = Path.Combine(_tempDir, ".build-duty.yml");
         File.WriteAllText(path, yaml);
         return path;
+    }
+
+    private static BuildDutyConfig LoadConfig(string path)
+    {
+        var provider = new BuildDutyConfigProvider();
+        provider.SetConfigPath(path);
+        return provider.Get();
     }
 }

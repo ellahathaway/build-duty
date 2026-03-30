@@ -34,4 +34,6 @@ internal sealed class TypeRegistrar : ITypeRegistrar
     {
         return new TypeResolver(_services.BuildServiceProvider());
     }
+
+    public T Resolve<T>() where T : class => (T)Build().Resolve(typeof(T))!;
 }

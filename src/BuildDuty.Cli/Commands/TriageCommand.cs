@@ -1,56 +1,36 @@
 using System.ComponentModel;
-using System.Text.Json;
 using BuildDuty.AI;
 using BuildDuty.Core;
-using BuildDuty.Core.Models;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
 namespace BuildDuty.Cli.Commands;
 
-internal sealed class TriageSettings : CommandSettings
+internal sealed class TriageSettings : BaseSettings
 {
-    [CommandOption("--config")]
-    [Description("Path to .build-duty.yml config file")]
-    public string? Config { get; set; }
-
     [CommandOption("--review")]
     [Description("Enter interactive review mode after triage")]
     public bool Review { get; set; }
 }
 
-internal sealed class TriageCommand : AsyncCommand<TriageSettings>
+internal sealed class TriageCommand : BaseCommand<TriageSettings>
 {
-    private readonly Func<string, string?, WorkItemStore> _storeFactory;
-    private readonly Func<BuildDutyConfig, WorkItemStore, CopilotAdapter> _adapterFactory;
+    private readonly IBuildDutyConfigProvider _configProvider;
+    private readonly WorkItemStore _store;
+    private readonly Func<WorkItemStore, CopilotAdapter> _adapterFactory;
 
     public TriageCommand(
-        Func<string, string?, WorkItemStore> storeFactory,
-        Func<BuildDutyConfig, WorkItemStore, CopilotAdapter> adapterFactory)
+        IBuildDutyConfigProvider configProvider,
+        WorkItemStore store,
+        Func<WorkItemStore, CopilotAdapter> adapterFactory) : base(configProvider)
     {
-        _storeFactory = storeFactory;
+        _configProvider = configProvider;
+        _store = store;
         _adapterFactory = adapterFactory;
     }
 
-    public override async Task<int> ExecuteAsync(CommandContext context, TriageSettings settings)
+    protected override async Task<int> ExecuteCommandAsync(CommandContext context, TriageSettings settings)
     {
-        var configPath = settings.Config ?? Paths.ConfigPath();
-        if (configPath is null)
-        {
-            AnsiConsole.MarkupLine("[red bold]Error:[/] No .build-duty.yml found in the repository root. Use --config to specify a path.");
-            return 1;
-        }
-
-        if (!File.Exists(configPath))
-        {
-            AnsiConsole.MarkupLine($"[red bold]Error:[/] Config file not found: {configPath}");
-            return 1;
-        }
-
-        var config = BuildDutyConfig.LoadFromFile(configPath);
-        AnsiConsole.MarkupLine($"Using config: [bold]{configPath}[/] (name: [bold]{Markup.Escape(config.Name)}[/])");
-
-        var store = _storeFactory(config.Name, configPath);
         var branchResolver = new ReleaseBranchResolver();
 
         // === Step 1: Gather work items ===
@@ -68,13 +48,14 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
             {
                 var tasks = new List<Task<CollectionResult>>();
 
-                if (config.AzureDevOps is not null)
+                if (_configProvider.Get().AzureDevOps is not null)
                 {
                     var adoTask = ctx.AddTask("[bold]AzureDevOps[/]", maxValue: 1);
                     tasks.Add(Task.Run(async () =>
                     {
-                        var collector = new AzureDevOpsWorkItemCollector(config.AzureDevOps, branchResolver);
-                        var result = await collector.CollectAsync(store, default);
+                        var azureDevOpsConfig = _configProvider.Get().AzureDevOps ?? throw new InvalidOperationException("Azure DevOps configuration is missing.");
+                        var collector = new AzureDevOpsWorkItemCollector(azureDevOpsConfig, branchResolver);
+                        var result = await collector.CollectAsync(_store, default);
                         adoTask.Description = result.Success
                             ? $"[green]✓[/] AzureDevOps ({result.Sources.Count} sources)"
                             : $"[red]✗[/] AzureDevOps";
@@ -84,17 +65,18 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
                     }));
                 }
 
-                if (config.GitHub is not null)
+                if (_configProvider.Get().GitHub is not null)
                 {
-                    var ghCollector = new GitHubWorkItemCollector(config.GitHub);
-                    var allRepos = config.GitHub.Organizations.SelectMany(o => o.Repositories);
+                    var gitHubConfig = _configProvider.Get().GitHub ?? throw new InvalidOperationException("GitHub configuration is missing.");
+                    var ghCollector = new GitHubWorkItemCollector(gitHubConfig);
+                    var allRepos = gitHubConfig.Organizations.SelectMany(o => o.Repositories);
 
                     if (allRepos.Any(r => r.Issues is not null))
                     {
                         var issueTask = ctx.AddTask("[bold]GitHub Issues[/]", maxValue: 1);
                         tasks.Add(Task.Run(async () =>
                         {
-                            var result = await ghCollector.CollectIssuesAsync(store, default);
+                            var result = await ghCollector.CollectIssuesAsync(_store, default);
                             issueTask.Description = result.Success
                                 ? $"[green]✓[/] GitHub Issues ({result.Sources.Count} sources)"
                                 : $"[red]✗[/] GitHub Issues";
@@ -109,7 +91,7 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
                         var prTask = ctx.AddTask("[bold]GitHub PRs[/]", maxValue: 1);
                         tasks.Add(Task.Run(async () =>
                         {
-                            var result = await ghCollector.CollectPullRequestsAsync(store, default);
+                            var result = await ghCollector.CollectPullRequestsAsync(_store, default);
                             prTask.Description = result.Success
                                 ? $"[green]✓[/] GitHub PRs ({result.Sources.Count} sources)"
                                 : $"[red]✗[/] GitHub PRs";
@@ -157,17 +139,17 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
         // === Step 2: AI-powered summarization ===
         AnsiConsole.MarkupLine("\n[bold]Step 2:[/] Summarizing new work items...");
 
-        var beforeItems = await store.ListAsync();
+        var beforeItems = await _store.ListAsync();
         var beforeIds = beforeItems.ToDictionary(i => i.Id, i => i.IsResolved);
 
         // Only summarize work items that need it: no summary yet, or source
         // has been updated since the last summary (e.g. issue/PR changed).
-        var toSummarize = (await store.ListAsync(resolved: false))
+        var toSummarize = (await _store.ListAsync(resolved: false))
             .Where(i => i.NeedsSummary)
             .ToList();
 
         // Add AzDO MCP server if configured — GitHub MCP is built-in
-        var adoOrgUrl = config.AzureDevOps?.Organizations.FirstOrDefault()?.Url;
+        var adoOrgUrl = _configProvider.Get().AzureDevOps?.Organizations.FirstOrDefault()?.Url;
         var mcpServers = adoOrgUrl is not null
             ? CopilotSessionFactory.AdoPipelineServers(ExtractOrgName(adoOrgUrl))
             : CopilotSessionFactory.NoExtraServers();
@@ -221,7 +203,7 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
                 {
                     var progressTask = ctx.AddTask("[bold]AI summarization[/]", maxValue: 1);
 
-                    await using var adapter = _adapterFactory(config, store);
+                    await using var adapter = _adapterFactory(_store);
                     try
                     {
                         var result = await adapter.ScanSourceAsync(
@@ -263,15 +245,11 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
         AnsiConsole.MarkupLine("\n[bold]Step 3:[/] Triaging work items...");
 
         // Capture pre-triage statuses to detect what the AI changed
-        var preTriage = (await store.ListAsync(resolved: false))
+        var preTriage = (await _store.ListAsync(resolved: false))
             .ToDictionary(i => i.Id, i => (Status: i.Status, LinkedItems: i.LinkedItems.ToList()));
 
-        // Load past triage feedback for learning
-        var feedbackPath = Path.Combine(store.BasePath, "triage-feedback.jsonl");
-        var feedbackLines = File.Exists(feedbackPath) ? await File.ReadAllLinesAsync(feedbackPath) : [];
-
         // Only triage items that are new or were just (re-)summarized
-        var allUnresolved = (await store.ListAsync(resolved: false)).ToList();
+        var allUnresolved = (await _store.ListAsync(resolved: false)).ToList();
         var toTriage = allUnresolved.Where(i => i.NeedsTriage).ToList();
         var contextOnly = allUnresolved.Where(i => !i.NeedsTriage).ToList();
 
@@ -308,14 +286,6 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
 
                 **Existing unresolved items (context for cross-referencing — do NOT update these, but DO link new items to them and set status to `tracked` when appropriate):**
                 {string.Join("\n", contextOnly.Select(FormatItem))}
-                """
-                : "";
-
-            var feedbackSection = feedbackLines.Length > 0
-                ? $"""
-
-                **Past triage feedback (learn from these):**
-                {string.Join("\n", feedbackLines)}
                 """
                 : "";
 
@@ -368,7 +338,6 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
                 **Work items needing triage ({toTriage.Count}):**
                 {triageList}
                 {contextSection}
-                {feedbackSection}
                 """;
 
             await AnsiConsole.Progress()
@@ -381,7 +350,7 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
             {
                 var progressTask = ctx.AddTask("[bold]AI triage[/]", maxValue: 1);
 
-                await using var adapter = _adapterFactory(config, store);
+                await using var adapter = _adapterFactory(_store);
                 try
                 {
                     var result = await adapter.ScanSourceAsync(
@@ -415,17 +384,17 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
             // Mark triaged items as stable
             foreach (var item in toTriage)
             {
-                var refreshed = await store.LoadAsync(item.Id);
+                var refreshed = await _store.LoadAsync(item.Id);
                 if (refreshed is not null && refreshed.State is not null && refreshed.State != "stable")
                 {
                     refreshed.State = "stable";
-                    await store.SaveAsync(refreshed);
+                    await _store.SaveAsync(refreshed);
                 }
             }
         }
 
         // === Confirm new correlations ===
-        var postTriageItems = await store.ListAsync(resolved: false);
+        var postTriageItems = await _store.ListAsync(resolved: false);
         var correlationsToConfirm = new List<(WorkItem Item, string LinkedId, WorkItem Linked)>();
 
         foreach (var item in postTriageItems)
@@ -438,7 +407,7 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
             var newLinks = item.LinkedItems.Except(pre.LinkedItems).ToList();
             foreach (var lid in newLinks)
             {
-                var linked = await store.LoadAsync(lid);
+                var linked = await _store.LoadAsync(lid);
                 if (linked is not null)
                 {
                     correlationsToConfirm.Add((item, lid, linked));
@@ -497,23 +466,8 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
                     }
 
                     item.TriagedAtUtc = DateTime.UtcNow;
-                    await store.SaveAsync(item);
-                    await store.SaveAsync(linked);
-
-                    // Save feedback for learning
-                    var feedback = JsonSerializer.Serialize(new
-                    {
-                        timestamp = DateTime.UtcNow,
-                        itemId = item.Id,
-                        itemSummary = item.Summary,
-                        linkedId,
-                        linkedSummary = linked.Summary,
-                        rejectedCorrelation = true,
-                        reason,
-                    });
-                    await File.AppendAllTextAsync(feedbackPath, feedback + Environment.NewLine);
-
-                    AnsiConsole.MarkupLine("[yellow]→ Link removed. Feedback saved.[/]\n");
+                    await _store.SaveAsync(item);
+                    await _store.SaveAsync(linked);
                 }
                 else
                 {
@@ -523,7 +477,7 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
         }
 
         // Report what changed
-        var afterItems = await store.ListAsync();
+        var afterItems = await _store.ListAsync();
         var afterIds = afterItems.ToDictionary(i => i.Id, i => i.IsResolved);
         var newCount = afterIds.Keys.Except(beforeIds.Keys).Count();
         var resolvedCount = afterIds.Count(a =>
@@ -583,7 +537,7 @@ internal sealed class TriageCommand : AsyncCommand<TriageSettings>
             if (unresolvedCount > 0)
             {
                 AnsiConsole.MarkupLine($"\n[dim]Entering review mode ({unresolvedCount} unresolved items)...[/]");
-                await ReviewCommand.RunReviewAsync(config, store, _adapterFactory);
+                await ReviewCommand.RunReviewAsync(_configProvider, _store, _adapterFactory);
             }
         }
 
