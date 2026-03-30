@@ -5,7 +5,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>build-duty</ToolCommandName>
     <PackageId>BuildDuty</PackageId>
-    <Version>0.1.0</Version>
+    <VersionPrefix>0.1.0</VersionPrefix>
     <Description>CLI tool for build-duty triage and AI-assisted analysis</Description>
   </PropertyGroup>
 
