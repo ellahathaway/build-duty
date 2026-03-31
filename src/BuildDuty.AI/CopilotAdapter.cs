@@ -50,16 +50,9 @@ public class CopilotAdapter : IAsyncDisposable
             "skills/summarize",
         };
 
-        var signal = await _storageProvider.GetSignalAsync(signalId);
-        await LogAsync(logWriter, $"loaded signal signalId={signalId}; type={signal.Type}");
-        var summarizeMcpServers = signal.Type == SignalType.AzureDevOpsPipeline
-            ? AzureDevOpsPipelineServers()
-            : new Dictionary<string, object>();
-
         await using var session = await CopilotSessionFactory.CreateAsync(
             _client,
             skills: skills,
-            mcpServers: summarizeMcpServers,
             tools: _storageTools.GetTools(),
             model: _configProvider.Get().Ai?.Model);
 
@@ -147,7 +140,7 @@ public class CopilotAdapter : IAsyncDisposable
         await using var session = await CopilotSessionFactory.CreateAsync(
             _client,
             skills: skills,
-            mcpServers: AzureDevOpsPipelineServers(),
+            mcpServers: null,
             tools: _storageTools.GetTools(),
             model: _configProvider.Get().Ai?.Model);
 
@@ -216,28 +209,6 @@ public class CopilotAdapter : IAsyncDisposable
             await d.DisposeAsync();
         }
         GC.SuppressFinalize(this);
-    }
-
-    private Dictionary<string, object> AzureDevOpsPipelineServers()
-    {
-        var orgs = _configProvider.Get().AzureDevOps?.Organizations;
-        if (orgs is null || orgs.Count == 0)
-        {
-            return [];
-        }
-
-        return orgs.ToDictionary(
-            org => $"azure-devops-{new Uri(org.Url).Host}",
-            org => (object)new McpLocalServerConfig
-            {
-                Command = "npx",
-                Args = ["-y", "@azure-devops/mcp", "-a", "azcli", "-d", "pipelines", "-o", org.Url],
-                Tools = ["*"],
-                Env = new Dictionary<string, string>
-                {
-                    ["GIT_TERMINAL_PROMPT"] = "0",
-                },
-            });
     }
 
     private string CreateAgentLogFilePath(string action, string key)

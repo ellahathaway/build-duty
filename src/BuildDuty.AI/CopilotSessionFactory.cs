@@ -33,7 +33,7 @@ public static class CopilotSessionFactory
     public static async Task<CopilotSession> CreateAsync(
         CopilotClient client,
         IEnumerable<string> skills,
-        Dictionary<string, object> mcpServers,
+        Dictionary<string, object>? mcpServers = null,
         ICollection<AIFunction>? tools = null,
         string? model = null)
     {
