@@ -1,5 +1,4 @@
 using BuildDuty.Core;
-using BuildDuty.Core.Models;
 using BuildDuty.AI;
 using Maestro.Common;
 using Maestro.Common.AzureDevOpsTokens;

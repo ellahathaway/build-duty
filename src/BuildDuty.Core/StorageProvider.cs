@@ -1,6 +1,5 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Octokit;
 
 namespace BuildDuty.Core;
 
@@ -9,9 +8,8 @@ public interface IStorageProvider
     Task SaveWorkItemAsync(WorkItem workItem);
     Task<WorkItem> GetWorkItemAsync(string workItemId);
     Task<ICollection<WorkItem>> GetWorkItemsAsync();
-    Task SaveSignalAsync(ISignal signal);
-    Task<ISignal> GetSignalAsync(string signalId);
-    Task<string> GetSignalJsonAsync(string signalId);
+    Task SaveSignalAsync(Signal signal);
+    Task<Signal> GetSignalAsync(string signalId);
     Task SaveTriageRunAsync(TriageRun triageRun);
     Task<TriageRun> GetTriageRunAsync(string triageId);
 }
@@ -25,9 +23,8 @@ public sealed class StorageProvider : IStorageProvider
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         Converters =
         {
-            new ItemStateJsonConverter(),
             new JsonStringEnumConverter(),
-            new SignalConverter(),
+            new SignalJsonConverter(),
         }
     };
 
@@ -68,17 +65,11 @@ public sealed class StorageProvider : IStorageProvider
         return await Task.WhenAll(loadTasks);
     }
 
-    public async Task SaveSignalAsync(ISignal signal)
+    public async Task SaveSignalAsync(Signal signal)
         => await SaveToJsonFileAsync(GetSignalFilePath(signal.Id), signal);
 
-    public async Task<ISignal> GetSignalAsync(string signalId)
-        => await LoadFromJsonFileAsync<ISignal>(GetSignalFilePath(signalId));
-
-    public async Task<string> GetSignalJsonAsync(string signalId)
-    {
-        var signal = await GetSignalAsync(signalId);
-        return JsonSerializer.Serialize(signal, signal.GetType(), s_options);
-    }
+    public async Task<Signal> GetSignalAsync(string signalId)
+        => await LoadFromJsonFileAsync<Signal>(GetSignalFilePath(signalId));
 
     public async Task SaveTriageRunAsync(TriageRun triageRun)
         => await SaveToJsonFileAsync(GetTriageRunFilePath(triageRun.Id), triageRun);
@@ -119,12 +110,12 @@ public sealed class StorageProvider : IStorageProvider
     private string GetTriageRunFilePath(string triageRunId) => Path.Combine(GetTriageRunsDirectory(), $"{triageRunId}.json");
 }
 
-internal sealed class SignalConverter : JsonConverter<ISignal>
+internal sealed class SignalJsonConverter : JsonConverter<Signal>
 {
-    public override ISignal Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    public override Signal Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
-        using var doc = JsonDocument.ParseValue(ref reader);
-        var root = doc.RootElement;
+        using var document = JsonDocument.ParseValue(ref reader);
+        var root = document.RootElement;
 
         if (!root.TryGetProperty("type", out var typeProp))
         {
@@ -148,63 +139,8 @@ internal sealed class SignalConverter : JsonConverter<ISignal>
         };
     }
 
-    public override void Write(Utf8JsonWriter writer, ISignal value, JsonSerializerOptions options)
+    public override void Write(Utf8JsonWriter writer, Signal value, JsonSerializerOptions options)
     {
-        // Easiest: serialize the runtime type; it already has the "Type" property,
-        // which will be written as "type" by default naming rules.
         JsonSerializer.Serialize(writer, (object)value, value.GetType(), options);
-    }
-}
-
-public sealed class ItemStateJsonConverter : JsonConverter<ItemState>
-{
-    public override ItemState Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
-    {
-        if (reader.TokenType == JsonTokenType.String)
-        {
-            return Parse(reader.GetString());
-        }
-
-        if (reader.TokenType == JsonTokenType.StartObject)
-        {
-            using var doc = JsonDocument.ParseValue(ref reader);
-
-            if (doc.RootElement.TryGetProperty("stringValue", out var sv) &&
-                sv.ValueKind == JsonValueKind.String)
-            {
-                return Parse(sv.GetString());
-            }
-
-            if (doc.RootElement.TryGetProperty("value", out var v) &&
-                v.ValueKind == JsonValueKind.String)
-            {
-                return Parse(v.GetString());
-            }
-
-            throw new JsonException("Invalid ItemState object; expected stringValue or value.");
-        }
-
-        throw new JsonException($"Unexpected token {reader.TokenType} for ItemState.");
-    }
-
-    public override void Write(Utf8JsonWriter writer, ItemState value, JsonSerializerOptions options)
-    {
-        // prefer the compact/stable representation
-        writer.WriteStringValue(value.ToString().ToLowerInvariant());
-    }
-
-    private static ItemState Parse(string? s)
-    {
-        if (string.IsNullOrWhiteSpace(s))
-        {
-            throw new JsonException("ItemState was empty.");
-        }
-
-        return s.Trim().ToLowerInvariant() switch
-        {
-            "open" => ItemState.Open,
-            "closed" => ItemState.Closed,
-            _ => throw new JsonException($"Value '{s}' is not a valid ItemState.")
-        };
     }
 }

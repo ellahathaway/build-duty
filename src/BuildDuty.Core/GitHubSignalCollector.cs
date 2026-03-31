@@ -15,7 +15,7 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
     {
     }
 
-    protected override async Task<List<ISignal>> CollectCoreAsync()
+    protected override async Task<List<Signal>> CollectCoreAsync()
     {
         var signals = await StorageProvider.GetSignalsFromWorkItemsAsync();
 
@@ -27,7 +27,7 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
             .Where(s => s.Type == SignalType.GitHubPullRequest)
             .OfType<GitHubPullRequestSignal>();
 
-        var collectedSignals = new List<ISignal>();
+        var collectedSignals = new List<Signal>();
 
         foreach (var org in Config.Organizations)
         {
@@ -41,7 +41,7 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
                 await Task.WhenAll(issueTask, prTask);
 
                 var repoSignals = issueTask.Result
-                    .Cast<ISignal>()
+                    .Cast<Signal>()
                     .Concat(prTask.Result)
                     .ToList();
 
@@ -84,21 +84,22 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
                 continue; // GitHub API returns PRs as issues too
             }
 
-            var existingSignal = existingSignals.FirstOrDefault(s => s.Info.HtmlUrl == issue.HtmlUrl);
+            var existingSignal = existingSignals.FirstOrDefault(s => s.TypedInfo.HtmlUrl == issue.HtmlUrl);
+            if (existingSignal != null && existingSignal.TypedInfo.State.Value == issue.State.Value && existingSignal.TypedInfo.UpdatedAt == issue.UpdatedAt)
+            {
+                continue;
+            }
 
+            var signal = new GitHubIssueSignal(issue);
             if (existingSignal is null)
             {
-                signals.Add(new GitHubIssueSignal(issue));
+                signals.Add(signal);
                 continue;
             }
 
-            if (existingSignal.Info.State.Value == issue.State.Value && existingSignal.Info.UpdatedAt == issue.UpdatedAt)
-            {
-                continue;
-            }
-
-            existingSignal.Info = issue;
-            signals.Add(existingSignal);
+            signal.Id = existingSignal.Id; // Preserve the same ID for updates
+            signal.WorkItemIds = existingSignal.WorkItemIds; // Preserve linked work items
+            signals.Add(signal);
         }
 
         return signals;
@@ -132,26 +133,28 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
 
             foreach (var pr in matchingPulls)
             {
-                var existingSignal = existingSignals.FirstOrDefault(s => s.Info.HtmlUrl == pr.HtmlUrl);
+                var signal = new GitHubPullRequestSignal(pr);
+                var existingSignal = existingSignals.FirstOrDefault(s => s.TypedInfo.HtmlUrl == pr.HtmlUrl);
 
                 if (existingSignal is not null)
                 {
-                    if (existingSignal.Info.State.Value == pr.State.Value
-                        && existingSignal.Info.UpdatedAt == pr.UpdatedAt)
+                    if (existingSignal.TypedInfo.State.Value == pr.State.Value
+                        && existingSignal.TypedInfo.UpdatedAt == pr.UpdatedAt)
                     {
                         continue;
                     }
-                    existingSignal.Info = pr;
-                    signals.Add(existingSignal);
+                    signal.Id = existingSignal.Id; // Preserve the same ID for updates
+                    signal.WorkItemIds = existingSignal.WorkItemIds; // Preserve linked work items
+                    signals.Add(signal);
                     continue;
                 }
 
-                signals.Add(new GitHubPullRequestSignal(pr));
+                signals.Add(signal);
             }
         }
 
         return signals
-            .GroupBy(signal => signal.Info.HtmlUrl, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(signal => signal.TypedInfo.HtmlUrl, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
             .ToList();
     }

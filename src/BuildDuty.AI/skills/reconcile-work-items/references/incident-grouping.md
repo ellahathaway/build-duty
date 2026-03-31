@@ -8,8 +8,8 @@ Determine which signals represent the same underlying issue.
 - Use each signal's `workItemIds` to understand existing linkage history.
 
 ## Workflow
-1. Call `get_signal` for each provided signal ID.
-2. Use `summary` as primary evidence.
+1. For each signal ID in the triage run, call `select_signal_fields` and request only required fields.
+2. Use selected `summary`, `workItemIds`, and any info build fields as primary evidence.
 3. Form groups only when causal evidence aligns.
 
 ## Merge criteria

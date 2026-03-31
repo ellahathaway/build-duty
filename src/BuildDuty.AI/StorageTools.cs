@@ -1,5 +1,6 @@
 using BuildDuty.Core;
 using Microsoft.Extensions.AI;
+using System.Text.Json;
 
 namespace BuildDuty.AI;
 
@@ -35,10 +36,19 @@ public class StorageTools
             AIFunctionFactory.Create(
                 async (string signalId) =>
                 {
-                    return await _storageProvider.GetSignalJsonAsync(signalId);
+                    return await _storageProvider.GetSignalAsync(signalId);
                 },
                 "get_signal",
                 "Get full signal details by ID as JSON."),
+
+            AIFunctionFactory.Create(
+                async (string signalId, JsonElement selectors) =>
+                {
+                    var signal = await _storageProvider.GetSignalAsync(signalId);
+                    return SelectFields(JsonSerializer.SerializeToElement(signal), selectors);
+                },
+                "select_signal_fields",
+                "Select fields from a signal JSON using selectors as an object map of outputName:path or an array of paths."),
 
             AIFunctionFactory.Create(
                 async (
@@ -188,5 +198,83 @@ public class StorageTools
                 "update_signal_summary",
                 "Update a signal summary by signal ID."),
         ];
+    }
+
+    private static Dictionary<string, JsonElement> SelectFields(JsonElement source, JsonElement selectors)
+    {
+        if (selectors.ValueKind != JsonValueKind.Object && selectors.ValueKind != JsonValueKind.Array)
+        {
+            throw new ArgumentException("selectors must be either an object map or an array of path strings.");
+        }
+
+        var result = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+
+        if (selectors.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var selector in selectors.EnumerateObject())
+            {
+                if (selector.Value.ValueKind != JsonValueKind.String)
+                {
+                    result[selector.Name] = JsonSerializer.SerializeToElement<object?>(null);
+                    continue;
+                }
+
+                var path = selector.Value.GetString()!;
+                result[selector.Name] = TryGetByPath(source, path, out var value)
+                    ? value
+                    : JsonSerializer.SerializeToElement<object?>(null);
+            }
+
+            return result;
+        }
+
+        foreach (var selector in selectors.EnumerateArray())
+        {
+            if (selector.ValueKind != JsonValueKind.String)
+            {
+                continue;
+            }
+
+            var path = selector.GetString()!;
+            result[path] = TryGetByPath(source, path, out var value)
+                ? value
+                : JsonSerializer.SerializeToElement<object?>(null);
+        }
+
+        return result;
+    }
+
+    private static bool TryGetByPath(JsonElement source, string path, out JsonElement value)
+    {
+        value = default;
+        var current = source;
+
+        foreach (var segment in path.Split('.', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (current.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            JsonElement? next = null;
+            foreach (var property in current.EnumerateObject())
+            {
+                if (string.Equals(property.Name, segment, StringComparison.OrdinalIgnoreCase))
+                {
+                    next = property.Value;
+                    break;
+                }
+            }
+
+            if (next is null)
+            {
+                return false;
+            }
+
+            current = next.Value;
+        }
+
+        value = current.Clone();
+        return true;
     }
 }

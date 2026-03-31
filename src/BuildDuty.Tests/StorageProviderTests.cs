@@ -1,6 +1,7 @@
 using BuildDuty.Core;
 using BuildDuty.Core.Models;
 using NSubstitute;
+using System.Text.Json;
 using Xunit;
 
 namespace BuildDuty.Tests;
@@ -75,5 +76,32 @@ public class StorageProviderTests : IDisposable
     public async Task GetWorkItemAsync_NotFound_Throws()
     {
         await Assert.ThrowsAsync<FileNotFoundException>(() => _provider.GetWorkItemAsync("nonexistent"));
+    }
+
+    [Fact]
+    public async Task SaveAndGetSignal_RoundTripsInfoJson()
+    {
+        var signal = new GitHubIssueSignal
+        {
+            Id = "sig-1",
+            Info = JsonDocument.Parse("""
+                {
+                  "htmlUrl": "https://github.com/dotnet/runtime/issues/1",
+                  "state": "open",
+                  "title": "Test issue"
+                }
+                """).RootElement.Clone(),
+            WorkItemIds = ["wi-1"]
+        };
+
+        await _provider.SaveSignalAsync(signal);
+
+        var loaded = await _provider.GetSignalAsync("sig-1");
+        var issueSignal = Assert.IsType<GitHubIssueSignal>(loaded);
+
+        Assert.Equal("https://github.com/dotnet/runtime/issues/1", issueSignal.Info.GetProperty("htmlUrl").GetString());
+        Assert.Equal("open", issueSignal.Info.GetProperty("state").GetString());
+        Assert.Equal("Test issue", issueSignal.Info.GetProperty("title").GetString());
+        Assert.Equal(["wi-1"], issueSignal.WorkItemIds);
     }
 }

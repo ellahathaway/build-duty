@@ -2,7 +2,7 @@ namespace BuildDuty.Core;
 
 public static class StorageProviderExtensions
 {
-    public static async Task<IEnumerable<ISignal>> GetSignalsFromWorkItemsAsync(this IStorageProvider storageProvider)
+    public static async Task<IEnumerable<Signal>> GetSignalsFromWorkItemsAsync(this IStorageProvider storageProvider)
     {
         var workItems = await storageProvider.GetWorkItemsAsync();
         var signalTasks = workItems

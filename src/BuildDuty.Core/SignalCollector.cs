@@ -45,5 +45,5 @@ public abstract class SignalCollector<TConfig> : ISignalCollector
         }
     }
 
-    protected abstract Task<List<ISignal>> CollectCoreAsync();
+    protected abstract Task<List<Signal>> CollectCoreAsync();
 }

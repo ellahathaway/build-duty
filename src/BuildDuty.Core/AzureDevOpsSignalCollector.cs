@@ -20,13 +20,13 @@ public class AzureDevOpsSignalCollector : SignalCollector<AzureDevOpsConfig>
         _branchResolver = branchResolver;
     }
 
-    protected override async Task<List<ISignal>> CollectCoreAsync()
+    protected override async Task<List<Signal>> CollectCoreAsync()
     {
         var pipelineSignals = (await StorageProvider.GetSignalsFromWorkItemsAsync())
             .Where(s => s.Type == SignalType.AzureDevOpsPipeline)
             .OfType<AzureDevOpsPipelineSignal>();
 
-        var collectedSignals = new List<ISignal>();
+        var collectedSignals = new List<Signal>();
         foreach (var organization in Config.Organizations)
         {
             var buildClient = await GetBuildClientAsync(organization.Url);
@@ -83,22 +83,24 @@ public class AzureDevOpsSignalCollector : SignalCollector<AzureDevOpsConfig>
                 continue;
             }
 
-            var existingSignal = existingSignals.FirstOrDefault(s => s.Info.Build.Id == build.Id);
+            var signal = new AzureDevOpsPipelineSignal(build, timelineRecords);
+            var existingSignal = existingSignals.FirstOrDefault(s => s.TypedInfo.Build.Id == build.Id);
 
             if (existingSignal == null)
             {
-                signals.Add(new AzureDevOpsPipelineSignal(new AzureDevOpsPipelineInfo(build, timelineRecords)));
+                signals.Add(signal);
                 continue;
             }
             
-            if (existingSignal.Info.Build.Result == buildResult
-                && HasSameTimelineRecords(existingSignal.Info.TimelineRecords, timelineRecords))
+            if (existingSignal.TypedInfo.Build.Result == buildResult
+                && HasSameTimelineRecords(existingSignal.TypedInfo.TimelineRecords, timelineRecords))
             {
                 continue;
             }
 
-            existingSignal.Info = new AzureDevOpsPipelineInfo(build, timelineRecords);
-            signals.Add(existingSignal);
+            signal.Id = existingSignal.Id; // Preserve the same ID for updates
+            signal.WorkItemIds = existingSignal.WorkItemIds; // Preserve linked work items
+            signals.Add(signal);
         }
 
         return signals;

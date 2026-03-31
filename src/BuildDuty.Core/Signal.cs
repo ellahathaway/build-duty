@@ -1,28 +1,18 @@
+using System.Text.Json;
+
 namespace BuildDuty.Core;
 
-public interface ISignal
+public abstract class Signal
 {
-    string Id { get; }
-    SignalType Type { get; }
-    object Info { get; }
-    string? Summary { get; set; }
-    List<string> WorkItemIds { get; }
-}
-
-public abstract class Signal<TInfo> : ISignal
-    where TInfo : class
-{
-    public string Id { get; init; } = IdGenerator.NewSignalId();
+    public string Id { get; set; } = IdGenerator.NewSignalId();
 
     public abstract SignalType Type { get; }
 
-    public required TInfo Info { get; set; }
+    public required JsonElement Info { get; set; }
 
     public string? Summary { get; set; }
 
-    public List<string> WorkItemIds { get; set; } = [];
-
-    object ISignal.Info => Info;
+    public List<string> WorkItemIds { get; set; } = new();
 }
 
 public enum SignalType
