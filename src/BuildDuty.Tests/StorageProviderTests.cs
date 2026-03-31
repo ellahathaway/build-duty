@@ -1,6 +1,7 @@
 using BuildDuty.Core;
 using BuildDuty.Core.Models;
 using NSubstitute;
+using Octokit;
 using Xunit;
 
 namespace BuildDuty.Tests;
@@ -75,5 +76,88 @@ public class StorageProviderTests : IDisposable
     public async Task GetWorkItemAsync_NotFound_Throws()
     {
         await Assert.ThrowsAsync<FileNotFoundException>(() => _provider.GetWorkItemAsync("nonexistent"));
+    }
+
+    [Fact]
+    public async Task SaveAndGetSignal_GitHubIssue_RoundTrips()
+    {
+        var user = new User();
+        var createdAt = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var issue = new Issue(
+            url: "https://api.github.com/repos/dotnet/runtime/issues/1",
+            htmlUrl: "https://github.com/dotnet/runtime/issues/1",
+            commentsUrl: "", eventsUrl: "",
+            number: 1, state: ItemState.Open, title: "Test issue", body: "",
+            closedBy: null, user: user, labels: [], assignee: null, assignees: [],
+            milestone: null, comments: 0, pullRequest: null,
+            closedAt: null, createdAt: createdAt, updatedAt: null,
+            id: 1, nodeId: "", locked: false, repository: null,
+            reactions: null, stateReason: null, activeLockReason: null);
+
+        var signal = new GitHubIssueSignal(issue) { Summary = "A summary" };
+        await _provider.SaveSignalAsync(signal);
+
+        var loaded = (GitHubIssueSignal)await _provider.GetSignalAsync(signal.Id);
+        Assert.Equal(signal.Id, loaded.Id);
+        Assert.Equal(SignalType.GitHubIssue, loaded.Type);
+        Assert.Equal("Test issue", loaded.Info.Title);
+        Assert.Equal(ItemState.Open, loaded.Info.State.Value);
+        Assert.Equal("A summary", loaded.Summary);
+    }
+
+    [Fact]
+    public async Task SaveAndGetSignal_GitHubPullRequest_RoundTrips()
+    {
+        var user = new User();
+        var createdAt = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var pr = new PullRequest(
+            id: 10, nodeId: "",
+            url: "https://api.github.com/repos/dotnet/sdk/pulls/10",
+            htmlUrl: "https://github.com/dotnet/sdk/pull/10",
+            diffUrl: "", patchUrl: "", issueUrl: "", statusesUrl: "",
+            number: 10, state: ItemState.Open, title: "Update deps", body: "",
+            createdAt: createdAt, updatedAt: createdAt,
+            closedAt: null, mergedAt: null,
+            head: null, @base: null, user: user,
+            assignee: null, assignees: [], draft: false,
+            mergeable: null, mergeableState: null, mergedBy: null,
+            mergeCommitSha: "", comments: 0, commits: 0,
+            additions: 0, deletions: 0, changedFiles: 0,
+            milestone: null, locked: false, maintainerCanModify: null,
+            requestedReviewers: [], requestedTeams: [], labels: [],
+            activeLockReason: null);
+
+        var signal = new GitHubPullRequestSignal(pr);
+        await _provider.SaveSignalAsync(signal);
+
+        var loaded = (GitHubPullRequestSignal)await _provider.GetSignalAsync(signal.Id);
+        Assert.Equal(signal.Id, loaded.Id);
+        Assert.Equal(SignalType.GitHubPullRequest, loaded.Type);
+        Assert.Equal("Update deps", loaded.Info.Title);
+        Assert.Equal(ItemState.Open, loaded.Info.State.Value);
+    }
+
+    [Fact]
+    public async Task GetSignalJsonAsync_GitHubIssue_ReturnsJson()
+    {
+        var user = new User();
+        var createdAt = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var issue = new Issue(
+            url: "https://api.github.com/repos/dotnet/runtime/issues/2",
+            htmlUrl: "https://github.com/dotnet/runtime/issues/2",
+            commentsUrl: "", eventsUrl: "",
+            number: 2, state: ItemState.Closed, title: "Closed issue", body: "",
+            closedBy: null, user: user, labels: [], assignee: null, assignees: [],
+            milestone: null, comments: 0, pullRequest: null,
+            closedAt: null, createdAt: createdAt, updatedAt: null,
+            id: 2, nodeId: "", locked: false, repository: null,
+            reactions: null, stateReason: null, activeLockReason: null);
+
+        var signal = new GitHubIssueSignal(issue);
+        await _provider.SaveSignalAsync(signal);
+
+        var json = await _provider.GetSignalJsonAsync(signal.Id);
+        Assert.Contains("\"title\": \"Closed issue\"", json);
+        Assert.Contains("\"state\": \"closed\"", json);
     }
 }

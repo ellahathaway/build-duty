@@ -25,6 +25,7 @@ public sealed class StorageProvider : IStorageProvider
         Converters =
         {
             new JsonStringEnumConverter(),
+            new OctokitStringEnumConverterFactory(),
             new SignalConverter(),
         }
     };
@@ -94,6 +95,7 @@ public sealed class StorageProvider : IStorageProvider
             Converters =
             {
                 new JsonStringEnumConverter(),
+                new OctokitStringEnumConverterFactory(),
             }
         };
 
@@ -162,5 +164,34 @@ internal sealed class SignalConverter : JsonConverter<ISignal>
         // Easiest: serialize the runtime type; it already has the "Type" property,
         // which will be written as "type" by default naming rules.
         JsonSerializer.Serialize(writer, (object)value, value.GetType(), options);
+    }
+}
+
+internal sealed class OctokitStringEnumConverterFactory : JsonConverterFactory
+{
+    public override bool CanConvert(Type typeToConvert)
+        => typeToConvert.IsGenericType &&
+           typeToConvert.GetGenericTypeDefinition() == typeof(Octokit.StringEnum<>);
+
+    public override JsonConverter? CreateConverter(Type typeToConvert, JsonSerializerOptions options)
+    {
+        Type enumType = typeToConvert.GetGenericArguments()[0];
+        Type converterType = typeof(StringEnumConverter<>).MakeGenericType(enumType);
+        return (JsonConverter)Activator.CreateInstance(converterType)!;
+    }
+
+    private sealed class StringEnumConverter<TEnum> : JsonConverter<Octokit.StringEnum<TEnum>>
+        where TEnum : struct
+    {
+        public override Octokit.StringEnum<TEnum> Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            var stringValue = reader.GetString() ?? throw new JsonException("Expected a string value for StringEnum.");
+            return new Octokit.StringEnum<TEnum>(stringValue);
+        }
+
+        public override void Write(Utf8JsonWriter writer, Octokit.StringEnum<TEnum> value, JsonSerializerOptions options)
+        {
+            writer.WriteStringValue(value.StringValue);
+        }
     }
 }
