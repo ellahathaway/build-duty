@@ -19,7 +19,7 @@ public class StorageTools
             AIFunctionFactory.Create(
                 async (string signalId) =>
                 {
-                    return await _storageProvider.GetSignalAsync(signalId);
+                    return await _storageProvider.GetSignalJsonAsync(signalId);
                 },
                 "get_signal",
                 "Get full signal details by ID as JSON."),

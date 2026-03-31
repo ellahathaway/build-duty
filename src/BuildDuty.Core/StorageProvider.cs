@@ -10,6 +10,7 @@ public interface IStorageProvider
     Task<ICollection<WorkItem>> GetWorkItemsAsync();
     Task SaveSignalAsync(ISignal signal);
     Task<ISignal> GetSignalAsync(string signalId);
+    Task<string> GetSignalJsonAsync(string signalId);
     Task SaveTriageRunAsync(TriageRun triageRun);
     Task<TriageRun> GetTriageRunAsync(string triageId);
 }
@@ -70,6 +71,12 @@ public sealed class StorageProvider : IStorageProvider
 
     public async Task<ISignal> GetSignalAsync(string signalId)
         => await LoadFromJsonFileAsync<ISignal>(GetSignalFilePath(signalId));
+
+    public async Task<string> GetSignalJsonAsync(string signalId)
+    {
+        var signal = await GetSignalAsync(signalId);
+        return JsonSerializer.Serialize(signal, signal.GetType(), s_options);
+    }
 
     public async Task SaveTriageRunAsync(TriageRun triageRun)
         => await SaveToJsonFileAsync(GetTriageRunFilePath(triageRun.Id), triageRun);
