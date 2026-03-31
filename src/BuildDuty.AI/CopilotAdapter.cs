@@ -1,6 +1,7 @@
 using BuildDuty.Core;
 using GitHub.Copilot.SDK;
 using Microsoft.Extensions.AI;
+using System.Text;
 
 namespace BuildDuty.AI;
 
@@ -11,6 +12,8 @@ namespace BuildDuty.AI;
 /// </summary>
 public class CopilotAdapter : IAsyncDisposable
 {
+    private static readonly object s_logWriteLock = new();
+
     private readonly IBuildDutyConfigProvider _configProvider;
     private readonly IStorageProvider _storageProvider;
     private readonly StorageTools _storageTools;
@@ -35,6 +38,10 @@ public class CopilotAdapter : IAsyncDisposable
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(signalId);
 
+        var logPath = CreateAgentLogFilePath("summarize", signalId);
+        await using var logWriter = CreateLogWriter(logPath);
+        await LogAsync(logWriter, $"start summarize signalId={signalId}");
+
         _client ??= new CopilotClient(new CopilotClientOptions());
         await _client.StartAsync();
 
@@ -44,6 +51,7 @@ public class CopilotAdapter : IAsyncDisposable
         };
 
         var signal = await _storageProvider.GetSignalAsync(signalId);
+        await LogAsync(logWriter, $"loaded signal signalId={signalId}; type={signal.Type}");
         var summarizeMcpServers = signal.Type == SignalType.AzureDevOpsPipeline
             ? AzureDevOpsPipelineServers()
             : new Dictionary<string, object>();
@@ -55,6 +63,36 @@ public class CopilotAdapter : IAsyncDisposable
             tools: _storageTools.GetTools(),
             model: _configProvider.Get().Ai?.Model);
 
+        session.On(e =>
+        {
+            switch (e)
+            {
+                case ToolExecutionStartEvent toolStart:
+                {
+                    var toolName = toolStart.Data?.McpToolName ?? toolStart.Data?.ToolName ?? "?";
+                    var server = toolStart.Data?.McpServerName;
+                    var fqToolName = server is null ? toolName : $"{server}/{toolName}";
+                    var argsText = toolStart.Data?.Arguments?.ToString();
+                    var message = string.IsNullOrWhiteSpace(argsText)
+                        ? $"tool-start: {fqToolName}"
+                        : $"tool-start: {fqToolName}; args={argsText}";
+                    LogSync(logWriter, message);
+                    break;
+                }
+
+                case ToolExecutionCompleteEvent toolEnd:
+                {
+                    var success = toolEnd.Data?.Success == true;
+                    LogSync(logWriter, success ? "tool-end: success=True" : "tool-end: success=False");
+                    break;
+                }
+
+                case SessionErrorEvent sessionError:
+                    LogSync(logWriter, $"session-error: {sessionError.Data}");
+                    break;
+            }
+        });
+
         var prompt = $"""
             Perform the following action on the given signal id:
 
@@ -62,12 +100,24 @@ public class CopilotAdapter : IAsyncDisposable
 
             SignalId: {signalId}
             """;
+        await LogAsync(logWriter, $"prompt: {prompt.Replace("\r", " ").Replace("\n", " ")}");
 
-        var response = await session.SendAndWaitAsync(
-            new MessageOptions { Prompt = prompt },
-            timeout: TimeSpan.FromMinutes(5));
+        try
+        {
+            var response = await session.SendAndWaitAsync(
+                new MessageOptions { Prompt = prompt },
+                timeout: TimeSpan.FromMinutes(5));
 
-        return response?.Data?.Content ?? "(no response)";
+            var content = response?.Data?.Content ?? "(no response)";
+            await LogAsync(logWriter, $"response: {content}");
+            await LogAsync(logWriter, "completed summarize");
+            return content;
+        }
+        catch (Exception ex)
+        {
+            await LogAsync(logWriter, $"error summarize: {ex}");
+            throw;
+        }
     }
 
     /// <summary>
@@ -81,6 +131,10 @@ public class CopilotAdapter : IAsyncDisposable
         {
             return "(no signals)";
         }
+
+        var logPath = CreateAgentLogFilePath("reconcile", string.Join("_", signalIds.Take(3)));
+        await using var logWriter = CreateLogWriter(logPath);
+        await LogAsync(logWriter, $"start reconcile signalCount={signalIds.Count}");
 
         _client ??= new CopilotClient(new CopilotClientOptions());
         await _client.StartAsync();
@@ -97,6 +151,36 @@ public class CopilotAdapter : IAsyncDisposable
             tools: _storageTools.GetTools(),
             model: _configProvider.Get().Ai?.Model);
 
+        session.On(e =>
+        {
+            switch (e)
+            {
+                case ToolExecutionStartEvent toolStart:
+                {
+                    var toolName = toolStart.Data?.McpToolName ?? toolStart.Data?.ToolName ?? "?";
+                    var server = toolStart.Data?.McpServerName;
+                    var fqToolName = server is null ? toolName : $"{server}/{toolName}";
+                    var argsText = toolStart.Data?.Arguments?.ToString();
+                    var message = string.IsNullOrWhiteSpace(argsText)
+                        ? $"tool-start: {fqToolName}"
+                        : $"tool-start: {fqToolName}; args={argsText}";
+                    LogSync(logWriter, message);
+                    break;
+                }
+
+                case ToolExecutionCompleteEvent toolEnd:
+                {
+                    var success = toolEnd.Data?.Success == true;
+                    LogSync(logWriter, success ? "tool-end: success=True" : "tool-end: success=False");
+                    break;
+                }
+
+                case SessionErrorEvent sessionError:
+                    LogSync(logWriter, $"session-error: {sessionError.Data}");
+                    break;
+            }
+        });
+
         var prompt = $"""
             Perform the following action on the given set of signal ids:
 
@@ -105,12 +189,24 @@ public class CopilotAdapter : IAsyncDisposable
             SignalIds:
             {string.Join('\n', signalIds.Select(id => $"- {id}"))}
             """;
+        await LogAsync(logWriter, $"prompt: {prompt.Replace("\r", " ").Replace("\n", " ")}");
 
-        var response = await session.SendAndWaitAsync(
-            new MessageOptions { Prompt = prompt },
-            timeout: TimeSpan.FromMinutes(10));
+        try
+        {
+            var response = await session.SendAndWaitAsync(
+                new MessageOptions { Prompt = prompt },
+                timeout: TimeSpan.FromMinutes(10));
 
-        return response?.Data?.Content ?? "(no response)";
+            var content = response?.Data?.Content ?? "(no response)";
+            await LogAsync(logWriter, $"response: {content}");
+            await LogAsync(logWriter, "completed reconcile");
+            return content;
+        }
+        catch (Exception ex)
+        {
+            await LogAsync(logWriter, $"error reconcile: {ex}");
+            throw;
+        }
     }
 
     public async ValueTask DisposeAsync()
@@ -142,6 +238,46 @@ public class CopilotAdapter : IAsyncDisposable
                     ["GIT_TERMINAL_PROMPT"] = "0",
                 },
             });
+    }
+
+    private string CreateAgentLogFilePath(string action, string key)
+    {
+        var configName = _configProvider.Get().Name;
+        var root = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".build-duty",
+            configName,
+            "agent-logs");
+        Directory.CreateDirectory(root);
+
+        var safeKey = string.Join("_", key.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries));
+        if (string.IsNullOrWhiteSpace(safeKey))
+        {
+            safeKey = "signal";
+        }
+
+        return Path.Combine(root, $"{DateTime.UtcNow:yyyyMMdd-HHmmss-fff}-{action}-{safeKey}.log");
+    }
+
+    private static StreamWriter CreateLogWriter(string logPath)
+    {
+        var stream = new FileStream(logPath, FileMode.Create, FileAccess.Write, FileShare.Read);
+        return new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+    }
+
+    private static Task LogAsync(StreamWriter writer, string message)
+    {
+        LogSync(writer, message);
+        return Task.CompletedTask;
+    }
+
+    private static void LogSync(StreamWriter writer, string message)
+    {
+        lock (s_logWriteLock)
+        {
+            writer.WriteLine($"[{DateTime.UtcNow:O}] {message}");
+            writer.Flush();
+        }
     }
 
 //     /// <summary>
