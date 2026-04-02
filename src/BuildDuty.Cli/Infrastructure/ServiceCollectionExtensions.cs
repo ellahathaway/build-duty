@@ -21,14 +21,12 @@ internal static class ServiceCollectionExtensions
     {
         services
             .AddBuildDutyConfigProvider()
-            .AddAzureDevOpsSignalCollection()
-            .AddGitHubSignalCollection()
-            .AddStorageProvider();
+            .AddStorageProvider()
+            .AddRemoteTokenProvider();
 
-        services.TryAddSingleton<IRemoteTokenProvider>(sp => new RemoteTokenProvider(
-            sp.GetRequiredKeyedService<IRemoteTokenProvider>("azdo"),
-            sp.GetRequiredKeyedService<IRemoteTokenProvider>("github")));
-
+        services.TryAddTransient<GitHubSignalCollector>();
+        services.TryAddSingleton<ReleaseBranchResolver>();
+        services.TryAddTransient<AzureDevOpsSignalCollector>();
         services.AddSingleton<ISignalCollectorFactory, SignalCollectorFactory>();
 
         return services;
@@ -43,10 +41,15 @@ internal static class ServiceCollectionExtensions
         return services;
     }
 
-    private static IServiceCollection AddAzureDevOpsSignalCollection(this IServiceCollection services)
+    private static IServiceCollection AddStorageProvider(this IServiceCollection services)
     {
-        services.TryAddSingleton<ReleaseBranchResolver>();
+        services.TryAddSingleton<IStorageProvider, StorageProvider>();
+        return services;
+    }
 
+    private static IServiceCollection AddRemoteTokenProvider(this IServiceCollection services)
+    {
+        // Azure DevOps token provider
         services.TryAddKeyedSingleton<IRemoteTokenProvider>("azdo", (_, _) =>
         {
             var options = new AzureDevOpsTokenProviderOptions
@@ -56,27 +59,13 @@ internal static class ServiceCollectionExtensions
             return AzureDevOpsTokenProvider.FromStaticOptions(options);
         });
 
-        services.TryAddTransient<AzureDevOpsSignalCollector>();
-
-        return services;
-    }
-
-    private static IServiceCollection AddGitHubSignalCollection(this IServiceCollection services)
-    {
+        // GitHub token provider
         services.TryAddSingleton<IProcessManager>(sp =>
             new ProcessManager(sp.GetRequiredService<ILogger<ProcessManager>>(), "git"));
         services.TryAddSingleton<GitHubTokenProvider>();
         services.TryAddKeyedSingleton<IRemoteTokenProvider>("github", (sp, _) =>
             sp.GetRequiredService<GitHubTokenProvider>());
 
-        services.TryAddTransient<GitHubSignalCollector>();
-
-        return services;
-    }
-
-    private static IServiceCollection AddStorageProvider(this IServiceCollection services)
-    {
-        services.TryAddSingleton<IStorageProvider, StorageProvider>();
         return services;
     }
 }

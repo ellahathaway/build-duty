@@ -12,6 +12,8 @@ public interface IStorageProvider
     Task<Signal> GetSignalAsync(string signalId);
     Task SaveTriageRunAsync(TriageRun triageRun);
     Task<TriageRun> GetTriageRunAsync(string triageId);
+    Task<string> SaveSignalLogAsync(string signalId, string logId, Stream logsStream);
+    Task<string> GetSignalLogPathAsync(string signalId, string logId);
 }
 
 public sealed class StorageProvider : IStorageProvider
@@ -77,6 +79,26 @@ public sealed class StorageProvider : IStorageProvider
     public async Task<TriageRun> GetTriageRunAsync(string triageRunId)
         => await LoadFromJsonFileAsync<TriageRun>(GetTriageRunFilePath(triageRunId));
 
+    public async Task<string> SaveSignalLogAsync(string signalId, string logId, Stream logsStream)
+    {
+        var logFile = GetSignalLogFilePath(signalId, logId);
+        if (!Directory.Exists(Path.GetDirectoryName(logFile)))
+        {
+            throw new DirectoryNotFoundException($"Signal directory not found for signal ID '{signalId}'.");
+        }
+        using var fileStream = File.Create(logFile);
+        await logsStream.CopyToAsync(fileStream);
+        return logFile;
+    }
+
+    public async Task<string> GetSignalLogPathAsync(string signalId, string logId)
+    {
+        var logFile = GetSignalLogFilePath(signalId, logId);
+        return File.Exists(logFile)
+            ? logFile
+            : throw new FileNotFoundException($"Log file '{logId}' not found for signal ID '{signalId}'.");
+    }
+
     private static async Task SaveToJsonFileAsync(string filePath, object data)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
@@ -102,12 +124,13 @@ public sealed class StorageProvider : IStorageProvider
     }
 
     private string GetWorkItemsDirectory() => Path.Combine(_rootDirectory.Value, "workitems");
-    private string GetSignalsDirectory() => Path.Combine(_rootDirectory.Value, "signals");
+    private string GetSignalDirectory(string signalId) => Path.Combine(_rootDirectory.Value, "signals", signalId);
     private string GetTriageRunsDirectory() => Path.Combine(_rootDirectory.Value, "triage");
 
     private string GetWorkItemFilePath(string workItemId) => Path.Combine(GetWorkItemsDirectory(), $"{workItemId}.json");
-    private string GetSignalFilePath(string signalId) => Path.Combine(GetSignalsDirectory(), $"{signalId}.json");
+    private string GetSignalFilePath(string signalId) => Path.Combine(GetSignalDirectory(signalId), $"{signalId}.json");
     private string GetTriageRunFilePath(string triageRunId) => Path.Combine(GetTriageRunsDirectory(), $"{triageRunId}.json");
+    private string GetSignalLogFilePath(string signalId, string logId) => Path.Combine(GetSignalDirectory(signalId), $"{logId}.log");
 }
 
 internal sealed class SignalJsonConverter : JsonConverter<Signal>

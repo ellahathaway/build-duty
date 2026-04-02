@@ -17,13 +17,12 @@ Use the matching reference based on signal type:
 ## Workflow
 1. Read the provided `signalId`.
 2. Load signal data once using `get_signal(signalId)`.
-3. Determine source type and apply the matching reference.
+3. Determine source type and use the matching reference document for instructions and evidence selection.
 4. Write a concise summary (1 sentence preferred, max 2).
 5. Persist with `update_signal_summary(signalId, summary)`.
 
 ## Speed constraints
 - Do not call external services or MCP tools.
-- Do not perform additional lookups beyond `get_signal`.
 - Do not include markdown, bullets, or JSON in the summary.
 - Prefer <= 220 characters unless critical details require more.
 

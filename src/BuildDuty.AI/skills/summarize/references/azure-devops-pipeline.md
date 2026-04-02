@@ -4,20 +4,26 @@
 
 Use for Azure DevOps pipeline run signals.
 
+## Goal
+
+Summarize both:
+- what happened in the pipeline run
+- why it happened (best supported cause)
+
 ## Signal info
 
-Use stored signal payload only (run metadata + timeline records when present).
-Do not fetch external logs during summarization.
+Use stored signal payload (run metadata + timeline records) to determine the what.
+Use logs to determine the why, in this order:
+- `get_timeline_record_logs(signalId)` first
+- `get_build_logs(signalId)` only when timeline logs are unavailable or empty
 
 ## Summary focus
 
-- build result/status
-- most relevant failing or warning timeline point (`Stage > Job > Task`) when available
-- concrete cause text from existing issues/messages in the stored payload
-- impact context (what is blocked) when obvious
+- what failed (result/status + failing scope, e.g. `Stage > Job > Task`)
+- why it failed (specific error/cause from timeline/build logs)
+- impact when obvious (what is blocked)
 
 ## Keep it concise
 - 1 sentence preferred, max 2.
-- If cause is unknown, state the observed failing scope without speculation.
+- If why is unknown, state only the observed outcome scope without speculation.
 - No markdown or bullet formatting in final summary text.
-

@@ -1,14 +1,13 @@
 using BuildDuty.Core.Models;
 using Maestro.Common;
 using Microsoft.TeamFoundation.Build.WebApi;
-using Microsoft.VisualStudio.Services.OAuth;
-using Microsoft.VisualStudio.Services.WebApi;
 
 namespace BuildDuty.Core;
 
 public class AzureDevOpsSignalCollector : SignalCollector<AzureDevOpsConfig>
 {
     private readonly ReleaseBranchResolver _branchResolver;
+    private record OrganizationProjectContext(string OrganizationUrl, string ProjectName, BuildHttpClient BuildClient);
 
     public AzureDevOpsSignalCollector(
         AzureDevOpsConfig config,
@@ -29,16 +28,15 @@ public class AzureDevOpsSignalCollector : SignalCollector<AzureDevOpsConfig>
         var collectedSignals = new List<Signal>();
         foreach (var organization in Config.Organizations)
         {
-            var buildClient = await GetBuildClientAsync(organization.Url);
+            var buildClient = await TokenProvider.GetAzureDevOpsBuildClientAsync(organization.Url);
 
             foreach (var project in organization.Projects)
             {
-                var context = new OrganizationProjectContext
-                {
-                    OrganizationUrl = organization.Url,
-                    ProjectName = project.Name,
-                    BuildClient = buildClient,
-                };
+                var context = new OrganizationProjectContext(
+                    organization.Url,
+                    project.Name,
+                    buildClient
+                );
 
                 var projectSignals = await CollectPipelineSignalsAsync(context, project.Pipelines, pipelineSignals);
                 collectedSignals.AddRange(projectSignals);
@@ -83,7 +81,7 @@ public class AzureDevOpsSignalCollector : SignalCollector<AzureDevOpsConfig>
                 continue;
             }
 
-            var signal = new AzureDevOpsPipelineSignal(build, timelineRecords);
+            var signal = new AzureDevOpsPipelineSignal(context.OrganizationUrl, build, timelineRecords);
             var existingSignal = existingSignals.FirstOrDefault(s => s.TypedInfo.Build.Id == build.Id);
 
             if (existingSignal == null)
@@ -223,28 +221,6 @@ public class AzureDevOpsSignalCollector : SignalCollector<AzureDevOpsConfig>
             return record.RecordType.Equals(filter.Type.ToString(), StringComparison.OrdinalIgnoreCase) &&
                    filter.Names.Any(name => name.IsMatch(record.Name));
         }
-    }
-
-    protected virtual async Task<BuildHttpClient> GetBuildClientAsync(string organizationUrl)
-    {
-        // Ensure trailing slash so Maestro's AzureDevOpsTokenProvider regex can extract the account name
-        var repoUrl = organizationUrl.TrimEnd('/') + "/";
-        var token = await TokenProvider.GetTokenForRepositoryAsync(repoUrl);
-        if (string.IsNullOrWhiteSpace(token))
-        {
-            throw new InvalidOperationException($"No access token available for Azure DevOps organization '{organizationUrl}'.");
-        }
-
-        var credentials = new VssOAuthAccessTokenCredential(token);
-        var connection = new VssConnection(new Uri(organizationUrl), credentials);
-        return connection.GetClient<BuildHttpClient>();
-    }
-
-    private record OrganizationProjectContext
-    {
-        public required string OrganizationUrl { get; init; }
-        public required string ProjectName { get; init; }
-        public required BuildHttpClient BuildClient { get; init; }
     }
 
     private async Task<List<string>> ResolveBranchesAsync(
