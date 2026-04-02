@@ -93,8 +93,15 @@ internal sealed class TriageCommand : BaseCommand<TriageSettings>
                 var summarizeTasks = collectedSignalIds.Select(signalId => Task.Run(async () =>
                 {
                     await semaphore.WaitAsync();
-                    await _copilotAdapter.RunSignalActionAsync(signalId, summarizePrompt);
-                    semaphore.Release();
+                    try
+                    {
+                        await _copilotAdapter.RunSignalActionAsync(signalId, summarizePrompt);
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                        progressTask.Increment(1);
+                    }
                 }));
 
                 await Task.WhenAll(summarizeTasks);

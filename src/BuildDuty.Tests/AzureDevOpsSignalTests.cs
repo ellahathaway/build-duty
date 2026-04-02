@@ -35,6 +35,14 @@ public class AzureDevOpsPipelineSignalTests
         return timeline;
     }
 
+    private static AzureDevOpsTimelineRecordInfo ToInfoRecord(TimelineRecord record) => new(
+        record.Id,
+        record.Result,
+        record.RecordType,
+        record.Name,
+        [],
+        record.Log?.Id);
+
     private static AzureDevOpsConfig CreateConfig(int pipelineId, List<string> branches, List<BuildResult>? status = null) => new()
     {
         Organizations =
@@ -134,7 +142,7 @@ public class AzureDevOpsPipelineSignalTests
         var storageProvider = Substitute.For<IStorageProvider>();
         storageProvider.GetWorkItemsAsync()
             .Returns([]);
-        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
 
         var buildClient = CreateMockBuildClient(build, timeline);
         var config = CreateConfig(1, ["refs/heads/main"]);
@@ -144,13 +152,13 @@ public class AzureDevOpsPipelineSignalTests
 
         var signals = storageProvider.ReceivedCalls()
             .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
-            .Select(call => (ISignal)call.GetArguments()[0]!)
+            .Select(call => (Signal)call.GetArguments()[0]!)
             .ToList();
 
         var signal = Assert.Single(signals);
         var pipelineSignal = Assert.IsType<AzureDevOpsPipelineSignal>(signal);
-        Assert.Equal(100, pipelineSignal.Info.Build.Id);
-        Assert.Equal(BuildResult.Failed, pipelineSignal.Info.Build.Result);
+        Assert.Equal(100, pipelineSignal.TypedInfo.Build.Id);
+        Assert.Equal(BuildResult.Failed, pipelineSignal.TypedInfo.Build.Result);
         Assert.Empty(pipelineSignal.WorkItemIds);
     }
 
@@ -163,9 +171,9 @@ public class AzureDevOpsPipelineSignalTests
         var timeline = CreateTimeline(record);
 
         var existingSignal = new AzureDevOpsPipelineSignal(
-            new AzureDevOpsPipelineInfo(
-                build,
-                [CreateTimelineRecord(id: recordId, result: TaskResult.Failed)]))
+            "https://dev.azure.com/testorg",
+            build,
+            [ToInfoRecord(CreateTimelineRecord(id: recordId, result: TaskResult.Failed))])
         {
             WorkItemIds = ["wi-1"],
         };
@@ -179,7 +187,7 @@ public class AzureDevOpsPipelineSignalTests
             }
         ]);
         storageProvider.GetSignalAsync(existingSignal.Id).Returns(existingSignal);
-        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
 
         var buildClient = CreateMockBuildClient(build, timeline);
         var config = CreateConfig(1, ["refs/heads/main"]);
@@ -198,7 +206,7 @@ public class AzureDevOpsPipelineSignalTests
     {
         var existingBuild = CreateBuild(100, BuildResult.PartiallySucceeded);
         var existingRecord = CreateTimelineRecord(result: TaskResult.SucceededWithIssues);
-        var existingSignal = new AzureDevOpsPipelineSignal(new AzureDevOpsPipelineInfo(existingBuild, [existingRecord]))
+        var existingSignal = new AzureDevOpsPipelineSignal("https://dev.azure.com/testorg", existingBuild, [ToInfoRecord(existingRecord)])
         {
             WorkItemIds = ["wi-1", "wi-2"],
         };
@@ -216,7 +224,7 @@ public class AzureDevOpsPipelineSignalTests
             }
         ]);
         storageProvider.GetSignalAsync(existingSignal.Id).Returns(existingSignal);
-        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
 
         var buildClient = CreateMockBuildClient(currentBuild, timeline);
         var config = CreateConfig(1, ["refs/heads/main"]);
@@ -226,12 +234,12 @@ public class AzureDevOpsPipelineSignalTests
 
         var signals = storageProvider.ReceivedCalls()
             .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
-            .Select(call => (ISignal)call.GetArguments()[0]!)
+            .Select(call => (Signal)call.GetArguments()[0]!)
             .ToList();
 
         var signal = Assert.Single(signals);
         var pipelineSignal = Assert.IsType<AzureDevOpsPipelineSignal>(signal);
-        Assert.Equal(BuildResult.Failed, pipelineSignal.Info.Build.Result);
+        Assert.Equal(BuildResult.Failed, pipelineSignal.TypedInfo.Build.Result);
         Assert.Equal(["wi-1", "wi-2"], pipelineSignal.WorkItemIds);
     }
 
@@ -240,7 +248,7 @@ public class AzureDevOpsPipelineSignalTests
     {
         var build = CreateBuild(100, BuildResult.Failed);
         var existingRecord = CreateTimelineRecord(result: TaskResult.Failed);
-        var existingSignal = new AzureDevOpsPipelineSignal(new AzureDevOpsPipelineInfo(build, [existingRecord]))
+        var existingSignal = new AzureDevOpsPipelineSignal("https://dev.azure.com/testorg", build, [ToInfoRecord(existingRecord)])
         {
             WorkItemIds = ["wi-5"],
         };
@@ -257,7 +265,7 @@ public class AzureDevOpsPipelineSignalTests
             }
         ]);
         storageProvider.GetSignalAsync(existingSignal.Id).Returns(existingSignal);
-        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
 
         var buildClient = CreateMockBuildClient(build, timeline);
         var config = CreateConfig(1, ["refs/heads/main"]);
@@ -267,7 +275,7 @@ public class AzureDevOpsPipelineSignalTests
 
         var signals = storageProvider.ReceivedCalls()
             .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
-            .Select(call => (ISignal)call.GetArguments()[0]!)
+            .Select(call => (Signal)call.GetArguments()[0]!)
             .ToList();
 
         var signal = Assert.Single(signals);
@@ -285,7 +293,7 @@ public class AzureDevOpsPipelineSignalTests
         var storageProvider = Substitute.For<IStorageProvider>();
         storageProvider.GetWorkItemsAsync()
             .Returns([]);
-        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
 
         var buildClient = CreateMockBuildClient(build, timeline);
         var config = CreateConfig(1, ["refs/heads/main"], [BuildResult.Failed]);
@@ -308,7 +316,7 @@ public class AzureDevOpsPipelineSignalTests
         var storageProvider = Substitute.For<IStorageProvider>();
         storageProvider.GetWorkItemsAsync()
             .Returns([]);
-        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
 
         var buildClient = CreateMockBuildClient(build, timeline);
         var config = CreateConfig(1, ["refs/heads/main"]);
@@ -328,7 +336,7 @@ public class AzureDevOpsPipelineSignalTests
         var storageProvider = Substitute.For<IStorageProvider>();
         storageProvider.GetWorkItemsAsync()
             .Returns([]);
-        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
 
         var buildClient = CreateMockBuildClient(null);
         var config = CreateConfig(1, ["refs/heads/main"]);
@@ -352,7 +360,7 @@ public class AzureDevOpsPipelineSignalTests
         var storageProvider = Substitute.For<IStorageProvider>();
         storageProvider.GetWorkItemsAsync()
             .Returns([]);
-        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
 
         var client = Substitute.For<BuildHttpClient>(new Uri("https://dev.azure.com/test"), new VssCredentials());
         client.GetBuildsAsync(
@@ -418,11 +426,11 @@ public class AzureDevOpsPipelineSignalTests
 
         var signals = storageProvider.ReceivedCalls()
             .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
-            .Select(call => (ISignal)call.GetArguments()[0]!)
+            .Select(call => (Signal)call.GetArguments()[0]!)
             .ToList();
 
         Assert.Equal(2, signals.Count);
-        var ids = signals.Cast<AzureDevOpsPipelineSignal>().Select(s => s.Info.Build.Id).OrderBy(x => x).ToList();
+        var ids = signals.Cast<AzureDevOpsPipelineSignal>().Select(s => s.TypedInfo.Build.Id).OrderBy(x => x).ToList();
         Assert.Equal([100, 200], ids);
     }
 
@@ -439,6 +447,6 @@ public class AzureDevOpsPipelineSignalTests
         Assert.False(AzureDevOpsSignalCollector.HasSameTimelineRecords(existing, differentResult));
         Assert.False(AzureDevOpsSignalCollector.HasSameTimelineRecords(existing, differentCount));
         Assert.False(AzureDevOpsSignalCollector.HasSameTimelineRecords(null, sameCurrent));
-        Assert.True(AzureDevOpsSignalCollector.HasSameTimelineRecords([], []));
+        Assert.True(AzureDevOpsSignalCollector.HasSameTimelineRecords(new List<TimelineRecord>(), new List<TimelineRecord>()));
     }
 }

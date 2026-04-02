@@ -28,7 +28,7 @@ public class AzureDevOpsSignalCollector : SignalCollector<AzureDevOpsConfig>
         var collectedSignals = new List<Signal>();
         foreach (var organization in Config.Organizations)
         {
-            var buildClient = await TokenProvider.GetAzureDevOpsBuildClientAsync(organization.Url);
+            var buildClient = await GetBuildClientAsync(organization.Url);
 
             foreach (var project in organization.Projects)
             {
@@ -45,6 +45,9 @@ public class AzureDevOpsSignalCollector : SignalCollector<AzureDevOpsConfig>
 
         return collectedSignals;
     }
+
+    protected virtual Task<BuildHttpClient> GetBuildClientAsync(string organizationUrl)
+        => TokenProvider.GetAzureDevOpsBuildClientAsync(organizationUrl);
 
     private async Task<List<AzureDevOpsPipelineSignal>> CollectPipelineSignalsAsync(
         OrganizationProjectContext context,
@@ -102,6 +105,22 @@ public class AzureDevOpsSignalCollector : SignalCollector<AzureDevOpsConfig>
         }
 
         return signals;
+    }
+
+    internal static bool HasSameTimelineRecords(
+        List<AzureDevOpsTimelineRecordInfo>? existing,
+        List<AzureDevOpsTimelineRecordInfo> current)
+    {
+        if (existing is null || existing.Count != current.Count)
+        {
+            return false;
+        }
+
+        var existingSet = existing
+            .Select(r => (r.Id, r.Result))
+            .ToHashSet();
+
+        return current.All(r => existingSet.Contains((r.Id, r.Result)));
     }
 
     internal static bool HasSameTimelineRecords(
@@ -177,7 +196,7 @@ public class AzureDevOpsSignalCollector : SignalCollector<AzureDevOpsConfig>
         }
     }
 
-    private static async Task<List<TimelineRecord>> GetTimelineRecordsAsync(
+    private static async Task<List<AzureDevOpsTimelineRecordInfo>> GetTimelineRecordsAsync(
         OrganizationProjectContext context,
         int buildId,
         List<TimelineFilter>? filters,
@@ -187,22 +206,120 @@ public class AzureDevOpsSignalCollector : SignalCollector<AzureDevOpsConfig>
         var timeline = await context.BuildClient.GetBuildTimelineAsync(context.ProjectName, buildId)
             ?? throw new InvalidOperationException($"Failed to retrieve timeline for build {buildId} in project {context.ProjectName}.");
 
-        List<TimelineRecord> matchingRecords = new List<TimelineRecord>();
-        foreach (var timelineRecord in timeline.Records)
+        var allRecords = timeline.Records?.ToList() ?? [];
+        var recordsById = allRecords.ToDictionary(r => r.Id, r => r);
+        var allowedResults = status?
+            .Select(result => GetTaskResult(result))
+            .OfType<TaskResult>()
+            .ToHashSet();
+
+        var nonSuccessRecords = allRecords.Where(r =>
+            r.Result is TaskResult result
+            && allowedResults?.Contains(result) == true)
+            .ToList();
+
+        var filteredNonSuccessRecords = ApplyFilters(nonSuccessRecords, allRecords, recordsById, filters);
+        var lowestRecords = GetLowestRecords(filteredNonSuccessRecords, recordsById);
+
+        return lowestRecords
+            .Select(r => ToRecordInfo(r, recordsById))
+            .ToList();
+
+        static List<TimelineRecord> ApplyFilters(
+            List<TimelineRecord> failing,
+            List<TimelineRecord> all,
+            Dictionary<Guid, TimelineRecord> byId,
+            List<TimelineFilter>? timelineFilters)
         {
-            // If the record doesn't have a result or its result doesn't match the configured status filters, skip it
-            if (!timelineRecord.Result.HasValue || status?.Any(s => GetTaskResult(s) == timelineRecord.Result.Value) != true)
+            if (timelineFilters == null || timelineFilters.Count == 0)
             {
-                continue;
+                return failing;
             }
 
-            if (filters == null || filters.Count == 0 || filters.Any(f => IsMatch(timelineRecord, f)))
+            var anchors = all.Where(r => timelineFilters.Any(f => IsMatch(r, f))).ToList();
+            if (anchors.Count == 0)
             {
-                matchingRecords.Add(timelineRecord);
+                return [];
+            }
+
+            var anchorIds = anchors.Select(a => a.Id).ToHashSet();
+            return failing.Where(r => IsSelfOrDescendantOfAny(r, anchorIds, byId)).ToList();
+
+            static bool IsSelfOrDescendantOfAny(
+                TimelineRecord record,
+                HashSet<Guid> anchorIds,
+                Dictionary<Guid, TimelineRecord> byId)
+            {
+                if (anchorIds.Contains(record.Id))
+                {
+                    return true;
+                }
+
+                var currentParentId = record.ParentId;
+                while (currentParentId is Guid parentId && byId.TryGetValue(parentId, out var parent))
+                {
+                    if (anchorIds.Contains(parent.Id))
+                    {
+                        return true;
+                    }
+
+                    currentParentId = parent.ParentId;
+                }
+
+                return false;
             }
         }
 
-        return matchingRecords;
+        static List<TimelineRecord> GetLowestRecords(
+            List<TimelineRecord> candidates,
+            Dictionary<Guid, TimelineRecord> byId)
+        {
+            var candidateIds = candidates.Select(c => c.Id).ToHashSet();
+            var nonLowestIds = new HashSet<Guid>();
+
+            foreach (var candidate in candidates)
+            {
+                var currentParentId = candidate.ParentId;
+                while (currentParentId is Guid parentId && byId.TryGetValue(parentId, out var parent))
+                {
+                    if (candidateIds.Contains(parent.Id))
+                    {
+                        nonLowestIds.Add(parent.Id);
+                    }
+
+                    currentParentId = parent.ParentId;
+                }
+            }
+
+            return candidates
+                .Where(candidate => !nonLowestIds.Contains(candidate.Id))
+                .ToList();
+        }
+
+        static AzureDevOpsTimelineRecordInfo ToRecordInfo(
+            TimelineRecord record,
+            Dictionary<Guid, TimelineRecord> byId)
+        {
+            var parents = new List<AzureDevOpsTimelineParentInfo>();
+
+            var currentParentId = record.ParentId;
+            while (currentParentId is Guid parentId && byId.TryGetValue(parentId, out var parent))
+            {
+                parents.Add(new AzureDevOpsTimelineParentInfo(parent.Name, parent.RecordType, parent.Log?.Id));
+
+                currentParentId = parent.ParentId;
+            }
+
+            parents.Reverse();
+
+            return new AzureDevOpsTimelineRecordInfo(
+                record.Id,
+                record.Result,
+                record.RecordType,
+                record.Name,
+                parents,
+                record.Log?.Id);
+        }
 
         static TaskResult? GetTaskResult(BuildResult? result)
         {
@@ -216,7 +333,7 @@ public class AzureDevOpsSignalCollector : SignalCollector<AzureDevOpsConfig>
             };
         }
 
-        bool IsMatch(TimelineRecord record, TimelineFilter filter)
+        static bool IsMatch(TimelineRecord record, TimelineFilter filter)
         {
             return record.RecordType.Equals(filter.Type.ToString(), StringComparison.OrdinalIgnoreCase) &&
                    filter.Names.Any(name => name.IsMatch(record.Name));

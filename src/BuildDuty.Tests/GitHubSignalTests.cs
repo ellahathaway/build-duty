@@ -118,12 +118,7 @@ public class GitHubSignalTests
 
         protected override Task<RepositoryContext> CreateRepositoryContextAsync(string organization, string repository)
         {
-            return Task.FromResult(new RepositoryContext
-            {
-                Organization = organization,
-                RepositoryName = repository,
-                Client = _client,
-            });
+            return Task.FromResult(new RepositoryContext(organization, repository, _client));
         }
     }
 
@@ -140,14 +135,14 @@ public class GitHubSignalTests
         var storageProvider = Substitute.For<IStorageProvider>();
         storageProvider.GetWorkItemsAsync()
             .Returns([]);
-        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
 
         var collector = new TestableGitHubCollector(CreateIssueConfig(), storageProvider, client);
         await collector.CollectAsync();
 
         var savedSignals = storageProvider.ReceivedCalls()
             .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
-            .Select(call => (ISignal)call.GetArguments()[0]!)
+            .Select(call => (Signal)call.GetArguments()[0]!)
             .ToList();
 
         Assert.Equal(2, savedSignals.Count);
@@ -180,7 +175,7 @@ public class GitHubSignalTests
             }
         ]);
         storageProvider.GetSignalAsync(existingSignal.Id).Returns(existingSignal);
-        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
 
         var collector = new TestableGitHubCollector(CreateIssueConfig(), storageProvider, client);
         await collector.CollectAsync();
@@ -215,19 +210,19 @@ public class GitHubSignalTests
             }
         ]);
         storageProvider.GetSignalAsync(existingSignal.Id).Returns(existingSignal);
-        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
 
         var collector = new TestableGitHubCollector(CreateIssueConfig(), storageProvider, client);
         await collector.CollectAsync();
 
         var signals = storageProvider.ReceivedCalls()
             .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
-            .Select(call => (ISignal)call.GetArguments()[0]!)
+            .Select(call => (Signal)call.GetArguments()[0]!)
             .ToList();
 
         var signal = Assert.Single(signals);
         var issueSignal = Assert.IsType<GitHubIssueSignal>(signal);
-        Assert.Equal(ItemState.Closed, issueSignal.Info.State.Value);
+        Assert.Equal(ItemState.Closed, issueSignal.TypedInfo.State.Value);
         Assert.Equal(["wi-1", "wi-2"], issueSignal.WorkItemIds);
     }
 
@@ -243,19 +238,19 @@ public class GitHubSignalTests
 
         var storageProvider = Substitute.For<IStorageProvider>();
         storageProvider.GetWorkItemsAsync().Returns([]);
-        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
 
         var collector = new TestableGitHubCollector(CreateIssueConfig(), storageProvider, client);
         await collector.CollectAsync();
 
         var signals = storageProvider.ReceivedCalls()
             .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
-            .Select(call => (ISignal)call.GetArguments()[0]!)
+            .Select(call => (Signal)call.GetArguments()[0]!)
             .ToList();
 
         var signal = Assert.Single(signals);
         var issueSignal = Assert.IsType<GitHubIssueSignal>(signal);
-        Assert.Equal("Real issue", issueSignal.Info.Title);
+        Assert.Equal("Real issue", issueSignal.TypedInfo.Title);
     }
 
     [Fact]
@@ -275,19 +270,19 @@ public class GitHubSignalTests
 
         var storageProvider = Substitute.For<IStorageProvider>();
         storageProvider.GetWorkItemsAsync().Returns([]);
-        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
 
         var collector = new TestableGitHubCollector(CreatePrConfig(patterns: patterns), storageProvider, client);
         await collector.CollectAsync();
 
         var signals = storageProvider.ReceivedCalls()
             .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
-            .Select(call => (ISignal)call.GetArguments()[0]!)
+            .Select(call => (Signal)call.GetArguments()[0]!)
             .ToList();
 
         var signal = Assert.Single(signals);
         var prSignal = Assert.IsType<GitHubPullRequestSignal>(signal);
-        Assert.Equal("Update dependencies", prSignal.Info.Title);
+        Assert.Equal("Update dependencies", prSignal.TypedInfo.Title);
     }
 
     [Fact]
@@ -312,7 +307,7 @@ public class GitHubSignalTests
             }
         ]);
         storageProvider.GetSignalAsync(existingSignal.Id).Returns(existingSignal);
-        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
 
         var collector = new TestableGitHubCollector(CreatePrConfig(), storageProvider, client);
         await collector.CollectAsync();
@@ -347,19 +342,19 @@ public class GitHubSignalTests
             }
         ]);
         storageProvider.GetSignalAsync(existingSignal.Id).Returns(existingSignal);
-        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
 
         var collector = new TestableGitHubCollector(CreatePrConfig(), storageProvider, client);
         await collector.CollectAsync();
 
         var signals = storageProvider.ReceivedCalls()
             .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
-            .Select(call => (ISignal)call.GetArguments()[0]!)
+            .Select(call => (Signal)call.GetArguments()[0]!)
             .ToList();
 
         var signal = Assert.Single(signals);
         var prSignal = Assert.IsType<GitHubPullRequestSignal>(signal);
-        Assert.True(prSignal.Info.Merged);
+        Assert.True(prSignal.TypedInfo.Merged);
         Assert.Equal(["wi-3"], prSignal.WorkItemIds);
     }
 
@@ -377,14 +372,14 @@ public class GitHubSignalTests
 
         var storageProvider = Substitute.For<IStorageProvider>();
         storageProvider.GetWorkItemsAsync().Returns([]);
-        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
 
         var collector = new TestableGitHubCollector(CreateMixedConfig(), storageProvider, client);
         await collector.CollectAsync();
 
         var signals = storageProvider.ReceivedCalls()
             .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
-            .Select(call => (ISignal)call.GetArguments()[0]!)
+            .Select(call => (Signal)call.GetArguments()[0]!)
             .ToList();
 
         Assert.Equal(2, signals.Count);
@@ -419,20 +414,20 @@ public class GitHubSignalTests
             }
         ]);
         storageProvider.GetSignalAsync(existingSignal.Id).Returns(existingSignal);
-        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
 
         var collector = new TestableGitHubCollector(CreateIssueConfig(), storageProvider, client);
         await collector.CollectAsync();
 
         var signals = storageProvider.ReceivedCalls()
             .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
-            .Select(call => (ISignal)call.GetArguments()[0]!)
+            .Select(call => (Signal)call.GetArguments()[0]!)
             .ToList();
 
         // Issue was updated (e.g. new comment) even though state is still Open — should be collected
         var signal = Assert.Single(signals);
         var issueSignal = Assert.IsType<GitHubIssueSignal>(signal);
-        Assert.Equal(updatedTime, issueSignal.Info.UpdatedAt);
+        Assert.Equal(updatedTime, issueSignal.TypedInfo.UpdatedAt);
         Assert.Equal(["wi-1"], issueSignal.WorkItemIds);
     }
 
@@ -463,20 +458,20 @@ public class GitHubSignalTests
             }
         ]);
         storageProvider.GetSignalAsync(existingSignal.Id).Returns(existingSignal);
-        storageProvider.SaveSignalAsync(Arg.Any<ISignal>()).Returns(Task.CompletedTask);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
 
         var collector = new TestableGitHubCollector(CreatePrConfig(), storageProvider, client);
         await collector.CollectAsync();
 
         var signals = storageProvider.ReceivedCalls()
             .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
-            .Select(call => (ISignal)call.GetArguments()[0]!)
+            .Select(call => (Signal)call.GetArguments()[0]!)
             .ToList();
 
         // PR was updated (e.g. new review comment) even though state is still Open — should be collected
         var signal = Assert.Single(signals);
         var prSignal = Assert.IsType<GitHubPullRequestSignal>(signal);
-        Assert.Equal(updatedTime, prSignal.Info.UpdatedAt);
+        Assert.Equal(updatedTime, prSignal.TypedInfo.UpdatedAt);
         Assert.Equal(["wi-5"], prSignal.WorkItemIds);
     }
 

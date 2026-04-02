@@ -2,23 +2,17 @@ using BuildDuty.Core;
 using Microsoft.Extensions.AI;
 using System.Text.Json;
 using Maestro.Common;
-using Microsoft.TeamFoundation.Build.WebApi;
 
 namespace BuildDuty.AI;
 
 public class StorageTools
 {
     private readonly IStorageProvider _storageProvider;
-    private readonly IRemoteTokenProvider _tokenProvider;
-    private record GetLogResult(string? FilePath, string? Error);
-    private record PipelineContext(AzureDevOpsPipelineSignal Signal, BuildHttpClient BuildClient);
 
     public StorageTools(
-        IStorageProvider storageProvider,
-        IRemoteTokenProvider tokenProvider)
+        IStorageProvider storageProvider)
     {
         _storageProvider = storageProvider;
-        _tokenProvider = tokenProvider;
     }
 
     public ICollection<AIFunction> GetTools()
@@ -57,6 +51,39 @@ public class StorageTools
                 },
                 "select_signal_fields",
                 "Select fields from a signal JSON using selectors as an object map of outputName:path or an array of paths."),
+
+            AIFunctionFactory.Create(
+                async (string filePath, string path) =>
+                {
+                    try
+                    {
+                        var json = await File.ReadAllTextAsync(filePath);
+                        var root = JsonSerializer.Deserialize<JsonElement>(json);
+
+                        var found = TryGetByPath(root, path, out var value);
+                        return JsonSerializer.SerializeToElement(new
+                        {
+                            FilePath = filePath,
+                            Path = path,
+                            Found = found,
+                            Value = found ? value : JsonSerializer.SerializeToElement<object?>(null),
+                            Error = (string?)null,
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        return JsonSerializer.SerializeToElement(new
+                        {
+                            FilePath = filePath,
+                            Path = path,
+                            Found = false,
+                            Value = JsonSerializer.SerializeToElement<object?>(null),
+                            Error = $"Failed to read JSON value from '{filePath}': {ex.Message}",
+                        });
+                    }
+                },
+                "get_json_value",
+                "Get a value from a JSON file by dot path (supports object properties and array indexes like Records.0.Id)."),
 
             AIFunctionFactory.Create(
                 async (
@@ -206,105 +233,7 @@ public class StorageTools
                 "update_signal_summary",
                 "Update a signal summary by signal ID."),
 
-            AIFunctionFactory.Create(
-                async (string signalId) =>
-                {
-                    try
-                    {
-                        var context = await GetPipelineContextAsync(signalId);
-                        Guid projectId = context.Signal.TypedInfo.Build.Project.Id;
-                        int buildId = context.Signal.TypedInfo.Build.Id;
-                        var logs = await context.BuildClient.GetBuildLogsAsync(projectId, buildId);
-                        var logPaths = new List<GetLogResult>();
-                        foreach (var log in logs)
-                        {
-                            var result = await GetOrSaveLogAsync(
-                                signalId,
-                                log.Id,
-                                () => context.BuildClient.GetBuildLogAsync(projectId, buildId, log.Id),
-                                $"Error retrieving log ID {log.Id} for build ID {buildId} in signal ID {signalId}");
-                            logPaths.Add(result);
-                        }
-                        return logPaths;
-                    }
-                    catch (Exception ex)
-                    {
-                        return new List<GetLogResult> { new GetLogResult(null, $"Error retrieving logs for signal ID {signalId}: {ex.Message}") };
-                    }
-                },
-                "get_build_logs",
-                "Retrieve build logs for a given Azure DevOps pipeline signal. Returns a list of file paths containing the build logs."),
-
-            AIFunctionFactory.Create(
-                async (string signalId) =>
-                {
-                    try
-                    {
-                        var context = await GetPipelineContextAsync(signalId);
-                        Guid projectId = context.Signal.TypedInfo.Build.Project.Id;
-                        var logPaths = new List<GetLogResult>();
-                        foreach (var record in context.Signal.TypedInfo.TimelineRecords)
-                        {
-                            var log = record.Log;
-                            if (log != null)
-                            {
-                                var result = await GetOrSaveLogAsync(
-                                    signalId,
-                                    log.Id,
-                                    () => context.BuildClient.GetBuildLogAsync(projectId, context.Signal.TypedInfo.Build.Id, log.Id),
-                                    $"Error retrieving log ID {log.Id} for timeline record ID {record.Id} in signal ID {signalId}");
-                                logPaths.Add(result);
-                            }
-                        }
-                        return logPaths;
-                    }
-                    catch (Exception ex)
-                    {
-                        return new List<GetLogResult> { new GetLogResult(null, $"Error retrieving timeline record logs for signal ID {signalId}: {ex.Message}") };
-                    }
-                },
-                "get_timeline_record_logs",
-                "Retrieve build logs for a given Azure DevOps pipeline signal. Returns a list of file paths containing the build logs."),
         ];
-    }
-
-    private async Task<PipelineContext> GetPipelineContextAsync(string signalId)
-    {
-        Signal signal = await _storageProvider.GetSignalAsync(signalId);
-        if (signal.Type != SignalType.AzureDevOpsPipeline)
-        {
-            throw new ArgumentException($"Signal with ID {signalId} is not an Azure DevOps pipeline signal.");
-        }
-
-        var pipelineSignal = signal as AzureDevOpsPipelineSignal
-            ?? throw new InvalidOperationException($"Failed to cast signal with ID {signalId} to AzureDevOpsPipelineSignal.");
-
-        var buildClient = await _tokenProvider.GetAzureDevOpsBuildClientAsync(pipelineSignal.TypedInfo.OrganizationUrl);
-        return new PipelineContext(pipelineSignal, buildClient);
-    }
-
-    private async Task<GetLogResult> GetOrSaveLogAsync(
-        string signalId,
-        int logId,
-        Func<Task<Stream>> fetchLogStream,
-        string errorPrefix)
-    {
-        string signalLogId = IdGenerator.NewLogId(logId);
-        try
-        {
-            var logPath = await _storageProvider.GetSignalLogPathAsync(signalId, signalLogId);
-            return new GetLogResult(logPath, null);
-        }
-        catch (FileNotFoundException)
-        {
-            var stream = await fetchLogStream();
-            var logPath = await _storageProvider.SaveSignalLogAsync(signalId, signalLogId, stream);
-            return new GetLogResult(logPath, null);
-        }
-        catch (Exception ex)
-        {
-            return new GetLogResult(null, $"{errorPrefix}: {ex.Message}");
-        }
     }
 
     private static Dictionary<string, JsonElement> SelectFields(JsonElement source, JsonElement selectors)
@@ -356,8 +285,25 @@ public class StorageTools
         value = default;
         var current = source;
 
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            value = current.Clone();
+            return true;
+        }
+
         foreach (var segment in path.Split('.', StringSplitOptions.RemoveEmptyEntries))
         {
+            if (current.ValueKind == JsonValueKind.Array && int.TryParse(segment, out var index))
+            {
+                if (index < 0 || index >= current.GetArrayLength())
+                {
+                    return false;
+                }
+
+                current = current[index];
+                continue;
+            }
+
             if (current.ValueKind != JsonValueKind.Object)
             {
                 return false;

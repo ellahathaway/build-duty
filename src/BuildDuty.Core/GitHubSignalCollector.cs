@@ -35,8 +35,7 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
         {
             foreach (var repo in org.Repositories)
             {
-                var client = await TokenProvider.GetGitHubClientAsync(org.Organization, repo.Name);
-                var context = new RepositoryContext(org.Organization, repo.Name, client);
+                var context = await CreateRepositoryContextAsync(org.Organization, repo.Name);
 
                 var issueTask = CollectIssueSignalsAsync(context, repo.Issues, issueSignals);
                 var prTask = CollectPullRequestSignalsAsync(context, repo.PullRequests, prSignals);
@@ -53,6 +52,12 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
         }
 
         return collectedSignals;
+    }
+
+    protected virtual async Task<RepositoryContext> CreateRepositoryContextAsync(string organization, string repository)
+    {
+        var client = await TokenProvider.GetGitHubClientAsync(organization, repository);
+        return new RepositoryContext(organization, repository, client);
     }
 
     private static async Task<List<GitHubIssueSignal>> CollectIssueSignalsAsync(

@@ -1,29 +1,53 @@
 # Reference: Azure DevOps Pipeline
 
-## When to use
+Use this when the signal type is an azure devops pipeline.
 
-Use for Azure DevOps pipeline run signals.
+## Output (strict)
+Final output must be plain text:
+- Prefer 1 sentence; max 2 sentences.
+- No markdown, bullets, or formatting.
+- No speculation. If you can’t find a cause, say so and report the narrowest failure scope you observed.
 
-## Goal
+Use this template style:
+- Non-successful (cause found): `Run <result> in <Stage > Job > Task> failed because <concrete cause>.`
+- Non-successful (cause unknown): `Run <result> in <Stage > Job > Task> failed; cause not found in available logs.`
+- Successful: `Run succeeded; timeline execution is consistent with metadata (no failed records).`
 
-Summarize both:
-- what happened in the pipeline run
-- why it happened (best supported cause)
+### Run outcome classification
 
-## Signal info
+Treat the pipeline as **non-successful** when run result is not `Succeeded` (commonly includes `Failed`, `Canceled`, `PartiallySucceeded`, and sometimes `SucceededWithIssues`).
 
-Use stored signal payload (run metadata + timeline records) to determine the what.
-Use logs to determine the why, in this order:
-- `get_timeline_record_logs(signalId)` first
-- `get_build_logs(signalId)` only when timeline logs are unavailable or empty
+## Checklist
 
-## Summary focus
+### Step 1 — Determine “what happened”
+1. Identify the final run result.
+1. If timeline records are available, identify the different pipeline timeline results.
 
-- what failed (result/status + failing scope, e.g. `Stage > Job > Task`)
-- why it failed (specific error/cause from timeline/build logs)
-- impact when obvious (what is blocked)
+### Step 2 — Retrieve and read logs
+If timeline records are available, prefer their logs to the pipeline build log.
 
-## Keep it concise
-- 1 sentence preferred, max 2.
-- If why is unknown, state only the observed outcome scope without speculation.
-- No markdown or bullet formatting in final summary text.
+Escalation order for timeline logs:
+1. Task/Step log (record’s own `LogId`)
+2. Job log (closest parent job record with a `LogId`)
+3. Phase log (closet parent phase record with a `LogId`)
+4. Stage log (closest parent stage record with a `LogId`)
+
+Only escalate upward if the current level is missing (`LogId` null) or does not provide sufficient information on what happened.
+
+To retrieve the log, call `get_pipeline_log(signalId, logId)` and use the returned file path value.
+
+For each log you decide to read:
+1. Call `read_pipeline_log_chunk(logPath, chunkOffsetFromBottom, chunkSize)`.
+2. Defaults:
+   - `chunkOffsetFromBottom = 0`
+   - `chunkSize = 100`
+3. Determine why the log had the corresponding result type.
+3. If inconclusive, increment offset: `1, 2, 3, ...` until:
+   - a concrete cause is found, or
+   - `HasMoreChunks = false`, or
+
+- Do not use shell/bash tools (grep/sed/wc) for analysis.
+
+## Step 3 - Output
+
+- Give a summary of what happened and why based on the earlier output constraints.

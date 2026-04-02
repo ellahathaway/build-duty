@@ -36,7 +36,9 @@ internal static class ServiceCollectionExtensions
     {
         services.AddBuildDutyConfigProvider();
         services.AddStorageProvider();
+        services.AddRemoteTokenProvider();
         services.TryAddSingleton<StorageTools>();
+        services.TryAddSingleton<AzureDevOpsTools>();
         services.TryAddSingleton<CopilotAdapter>();
         return services;
     }
@@ -66,6 +68,46 @@ internal static class ServiceCollectionExtensions
         services.TryAddKeyedSingleton<IRemoteTokenProvider>("github", (sp, _) =>
             sp.GetRequiredService<GitHubTokenProvider>());
 
+        // Default provider used by components that do not request a keyed instance.
+        services.TryAddSingleton<IRemoteTokenProvider>(sp =>
+            new RoutedRemoteTokenProvider(
+                sp.GetRequiredKeyedService<IRemoteTokenProvider>("azdo"),
+                sp.GetRequiredKeyedService<IRemoteTokenProvider>("github")));
+
         return services;
+    }
+
+    private sealed class RoutedRemoteTokenProvider(
+        IRemoteTokenProvider azureDevOpsTokenProvider,
+        IRemoteTokenProvider githubTokenProvider) : IRemoteTokenProvider
+    {
+        public string GetTokenForRepository(string repoUri)
+            => GetProvider(repoUri).GetTokenForRepository(repoUri)
+                ?? throw new InvalidOperationException($"No token available for repository '{repoUri}'.");
+
+        public Task<string?> GetTokenForRepositoryAsync(string repoUri)
+            => GetProvider(repoUri).GetTokenForRepositoryAsync(repoUri);
+
+        private IRemoteTokenProvider GetProvider(string repoUri)
+        {
+            if (!Uri.TryCreate(repoUri, UriKind.Absolute, out var uri))
+            {
+                return githubTokenProvider;
+            }
+
+            if (uri.Host.Contains("dev.azure.com", StringComparison.OrdinalIgnoreCase)
+                || uri.Host.Contains("visualstudio.com", StringComparison.OrdinalIgnoreCase))
+            {
+                return azureDevOpsTokenProvider;
+            }
+
+            if (uri.Host.Contains("github.com", StringComparison.OrdinalIgnoreCase)
+                || uri.Host.Contains("api.github.com", StringComparison.OrdinalIgnoreCase))
+            {
+                return githubTokenProvider;
+            }
+
+            return githubTokenProvider;
+        }
     }
 }
