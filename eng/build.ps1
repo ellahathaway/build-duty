@@ -35,7 +35,7 @@ if ($Pack) {
 
 if ($Install) {
     Write-Host '==> Install (global tool)'
-    dotnet tool uninstall -g buildduty 2>$null
+    dotnet tool uninstall -g buildduty 2>&1 | Out-Null
     dotnet tool install --global --add-source (Join-Path $Artifacts 'packages') buildduty
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
