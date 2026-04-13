@@ -1,5 +1,5 @@
 using BuildDuty.Core;
-using BuildDuty.Core.Models;
+using BuildDuty.AI;
 using Maestro.Common;
 using Maestro.Common.AzureDevOpsTokens;
 using Microsoft.DotNet.DarcLib.Helpers;
@@ -11,12 +11,19 @@ namespace BuildDuty.Cli.Infrastructure;
 
 internal static class ServiceCollectionExtensions
 {
+    public static IServiceCollection AddBuildDutyConfigProvider(this IServiceCollection services)
+    {
+        services.TryAddSingleton<IBuildDutyConfigProvider, BuildDutyConfigProvider>();
+        return services;
+    }
+
     public static IServiceCollection AddSignalCollectionServices(this IServiceCollection services)
     {
         services
+            .AddBuildDutyConfigProvider()
             .AddAzureDevOpsSignalCollection()
             .AddGitHubSignalCollection()
-            .AddWorkItemsProvider();
+            .AddStorageProvider();
 
         services.TryAddSingleton<IRemoteTokenProvider>(sp => new RemoteTokenProvider(
             sp.GetRequiredKeyedService<IRemoteTokenProvider>("azdo"),
@@ -29,20 +36,10 @@ internal static class ServiceCollectionExtensions
 
     public static IServiceCollection AddAiServices(this IServiceCollection services)
     {
-        // services.AddSingleton<Func<BuildDutyConfig, WorkItemStore, CopilotAdapter>>(_ =>
-        // {
-        //     return (config, wiStore) =>
-        //     {
-        //         var tools = BuildDutyTools.Create(wiStore)
-        //             .Concat(TriageTools.Create(wiStore))
-        //             .Concat(WorkItemTriageTools.Create(wiStore))
-        //             .Concat(SummarizeTools.Create(wiStore))
-        //             .ToList();
-
-        //         return new CopilotAdapter(new CopilotClientOptions(), tools, config.Ai?.Model);
-        //     };
-        // });
-
+        services.AddBuildDutyConfigProvider();
+        services.AddStorageProvider();
+        services.TryAddSingleton<StorageTools>();
+        services.TryAddSingleton<CopilotAdapter>();
         return services;
     }
 
@@ -59,8 +56,7 @@ internal static class ServiceCollectionExtensions
             return AzureDevOpsTokenProvider.FromStaticOptions(options);
         });
 
-        services.AddSingleton<Func<AzureDevOpsConfig, AzureDevOpsSignalCollector>>(sp =>
-            config => ActivatorUtilities.CreateInstance<AzureDevOpsSignalCollector>(sp, config));
+        services.TryAddTransient<AzureDevOpsSignalCollector>();
 
         return services;
     }
@@ -73,16 +69,14 @@ internal static class ServiceCollectionExtensions
         services.TryAddKeyedSingleton<IRemoteTokenProvider>("github", (sp, _) =>
             sp.GetRequiredService<GitHubTokenProvider>());
 
-        services.AddSingleton<Func<GitHubConfig, GitHubSignalCollector>>(sp =>
-            config => ActivatorUtilities.CreateInstance<GitHubSignalCollector>(sp, config));
+        services.TryAddTransient<GitHubSignalCollector>();
 
         return services;
     }
 
-    private static IServiceCollection AddWorkItemsProvider(this IServiceCollection services)
+    private static IServiceCollection AddStorageProvider(this IServiceCollection services)
     {
-        services.TryAddSingleton<IBuildDutyConfigProvider, BuildDutyConfigProvider>();
-        services.TryAddSingleton<IWorkItemsProvider, WorkItemsProvider>();
+        services.TryAddSingleton<IStorageProvider, StorageProvider>();
         return services;
     }
 }

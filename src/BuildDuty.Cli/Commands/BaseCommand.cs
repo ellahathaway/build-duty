@@ -17,7 +17,7 @@ public abstract class BaseCommand<TSettings> : AsyncCommand<TSettings>
         CommandContext context,
         TSettings settings)
     {
-        _configProvider.InitializeConfig(settings.Config!);
+        _configProvider.SetConfigPath(settings.Config);
 
         return ExecuteCommandAsync(context, settings);
     }
