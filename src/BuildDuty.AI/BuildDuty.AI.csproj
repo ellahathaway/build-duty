@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <RootNamespace>BuildDuty.AI</RootNamespace>
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <ItemGroup>
