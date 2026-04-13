@@ -16,11 +16,22 @@ app.Configure(config =>
 {
     config.SetApplicationName("build-duty");
 
-    config.AddCommand<TriageCommand>("triage")
-        .WithDescription("Gather work items, triage with AI, and correlate results");
+    config.AddBranch("triage", triage =>
+    {
+        triage.SetDescription("Collect and triage signals and work items");
 
-    // config.AddCommand<ReviewCommand>("review")
-    //     .WithDescription("Interactively review and act on triaged work items");
+        triage.AddCommand<TriageRunCommand>("run")
+            .WithDescription("Run a triage process to analyze signals and update work items");
+
+        triage.AddCommand<TriageListCommand>("list")
+            .WithDescription("List all triage runs");
+
+        triage.AddCommand<TriageShowCommand>("show")
+            .WithDescription("Show details of a specific triage run");
+    });
+
+    config.AddCommand<ReviewCommand>("review")
+        .WithDescription("Interactively review triaged work items and their signals");
 
     config.AddBranch("workitem", wi =>
     {

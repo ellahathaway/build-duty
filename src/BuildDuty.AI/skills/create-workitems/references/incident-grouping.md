@@ -8,8 +8,8 @@ Determine which signals represent the same underlying issue.
 - Use each signal's `workItemIds` to understand existing linkage history.
 
 ## Workflow
-1. For each signal ID in the triage run, call `select_signal_fields` and request: `cause`, `effect`, `evidence`, `context`, `workItemIds`, and relevant info/build fields.
-2. Use `cause` and `evidence` as primary correlation evidence.
+1. For each signal ID in the triage run, load the signal and read: `Cause`, `Effect`, `Evidence`, `Context`, `WorkItemIds`, and relevant `Info` fields.
+2. Use `Cause` and `Evidence` as primary correlation evidence.
 3. Cross-reference `evidence` across signals to find causal chains (see below).
 4. Use `context` to understand pipeline/repo dependencies and relationships.
 5. Form groups only when causal evidence aligns.

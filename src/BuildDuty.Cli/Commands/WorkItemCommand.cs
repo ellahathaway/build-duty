@@ -2,6 +2,7 @@ using System.ComponentModel;
 using BuildDuty.Core;
 using Spectre.Console;
 using Spectre.Console.Cli;
+using Spectre.Console.Rendering;
 
 namespace BuildDuty.Cli.Commands;
 
@@ -77,6 +78,10 @@ internal sealed class WorkItemsShowSettings : BaseSettings
 	[Description("Work item ID")]
 	public string Id { get; set; } = string.Empty;
 
+	[CommandOption("--verbose")]
+	[Description("Show verbose signal output")]
+	public bool Verbose { get; set; }
+
 	public override ValidationResult Validate()
 	{
 		return string.IsNullOrWhiteSpace(Id)
@@ -110,20 +115,45 @@ internal sealed class WorkItemsShowCommand : BaseCommand<WorkItemsShowSettings>
 			return 1;
 		}
 
-		var panel = new Panel(
-			new Rows(
-				new Markup($"[bold]ID:[/] {Markup.Escape(item.Id)}"),
-				new Markup($"[bold]Resolved:[/] {(item.Resolved ? "yes" : "no")}"),
-				new Markup($"[bold]Summary:[/] {Markup.Escape(item.Summary ?? "(none)")}"),
-				new Markup($"[bold]Issue Signature:[/] {Markup.Escape(item.IssueSignature ?? "(none)")}"),
-				new Markup($"[bold]Correlation Rationale:[/] {Markup.Escape(item.CorrelationRationale ?? "(none)")}"),
-				new Markup($"[bold]Resolution Criteria:[/] {Markup.Escape(item.ResolutionCriteria ?? "(none)")}"),
-				new Markup($"[bold]Resolution Reason:[/] {Markup.Escape(item.ResolutionReason ?? "(none)")}"),
-				new Markup($"[bold]Signals:[/] {(item.SignalIds.Count > 0 ? Markup.Escape(string.Join(", ", item.SignalIds)) : "(none)")}"),
-				new Markup($"[bold]Created:[/] {item.CreatedAt:u}"),
-				new Markup($"[bold]Updated:[/] {item.UpdatedAt:u}"),
-				new Markup($"[bold]Resolved At:[/] {(item.ResolvedAt.HasValue ? item.ResolvedAt.Value.ToString("u") : "(none)")}"),
-				new Markup($"[bold]Triage ID:[/] {Markup.Escape(item.TriageId ?? "(none)")}")))
+		var verboseSignalMarkUpTasks = settings.Verbose
+			? item.LinkedAnalyses.Select(async la =>
+			{
+				var signal = await _storageProvider.GetSignalAsync(la.SignalId);
+				string link = signal.Url?.ToString() ?? "(none)";
+				var analyses = signal.Analyses.Where(a => la.AnalysisIds.Contains(a.Id)).Select(a => a.Analysis);
+				var markups = new List<IRenderable>
+				{
+					new Markup($"  [bold]Signal:[/] {Markup.Escape(la.SignalId)}"),
+					new Markup($"  [bold]Link:[/] {Markup.Escape(link)}"),
+				};
+				foreach (var analysis in analyses)
+				{
+					markups.Add(new Markup($"  [bold]Analysis:[/] {Markup.Escape(analysis)}"));
+				}
+				return markups;
+			})
+			: null;
+		var verboseSignalRenderables = verboseSignalMarkUpTasks is not null
+			? (await Task.WhenAll(verboseSignalMarkUpTasks)).SelectMany(m => m).ToList()
+			: new List<IRenderable>();
+
+		var rows = new List<IRenderable>
+		{
+			new Markup($"[bold]ID:[/] {Markup.Escape(item.Id)}"),
+			new Markup($"[bold]Resolved:[/] {(item.Resolved ? "yes" : "no")}"),
+			new Markup($"[bold]Summary:[/] {Markup.Escape(item.Summary ?? "(none)")}"),
+			new Markup($"[bold]Issue Signature:[/] {Markup.Escape(item.IssueSignature ?? "(none)")}"),
+			new Markup($"[bold]Signals:[/] {(item.LinkedAnalyses.Count > 0 ? Markup.Escape(string.Join(", ", item.LinkedAnalyses.Select(la => $"{la.SignalId} ({la.AnalysisIds.Count} analyses)"))) : "(none)")}"),
+		};
+		foreach (var renderable in verboseSignalRenderables)
+		{
+			rows.Add(renderable);
+		}
+		rows.Add(new Markup($"[bold]Created:[/] {item.CreatedAt:u}"));
+		rows.Add(new Markup($"[bold]Updated:[/] {item.UpdatedAt:u}"));
+		rows.Add(new Markup($"[bold]Resolved At:[/] {(item.ResolvedAt.HasValue ? item.ResolvedAt.Value.ToString("u") : "(none)")}"));
+
+		var panel = new Panel(new Rows(rows))
 			.Header("[bold blue]Work Item[/]")
 			.Border(BoxBorder.Rounded);
 

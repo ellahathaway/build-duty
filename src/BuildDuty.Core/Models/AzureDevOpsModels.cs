@@ -47,7 +47,10 @@ public sealed class AzureDevOpsPipelineConfig
     public ReleaseBranchConfig? Release { get; set; }
 
     /// <summary>
-    /// Pipeline run result statuses that should produce work items.
+    /// Pipeline run result statuses that should produce signals.
+    /// Only non-successful results are allowed: <c>Failed</c>, <c>PartiallySucceeded</c>, <c>Canceled</c>.
+    /// <c>Succeeded</c> is not valid — successful builds are automatically tracked as recovery
+    /// signals when a previously failing pipeline succeeds.
     /// Defaults to <c>["failed", "partiallySucceeded", "canceled"]</c> when omitted.
     /// </summary>
     [YamlMember(Alias = "status")]
@@ -60,6 +63,14 @@ public sealed class AzureDevOpsPipelineConfig
     /// </summary>
     [YamlMember(Alias = "age")]
     public string? Age { get; set; }
+
+    /// <summary>
+    /// Timeline record result statuses that should produce signals when analyzing build failures.
+    /// Only non-successful results are allowed.
+    /// Overridden by <see cref="TimelineFilters"/> when specified.
+    /// </summary>
+    [YamlMember(Alias = "timelineResults")]
+    public List<TaskResult> TimelineResults { get; set; } = new List<TaskResult> { TaskResult.Failed, TaskResult.SucceededWithIssues, TaskResult.Canceled, TaskResult.Abandoned };
 
     /// <summary>
     /// Timelines to focus on when analyzing build failures.
@@ -88,6 +99,13 @@ public sealed class TimelineFilter
     /// </summary>
     [YamlMember(Alias = "type")]
     public TimelineRecordType Type { get; set; }
+
+    /// <summary>
+    /// Timeline record result statuses to include. Only non-successful results are allowed.
+    /// Defaults to <c>["failed", "succeededWithIssues", "canceled"]</c> when omitted.
+    /// </summary>
+    [YamlMember(Alias = "status")]
+    public List<TaskResult> Status { get; set; } = new List<TaskResult> { TaskResult.Failed, TaskResult.SucceededWithIssues, TaskResult.Canceled, TaskResult.Abandoned };
 }
 
 /// <summary>
