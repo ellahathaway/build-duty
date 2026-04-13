@@ -8,6 +8,6 @@
     <!-- Suppress NuGet vulnerability warnings from transitive ADO SDK dependencies
          (System.Drawing.Common, System.Security.Cryptography.Xml) that don't apply
          to our usage. -->
-    <NoWarn>$(NoWarn);NU1902;NU1903;NU1904</NoWarn>
+    <NoWarn>$(NoWarn);NU1902;NU1903;NU1904;NU5104</NoWarn>
   </PropertyGroup>
 </Project>

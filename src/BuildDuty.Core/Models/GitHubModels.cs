@@ -1,4 +1,6 @@
 using YamlDotNet.Serialization;
+using System.Text.RegularExpressions;
+using Octokit;
 
 namespace BuildDuty.Core.Models;
 
@@ -38,9 +40,7 @@ public sealed class GitHubIssueConfig
     public List<string> Labels { get; set; } = [];
 
     [YamlMember(Alias = "state")]
-    public string? State { get; set; }
-
-    public string EffectiveState => string.IsNullOrWhiteSpace(State) ? "open" : State;
+    public ItemStateFilter State { get; set; } = ItemStateFilter.Open;
 }
 
 /// <summary>
@@ -49,10 +49,8 @@ public sealed class GitHubIssueConfig
 public sealed class GitHubPullRequestPattern
 {
     [YamlMember(Alias = "name")]
-    public string Name { get; set; } = string.Empty;
+    public Regex Name { get; set; } = new Regex(".*");
 
     [YamlMember(Alias = "state")]
-    public string? State { get; set; }
-
-    public string EffectiveState => string.IsNullOrWhiteSpace(State) ? "open" : State;
+    public ItemStateFilter State { get; set; } = ItemStateFilter.Open;
 }
