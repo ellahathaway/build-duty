@@ -67,6 +67,9 @@ public sealed class AzureDevOpsPipelineConfig
     /// </summary>
     [YamlMember(Alias = "timelineFilters")]
     public List<TimelineFilter>? TimelineFilters { get; set; } = [];
+
+    [YamlMember(Alias = "context")]
+    public string? Context { get; set; }
 }
 
 /// <summary>

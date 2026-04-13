@@ -41,6 +41,9 @@ public sealed class GitHubIssueConfig
 
     [YamlMember(Alias = "state")]
     public ItemStateFilter State { get; set; } = ItemStateFilter.Open;
+
+    [YamlMember(Alias = "context")]
+    public string? Context { get; set; }
 }
 
 /// <summary>
@@ -53,4 +56,7 @@ public sealed class GitHubPullRequestPattern
 
     [YamlMember(Alias = "state")]
     public ItemStateFilter State { get; set; } = ItemStateFilter.Open;
+
+    [YamlMember(Alias = "context")]
+    public string? Context { get; set; }
 }

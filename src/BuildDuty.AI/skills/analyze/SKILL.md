@@ -1,9 +1,9 @@
 ---
-name: summarize
+name: analyze
 description: Analyze a signal and persist structured cause/effect/evidence for triage and correlation. Use when a single signal needs analysis.
 ---
 
-# Summarize
+# Analyze
 
 Single-signal analysis — extract cause, effect, and evidence.
 

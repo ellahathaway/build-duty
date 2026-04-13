@@ -7,6 +7,8 @@ namespace BuildDuty.Core;
 
 public class GitHubSignalCollector : SignalCollector<GitHubConfig>
 {
+    protected record RepositoryContext(string Organization, string RepositoryName, IGitHubClient Client);
+
     public GitHubSignalCollector(
         GitHubConfig config,
         IRemoteTokenProvider tokenProvider,
@@ -52,6 +54,12 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
         return collectedSignals;
     }
 
+    protected virtual async Task<RepositoryContext> CreateRepositoryContextAsync(string organization, string repository)
+    {
+        var client = await TokenProvider.GetGitHubClientAsync(organization, repository);
+        return new RepositoryContext(organization, repository, client);
+    }
+
     private static async Task<List<GitHubIssueSignal>> CollectIssueSignalsAsync(
         RepositoryContext context,
         GitHubIssueConfig? issueConfig,
@@ -91,6 +99,7 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
             }
 
             var signal = new GitHubIssueSignal(issue);
+            signal.Context = issueConfig.Context;
             if (existingSignal is null)
             {
                 signals.Add(signal);
@@ -131,9 +140,13 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
 
             var matchingPulls = pulls.Where(pr => MatchesAnyPattern(pr.Title, patternGroup.Select(p => p.Name)));
 
+            // Use context from the first matching pattern (all patterns in a state group share config)
+            var patternContext = patternGroup.FirstOrDefault()?.Context;
+
             foreach (var pr in matchingPulls)
             {
                 var signal = new GitHubPullRequestSignal(pr);
+                signal.Context = patternContext;
                 var existingSignal = existingSignals.FirstOrDefault(s => s.TypedInfo.HtmlUrl == pr.HtmlUrl);
 
                 if (existingSignal is not null)
@@ -170,30 +183,5 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
         }
 
         return false;
-    }
-
-    protected record RepositoryContext
-    {
-        public required string Organization { get; init; }
-        public required string RepositoryName { get; init; }
-        public required IGitHubClient Client { get; init; }
-    }
-
-    protected virtual async Task<RepositoryContext> CreateRepositoryContextAsync(string organization, string repository)
-    {
-        var repoUrl = $"https://github.com/{organization}/{repository}";
-        var token = await TokenProvider.GetTokenForRepositoryAsync(repoUrl);
-
-        var client = new GitHubClient(new ProductHeaderValue("build-duty"))
-        {
-            Credentials = new Credentials(token),
-        };
-
-        return new RepositoryContext
-        {
-            Organization = organization,
-            RepositoryName = repository,
-            Client = client,
-        };
     }
 }

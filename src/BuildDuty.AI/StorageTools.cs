@@ -1,6 +1,7 @@
 using BuildDuty.Core;
 using Microsoft.Extensions.AI;
 using System.Text.Json;
+using Maestro.Common;
 
 namespace BuildDuty.AI;
 
@@ -8,7 +9,8 @@ public class StorageTools
 {
     private readonly IStorageProvider _storageProvider;
 
-    public StorageTools(IStorageProvider storageProvider)
+    public StorageTools(
+        IStorageProvider storageProvider)
     {
         _storageProvider = storageProvider;
     }
@@ -49,6 +51,39 @@ public class StorageTools
                 },
                 "select_signal_fields",
                 "Select fields from a signal JSON using selectors as an object map of outputName:path or an array of paths."),
+
+            AIFunctionFactory.Create(
+                async (string filePath, string path) =>
+                {
+                    try
+                    {
+                        var json = await File.ReadAllTextAsync(filePath);
+                        var root = JsonSerializer.Deserialize<JsonElement>(json);
+
+                        var found = TryGetByPath(root, path, out var value);
+                        return JsonSerializer.SerializeToElement(new
+                        {
+                            FilePath = filePath,
+                            Path = path,
+                            Found = found,
+                            Value = found ? value : JsonSerializer.SerializeToElement<object?>(null),
+                            Error = (string?)null,
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        return JsonSerializer.SerializeToElement(new
+                        {
+                            FilePath = filePath,
+                            Path = path,
+                            Found = false,
+                            Value = JsonSerializer.SerializeToElement<object?>(null),
+                            Error = $"Failed to read JSON value from '{filePath}': {ex.Message}",
+                        });
+                    }
+                },
+                "get_json_value",
+                "Get a value from a JSON file by dot path (supports object properties and array indexes like Records.0.Id)."),
 
             AIFunctionFactory.Create(
                 async (
@@ -186,17 +221,20 @@ public class StorageTools
                 "Reopen a previously resolved work item when new evidence indicates the issue is still active."),
 
             AIFunctionFactory.Create(
-                async (string signalId, string summary) =>
+                async (string signalId, string cause, string effect, string evidence) =>
                 {
                     var signal = await _storageProvider.GetSignalAsync(signalId);
 
-                    signal.Summary = summary;
+                    signal.Cause = string.IsNullOrWhiteSpace(cause) ? null : cause;
+                    signal.Effect = string.IsNullOrWhiteSpace(effect) ? null : effect;
+                    signal.Evidence = string.IsNullOrWhiteSpace(evidence) ? null : evidence;
                     await _storageProvider.SaveSignalAsync(signal);
 
                     return;
                 },
-                "update_signal_summary",
-                "Update a signal summary by signal ID."),
+                "update_signal_analysis",
+                "Persist cause/effect/evidence analysis for a signal. Cause: why this signal is in its current state. Effect: what the failure means. Evidence: raw details (error messages, build numbers, issue/PR references) for cross-signal correlation."),
+
         ];
     }
 
@@ -249,8 +287,25 @@ public class StorageTools
         value = default;
         var current = source;
 
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            value = current.Clone();
+            return true;
+        }
+
         foreach (var segment in path.Split('.', StringSplitOptions.RemoveEmptyEntries))
         {
+            if (current.ValueKind == JsonValueKind.Array && int.TryParse(segment, out var index))
+            {
+                if (index < 0 || index >= current.GetArrayLength())
+                {
+                    return false;
+                }
+
+                current = current[index];
+                continue;
+            }
+
             if (current.ValueKind != JsonValueKind.Object)
             {
                 return false;

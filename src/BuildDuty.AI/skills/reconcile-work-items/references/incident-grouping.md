@@ -8,17 +8,42 @@ Determine which signals represent the same underlying issue.
 - Use each signal's `workItemIds` to understand existing linkage history.
 
 ## Workflow
-1. For each signal ID in the triage run, call `select_signal_fields` and request only required fields.
-2. Use selected `summary`, `workItemIds`, and any info build fields as primary evidence.
-3. Form groups only when causal evidence aligns.
+1. For each signal ID in the triage run, call `select_signal_fields` and request: `cause`, `effect`, `evidence`, `context`, `workItemIds`, and relevant info/build fields.
+2. Use `cause` and `evidence` as primary correlation evidence.
+3. Cross-reference `evidence` across signals to find causal chains (see below).
+4. Use `context` to understand pipeline/repo dependencies and relationships.
+5. Form groups only when causal evidence aligns.
+
+## Correlation strategy
+
+### Same-cause grouping
+Merge signals when their `cause` fields indicate the same failure mechanism. Examples:
+- Two pipelines both failed with `error NU1301: Unable to load service index` → same NuGet infra issue.
+- Three source-build phases failed with the same compiler error → same code issue.
+
+### Causal chain detection
+A downstream signal may fail **because** of an upstream signal's failure. Detect this by cross-referencing `evidence` fields:
+- If signal A's evidence mentions a build number, pipeline name, or run ID that matches signal B's build metadata → signal A may be a downstream effect of signal B.
+- If signal A's cause describes an artifact download failure and signal B is the pipeline that produces those artifacts → group them under signal B's root cause.
+- If a GitHub PR's CI check failed and the failing pipeline matches another collected pipeline signal → link them.
+- If a GitHub issue references a PR or pipeline that matches another signal → link them.
+
+When a causal chain is detected, the **upstream** signal's cause becomes the work item's root cause. The downstream signal is a symptom.
+
+### Cross-type correlation
+Signals of different types (AzDo pipeline, GitHub issue, GitHub PR) can be the same incident:
+- A GitHub issue tracking a build failure + the pipeline signal showing that failure → same incident.
+- A GitHub PR fixing an issue + the issue signal → same incident.
+- A pipeline failure + a downstream pipeline that failed because of it → same incident.
 
 ## Merge criteria
-Merge only when summaries indicate the same failure mechanism/cause.
+Merge only when causes indicate the same failure mechanism, OR when evidence shows a causal chain between signals.
 
 ## Do not merge on
-- same tests only
-- same component/repo/stage only
-- generic wording overlap
+- Same tests only
+- Same component/repo/stage only
+- Generic wording overlap
+- Signals that happen to fail at the same time but for different reasons
 
 ## Precision rule
-If uncertain, split.
+If uncertain, split. Only merge when you have clear causal evidence.

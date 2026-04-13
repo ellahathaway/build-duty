@@ -87,14 +87,21 @@ internal sealed class TriageCommand : BaseCommand<TriageSettings>
                 using var semaphore = new SemaphoreSlim(maxParallelSummaries);
 
                 string summarizePrompt = """
-                    Summarize the following signal.
+                    Analyze the following signal.
                     """;
 
                 var summarizeTasks = collectedSignalIds.Select(signalId => Task.Run(async () =>
                 {
                     await semaphore.WaitAsync();
-                    await _copilotAdapter.RunSignalActionAsync(signalId, summarizePrompt);
-                    semaphore.Release();
+                    try
+                    {
+                        await _copilotAdapter.RunSignalActionAsync(signalId, summarizePrompt);
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                        progressTask.Increment(1);
+                    }
                 }));
 
                 await Task.WhenAll(summarizeTasks);
@@ -102,7 +109,7 @@ internal sealed class TriageCommand : BaseCommand<TriageSettings>
                 progressTask.StopTask();
             });
 
-        AnsiConsole.MarkupLine($"[green]✓[/] Summarized [bold]{collectedSignalIds.Count}[/] signals.");
+        AnsiConsole.MarkupLine($"[green]✓[/] Analyzed [bold]{collectedSignalIds.Count}[/] signals.");
 
         // === Reconcile work items (create/update/resolve) ===
         triageRun.Status = TriageRunStatus.ReconcilingWorkItems;
@@ -110,7 +117,14 @@ internal sealed class TriageCommand : BaseCommand<TriageSettings>
 
         AnsiConsole.MarkupLine("\n[bold][/] Reconciling work items...");
 
-        var metrics = await ReconcileWorkItemsWithAiAsync(collectedSignalIds, triageRun.Id);
+        ReconcileMetrics metrics = new();
+        await RunWithProgressAsync(async ctx =>
+            {
+                var progressTask = ctx.AddTask("[bold]Reconciliation[/]", autoStart: true, maxValue: 1);
+                metrics = await ReconcileWorkItemsWithAiAsync(collectedSignalIds, triageRun.Id);
+                progressTask.Increment(1);
+                progressTask.StopTask();
+            });
 
         AnsiConsole.MarkupLine(
             $"[green]✓[/] Reconciled work items. Created [bold]{metrics.CreatedWorkItems}[/], updated [bold]{metrics.UpdatedWorkItems}[/], resolved [bold]{metrics.ResolvedWorkItems}[/], reopened [bold]{metrics.ReopenedWorkItems}[/].");
