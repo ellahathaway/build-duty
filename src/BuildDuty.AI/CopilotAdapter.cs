@@ -23,7 +23,7 @@ public class CopilotAdapter : IAsyncDisposable
     {
         _clientOptions = clientOptions;
         _tools = tools;
-        _model = configProvider.Get().Ai?.Model;
+        _model = configProvider.GetConfig().Ai?.Model;
     }
 
     /// <summary>

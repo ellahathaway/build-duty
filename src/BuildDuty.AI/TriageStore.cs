@@ -74,7 +74,7 @@ public sealed class TriageStore
 
     private string GetDirectory()
     {
-        var config = _configProvider.Get();
+        var config = _configProvider.GetConfig();
         var directory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             ".build-duty",
