@@ -1,29 +1,27 @@
 using Microsoft.TeamFoundation.Build.WebApi;
+using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
 
 namespace BuildDuty.Core;
 
-public abstract class AzureDevOpsSignal<TInfo> : Signal<AzureDevOpsSignalType, TInfo> where TInfo : class;
+public record AzureDevOpsPipelineInfo(Build Build, List<TimelineRecord> TimelineRecords);
 
-public record AzureDevOpsPipelineInfo(Build Build, List<TimelineRecord>? TimelineRecords);
-
-public sealed class AzureDevOpsPipelineSignal : AzureDevOpsSignal<AzureDevOpsPipelineInfo>
+public sealed class AzureDevOpsPipelineSignal : Signal
 {
-    public override AzureDevOpsSignalType Type => AzureDevOpsSignalType.Pipeline;
+    public override SignalType Type => SignalType.AzureDevOpsPipeline;
 
-    public static AzureDevOpsPipelineSignal Create(
-        Build build,
-        List<TimelineRecord>? timelineRecords = null,
-        List<string>? workItemIds = null)
+    [SetsRequiredMembers]
+    public AzureDevOpsPipelineSignal(Build build, List<TimelineRecord> timelineRecords)
     {
-        return new AzureDevOpsPipelineSignal
-        {
-            Info = new AzureDevOpsPipelineInfo(build, timelineRecords),
-            WorkItemIds = workItemIds ?? [],
-        };
+        TypedInfo = new AzureDevOpsPipelineInfo(build, timelineRecords);
     }
-}
 
-public enum AzureDevOpsSignalType
-{
-    Pipeline
+    public AzureDevOpsPipelineSignal() { }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public AzureDevOpsPipelineInfo TypedInfo
+    {
+        get => System.Text.Json.JsonSerializer.Deserialize<AzureDevOpsPipelineInfo>(Info.GetRawText())!;
+        set => Info = System.Text.Json.JsonSerializer.SerializeToElement(value);
+    }
 }

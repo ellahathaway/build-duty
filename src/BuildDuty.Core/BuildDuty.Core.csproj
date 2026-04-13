@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <RootNamespace>BuildDuty.Core</RootNamespace>
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <ItemGroup>
