@@ -14,7 +14,6 @@ public interface IStorageProvider
     Task SaveTriageRunAsync(TriageRun triageRun);
     Task<TriageRun> GetTriageRunAsync(string triageId);
     Task<ICollection<TriageRun>> GetTriageRunsAsync();
-    StreamWriter CreateAgentLogWriter(string triageId, string logName);
 }
 
 public sealed class StorageProvider : IStorageProvider
@@ -100,14 +99,6 @@ public sealed class StorageProvider : IStorageProvider
         var loadTasks = Directory.GetFiles(directory, "*.json")
             .Select(file => LoadFromJsonFileAsync<TriageRun>(file));
         return await Task.WhenAll(loadTasks);
-    }
-
-    public StreamWriter CreateAgentLogWriter(string triageId, string logName)
-    {
-        var dir = Path.Combine(GetTriageRunsDirectory(), triageId, "logs");
-        Directory.CreateDirectory(dir);
-        var path = Path.Combine(dir, $"{logName}.jsonl");
-        return new StreamWriter(path, append: true) { AutoFlush = true };
     }
 
     private static async Task SaveToJsonFileAsync(string filePath, object data)

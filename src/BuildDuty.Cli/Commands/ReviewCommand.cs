@@ -272,6 +272,12 @@ internal sealed class ReviewCommand : BaseCommand<BaseSettings>
                     }
                     terminal.WriteOutput($"\n\x1b[31mError: {evt.Content ?? "unknown"}\x1b[0m\n");
                     break;
+                case "mcp-loaded":
+                    terminal.WriteOutput($"\n\x1b[2mMCP servers: {evt.Content ?? "(none)"}\x1b[0m\n");
+                    break;
+                case "mcp-status":
+                    terminal.WriteOutput($"\n\x1b[2mMCP status: {evt.Content}\x1b[0m\n");
+                    break;
             }
         });
     }

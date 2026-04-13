@@ -101,6 +101,15 @@ public class StorageTools
 
             AIFunctionFactory.Create(
                 async (
+                    [Description("The ID of the work item")] string workItemId) =>
+                {
+                    return await _storageProvider.GetWorkItemAsync(workItemId);
+                },
+                "get_work_item",
+                "Get a single work item by ID. Returns the work item with its linked analyses, summary, issue signature, and resolution status."),
+
+            AIFunctionFactory.Create(
+                async (
                     [Description("The ID of the signal")] string signalId,
                     [Description("The ID of the analysis")] string analysisId) =>
                 {

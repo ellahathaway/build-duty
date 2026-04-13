@@ -16,6 +16,7 @@ public class CopilotAdapter
     private readonly IBuildDutyConfigProvider _configProvider;
     private readonly ICollection<AIFunction>? _tools;
     private readonly ICollection<string>? _skills;
+    private readonly string GitHubToken;
 
     private const string DefaultInstructions = """
         You are a build-duty agent that helps engineers with the build-duty process (non-interactive triaging and interactive reviewing).
@@ -58,7 +59,7 @@ public class CopilotAdapter
         {
             Name = Agents.Reconcile,
             Description = "Reconciles analyzed signals into work items — groups by root cause, creates/links/updates, resolves/reopens work items.",
-            Tools = ["get_signal", "get_analysis_from_signal", "list_unresolved_work_items_with_signals", "list_orphaned_analyses", "list_unresolved_work_items_updated_in_triage", "create_work_item", "link_signal_to_work_item", "unlink_signal_from_work_item", "update_work_item", "resolve_work_item"],
+            Tools = ["get_signal", "get_work_item", "get_analysis_from_signal", "list_unresolved_work_items_with_signals", "list_orphaned_analyses", "list_unresolved_work_items_updated_in_triage", "create_work_item", "link_signal_to_work_item", "unlink_signal_from_work_item", "update_work_item", "resolve_work_item"],
             Prompt = "You reconcile analyzed signals into work items.",
         },
         new CustomAgentConfig
@@ -66,13 +67,14 @@ public class CopilotAdapter
             Name = Agents.Review,
             Description = "Interactive review of work items.",
             Tools = null, // all tools
-            Prompt = "You help the user review work items interactively. Users will send unfiltered messages. You have access to MCP servers and other external tools beyond the built-in storage tools. When the user asks about live information (e.g. PR approval status, build results, issue comments), use available MCP tools or external integrations to fetch current data rather than relying solely on the signal snapshot.",
+            Prompt = "You help the user review work items interactively. Users will send unfiltered messages asking about the workitem and related information.",
         },
     ];
 
     public CopilotAdapter(
         CopilotClient client,
         IBuildDutyConfigProvider configProvider,
+        string gitHubToken,
         ICollection<AIFunction>? tools = null,
         ICollection<string>? skills = null)
     {
@@ -80,6 +82,7 @@ public class CopilotAdapter
         _configProvider = configProvider;
         _tools = tools;
         _skills = skills;
+        GitHubToken = gitHubToken;
     }
 
     /// <summary>
@@ -138,7 +141,8 @@ public class CopilotAdapter
                         UserNotification = $"An error occurred, skipping: {input.Error}",
                     };
                 }
-            }
+            },
+            McpServers = await BuildGitHubMcpServerAsync(),
         };
 
         var model = _configProvider.Get().Ai?.Model;
@@ -159,6 +163,27 @@ public class CopilotAdapter
         }
 
         return session;
+    }
+
+    private async Task<Dictionary<string, object>> BuildGitHubMcpServerAsync()
+    {
+        if (string.IsNullOrWhiteSpace(GitHubToken))
+        {
+            throw new InvalidOperationException("GitHub token is required for the GitHub MCP server but was not found.");
+        }
+
+        return new Dictionary<string, object>
+        {
+            ["github"] = new McpRemoteServerConfig
+            {
+                Url = "https://api.githubcopilot.com/mcp/",
+                Tools = ["*"],
+                Headers = new Dictionary<string, string>
+                {
+                    ["Authorization"] = $"Bearer {GitHubToken}"
+                }
+            }
+        };
     }
 
     /// <summary>
@@ -192,71 +217,12 @@ public class CopilotAdapter
                 case SessionErrorEvent err:
                     handler(new AgentStreamEvent { Type = "error", Content = err.Data?.ToString() });
                     break;
-            }
-        });
-    }
-
-    private static readonly JsonSerializerOptions s_logJsonOptions = new()
-    {
-        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
-    };
-
-    /// <summary>
-    /// Subscribe to all SDK session events and write each as a JSONL line to <paramref name="writer"/> in real-time.
-    /// </summary>
-    public static IDisposable SubscribeToLog(CopilotSession session, StreamWriter writer)
-    {
-        var lockObj = new object();
-
-        void Write(object entry)
-        {
-            var line = JsonSerializer.Serialize(entry, s_logJsonOptions);
-            lock (lockObj)
-            {
-                writer.WriteLine(line);
-            }
-        }
-
-        return session.On(e =>
-        {
-            var ts = DateTime.UtcNow.ToString("o");
-
-            switch (e)
-            {
-                case AssistantReasoningDeltaEvent reasoning:
-                    Write(new { ts, type = "reasoning-delta", content = reasoning.Data?.DeltaContent });
+                case SessionMcpServersLoadedEvent mcpLoaded:
+                    var serverNames = mcpLoaded.Data?.Servers?.Select(s => $"{s.Name}({s.Status})") ?? [];
+                    handler(new AgentStreamEvent { Type = "mcp-loaded", Content = string.Join(", ", serverNames) });
                     break;
-                case AssistantReasoningEvent reasoning:
-                    Write(new { ts, type = "reasoning", content = reasoning.Data?.Content });
-                    break;
-                case AssistantMessageDeltaEvent delta:
-                    Write(new { ts, type = "message-delta", content = delta.Data?.DeltaContent });
-                    break;
-                case AssistantMessageEvent msg:
-                    Write(new { ts, type = "message", content = msg.Data?.Content, phase = msg.Data?.Phase, outputTokens = msg.Data?.OutputTokens });
-                    break;
-                case AssistantUsageEvent usage:
-                    Write(new { ts, type = "usage", model = usage.Data?.Model, inputTokens = usage.Data?.InputTokens, outputTokens = usage.Data?.OutputTokens, cacheReadTokens = usage.Data?.CacheReadTokens, cacheWriteTokens = usage.Data?.CacheWriteTokens, durationMs = usage.Data?.Duration, reasoningEffort = usage.Data?.ReasoningEffort });
-                    break;
-                case ToolExecutionStartEvent toolStart:
-                    var name = toolStart.Data?.McpToolName ?? toolStart.Data?.ToolName;
-                    var server = toolStart.Data?.McpServerName;
-                    Write(new { ts, type = "tool-start", toolCallId = toolStart.Data?.ToolCallId, toolName = server is not null ? $"{server}/{name}" : name, args = toolStart.Data?.Arguments?.ToString() });
-                    break;
-                case ToolExecutionCompleteEvent toolEnd:
-                    Write(new { ts, type = "tool-end", toolCallId = toolEnd.Data?.ToolCallId, success = toolEnd.Data?.Success, model = toolEnd.Data?.Model, result = toolEnd.Data?.Result?.ToString(), error = toolEnd.Data?.Error?.Message });
-                    break;
-                case SkillInvokedEvent skill:
-                    Write(new { ts, type = "skill-invoked", name = skill.Data?.Name, path = skill.Data?.Path });
-                    break;
-                case SessionErrorEvent err:
-                    Write(new { ts, type = "error", errorType = err.Data?.ErrorType, message = err.Data?.Message, statusCode = err.Data?.StatusCode });
-                    break;
-                case HookStartEvent hook:
-                    Write(new { ts, type = "hook-start", hookType = hook.Data?.HookType, hookInvocationId = hook.Data?.HookInvocationId });
-                    break;
-                case HookEndEvent hook:
-                    Write(new { ts, type = "hook-end", hookType = hook.Data?.HookType, hookInvocationId = hook.Data?.HookInvocationId, success = hook.Data?.Success });
+                case SessionMcpServerStatusChangedEvent mcpStatus:
+                    handler(new AgentStreamEvent { Type = "mcp-status", Content = $"{mcpStatus.Data?.ServerName}: {mcpStatus.Data?.Status}" });
                     break;
             }
         });

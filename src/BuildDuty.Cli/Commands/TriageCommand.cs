@@ -169,8 +169,7 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
                             streaming: false,
                             agent: CopilotAdapter.Agents.Analyze,
                             throwAfterRetries: true);
-                        using var logWriter = _storageProvider.CreateAgentLogWriter(triageRun.Id, $"analyze_{signalId}");
-                        using var logSub = CopilotAdapter.SubscribeToLog(session, logWriter);
+
                         var result = await _copilotAdapter.RunPromptAsync(session, analyzePrompt);
                         return JsonSerializer.Deserialize<AnalysisResult?>(ExtractJson(result?.Data?.Content ?? ""), new JsonSerializerOptions
                         {
@@ -216,9 +215,6 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
                     agent: CopilotAdapter.Agents.Reconcile,
                     throwAfterRetries: true);
 
-                using var logWriter = _storageProvider.CreateAgentLogWriter(triageRun.Id, $"update-workitems_{triageRun.Id}");
-                using var logSub = CopilotAdapter.SubscribeToLog(session, logWriter);
-
                 var result = await _copilotAdapter.RunPromptAsync(session, prompt);
                 updatedWorkItems = JsonSerializer.Deserialize<UpdateWorkItemsResult?>(ExtractJson(result?.Data?.Content ?? ""), new JsonSerializerOptions
                 {
@@ -259,9 +255,6 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
                 await using var session = await _copilotAdapter.CreateSessionAsync(
                     agent: CopilotAdapter.Agents.Reconcile,
                     throwAfterRetries: true);
-
-                using var logWriter = _storageProvider.CreateAgentLogWriter(triageRun.Id, $"create-workitems_{triageRun.Id}");
-                using var logSub = CopilotAdapter.SubscribeToLog(session, logWriter);
 
                 var result = await _copilotAdapter.RunPromptAsync(session, prompt);
                 createdWorkItems = JsonSerializer.Deserialize<CreateWorkItemsResult?>(ExtractJson(result?.Data?.Content ?? ""), new JsonSerializerOptions
