@@ -68,7 +68,7 @@ public class CopilotAdapter : IAsyncDisposable
             }
 
             var prompt = $"""
-                Use the available tools to look up work item "{workItem.Id}" ({workItem.Title}) and its sources.
+                Use the available tools to look up work item "{workItem.Id}" and its sources.
                 Then perform the following action:
 
                 {action}
