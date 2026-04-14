@@ -81,8 +81,10 @@ If no concrete error is found, use the narrowest failure scope (e.g., "Task X fa
 
 Result is no longer in `MonitoredStatuses` (e.g. `Succeeded`, or `PartiallySucceeded` when only `Failed`/`Canceled` are monitored).
 
-Resolve any existing active analyses on the signal — the failures they describe are no longer occurring. Use `resolve_signal_analysis` with a resolution reason describing the new build result.
+Resolve any existing active analyses on the signal — the failures they describe are no longer occurring. Use `resolve_signal_analysis` with the resolution criteria that were met.
 
-#### Analysis Text — resolution reason
+#### Analysis Text — resolution criteria
 
-Example: `Pipeline result changed to Succeeded; no longer in monitored failure states [Failed, Canceled].`
+Examples:
+- `Pipeline result changed to Succeeded; no longer in monitored failure states [Failed, Canceled].`
+- `Superseded by analysis covering the actual root cause (DNS outage, not NuGet timeout).`

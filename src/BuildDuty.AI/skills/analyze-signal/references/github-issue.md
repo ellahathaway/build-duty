@@ -48,7 +48,9 @@ Example — resolved issue:
   "relatedLinks": ["https://github.com/dotnet/runtime/pull/12400"]
 }
 ```
-Use `resolve_signal_analysis` on existing active analyses when the issue is closed. Resolution reason example: `Issue closed via PR #12400.`
+Use `resolve_signal_analysis` on existing active analyses when the issue is closed or when a new analysis supersedes them. Resolution criteria examples:
+- `Issue closed via PR #12400.`
+- `Superseded by more specific analysis identifying the OpenSSL 3.5 incompatibility.`
 
 #### `analysis` — concise cause statement
 

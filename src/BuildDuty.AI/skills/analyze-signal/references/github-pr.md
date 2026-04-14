@@ -58,4 +58,6 @@ Examples:
 - `PR blocked on required review from @dotnet/source-build-internal.`
 - `PR merged: fixes Alpine 3.23 OpenSSL SHA-1 issue. Source-build should pass on next unified-build run.`
 
-For merged/closed PRs, use `resolve_signal_analysis` on existing active analyses. Resolution reason example: `PR merged; fix should flow to downstream pipelines.`
+For merged/closed PRs, use `resolve_signal_analysis` on existing active analyses. Resolution criteria examples:
+- `PR merged; fix should flow to downstream pipelines.`
+- `Superseded by analysis covering the broader CI regression.`

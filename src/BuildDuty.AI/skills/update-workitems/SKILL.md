@@ -18,7 +18,7 @@ List unresolved work items. If there are **none**, skip all phases and return im
 
 ## Context
 
-Each work item has a `LinkedAnalyses` list — entries of `(SignalId, AnalysisIds[])`. Each analysis ID points to a specific analysis entry on a signal. Analyses now have a `Status` (active or resolved) — resolved analyses stay linked and preserve provenance.
+Each work item has a `LinkedAnalyses` list — entries of `(SignalId, AnalysisIds[])`. Each analysis ID points to a specific analysis entry on a signal. Analyses have a `Status` (new, updated, or resolved) — resolved analyses stay linked and preserve provenance.
 
 ## Phase 1 — Fix existing links
 
@@ -55,8 +55,7 @@ Only consider analyses that were created during the current analysis step (new a
 8. List unresolved work items that were updated in this triage run.
 9. For each, load its linked analyses and check their status:
    - **All resolved** — every linked analysis has `status: resolved`. Resolve the work item.
-   - **Mixed** — some analyses are still active. Keep unresolved.
-   - **Zero linked analyses** — all evidence has been unlinked. Resolve the work item.
+   - **Mixed** — some analyses are still new or updated. Keep unresolved.
 
 ## Output
 

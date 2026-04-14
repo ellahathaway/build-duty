@@ -52,7 +52,7 @@ public class CopilotAdapter
         {
             Name = Agents.Analyze,
             Description = "Analyzes a single signal — extracts cause, effect, and evidence.",
-            Tools = ["get_signal", "read_pipeline_log", "create_signal_analysis", "update_signal_analysis", "resolve_signal_analysis", "remove_signal_analysis", "get_json_value"],
+            Tools = ["get_signal", "read_pipeline_log", "create_signal_analysis", "update_signal_analysis", "resolve_signal_analysis", "get_json_value"],
             Prompt = "You analyze a single signal to extract cause, effect, and evidence. Use the analyze-signal skill.",
         },
         new CustomAgentConfig

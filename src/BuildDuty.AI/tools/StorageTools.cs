@@ -318,28 +318,8 @@ public class StorageTools
             AIFunctionFactory.Create(
                 async (
                     [Description("The ID of the signal")] string signalId,
-                    [Description("The ID of the analysis to remove")] string analysisId) =>
-                {
-                    var signal = await _storageProvider.GetSignalAsync(signalId);
-                    var existing = signal.Analyses.FirstOrDefault(a => a.Id == analysisId);
-
-                    if (existing is null)
-                    {
-                        return "cannot remove - analysis not found on signal";
-                    }
-
-                    signal.Analyses.Remove(existing);
-                    await _storageProvider.SaveSignalAsync(signal);
-                    return "removed";
-                },
-                "remove_signal_analysis",
-                "Remove an analysis that was wrong or irrelevant (misidentified root cause, bad data, duplicate). Do NOT use this for resolved issues — use resolve_signal_analysis instead."),
-
-            AIFunctionFactory.Create(
-                async (
-                    [Description("The ID of the signal")] string signalId,
                     [Description("The ID of the analysis to resolve")] string analysisId,
-                    [Description("The reason for resolution (e.g. pipeline recovered, issue closed, fix merged)")] string resolutionReason) =>
+                    [Description("The criteria that were met for resolution (e.g. pipeline succeeded, issue closed via PR #123, fix merged)")] string resolutionCriteria) =>
                 {
                     var signal = await _storageProvider.GetSignalAsync(signalId);
                     var existing = signal.Analyses.FirstOrDefault(a => a.Id == analysisId);
@@ -350,12 +330,12 @@ public class StorageTools
                     }
 
                     var index = signal.Analyses.IndexOf(existing);
-                    signal.Analyses[index] = existing with { Status = AnalysisStatus.Resolved, ResolutionReason = resolutionReason };
+                    signal.Analyses[index] = existing with { Status = AnalysisStatus.Resolved, ResolutionCriteria = resolutionCriteria };
                     await _storageProvider.SaveSignalAsync(signal);
                     return "resolved";
                 },
                 "resolve_signal_analysis",
-                "Mark an analysis as resolved when the issue it describes is no longer active (pipeline recovered, issue closed, fix merged). The analysis is preserved for provenance."),
+                "Mark an analysis as resolved. Use when the issue is no longer active (pipeline recovered, issue closed, fix merged) OR when the analysis has been superseded by a more accurate one. The analysis is preserved for provenance. Provide the resolution criteria that were met."),
 
             AIFunctionFactory.Create(
                 async (
@@ -373,12 +353,12 @@ public class StorageTools
                     }
 
                     var index = signal.Analyses.IndexOf(existing);
-                    signal.Analyses[index] = new SignalAnalysis(existing.Id, analysisData, analysis, existing.Status, existing.ResolutionReason);
+                    signal.Analyses[index] = new SignalAnalysis(existing.Id, analysisData, analysis, AnalysisStatus.Updated, existing.ResolutionCriteria);
                     await _storageProvider.SaveSignalAsync(signal);
                     return "updated";
                 },
                 "update_signal_analysis",
-                "Update an existing analysis on a signal (replaces analysisData and analysis text, preserving the analysis ID)."),
+                "Update an existing analysis on a signal (replaces analysisData and analysis text, preserving the analysis ID). Sets status to Updated."),
         ];
     }
 
