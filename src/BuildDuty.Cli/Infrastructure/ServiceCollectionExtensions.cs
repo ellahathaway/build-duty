@@ -9,7 +9,6 @@ using Microsoft.DotNet.DarcLib.Helpers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
-using Microsoft.Azure.Pipelines.WebApi;
 
 namespace BuildDuty.Cli.Infrastructure;
 
@@ -62,7 +61,10 @@ internal static class ServiceCollectionExtensions
                 ? Directory.GetDirectories(skillsDirectory).ToList()
                 : null;
 
-            return new CopilotAdapter(client, configProvider, tools, skills);
+            var gitHubToken = sp.GetRequiredService<IRemoteTokenProvider>()
+                .GetTokenForRepositoryAsync("https://github.com").GetAwaiter().GetResult() ?? string.Empty;
+
+            return new CopilotAdapter(client, configProvider, gitHubToken, tools, skills);
         });
         return services;
     }
@@ -144,16 +146,6 @@ internal static class ServiceCollectionExtensions
         }
 
         var exeName = OperatingSystem.IsWindows() ? "copilot.exe" : "copilot";
-        var pathDirs = Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator) ?? [];
-        foreach (var dir in pathDirs)
-        {
-            var candidate = Path.Combine(dir, exeName);
-            if (File.Exists(candidate))
-            {
-                return candidate;
-            }
-        }
-
-        return null;
+        return Utilities.FindOnPath(exeName);
     }
 }
