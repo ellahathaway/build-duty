@@ -1,6 +1,5 @@
 using System.Text.RegularExpressions;
 using BuildDuty.Core.Models;
-using Maestro.Common;
 using Octokit;
 
 namespace BuildDuty.Core;
@@ -11,7 +10,7 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
 
     public GitHubSignalCollector(
         GitHubConfig config,
-        IRemoteTokenProvider tokenProvider,
+        IGeneralTokenProvider tokenProvider,
         IStorageProvider storageProvider)
         : base(config, tokenProvider, storageProvider)
     {

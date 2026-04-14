@@ -1,14 +1,12 @@
-using Maestro.Common;
-using Microsoft.TeamFoundation.Build.WebApi;
 using Microsoft.VisualStudio.Services.OAuth;
 using Microsoft.VisualStudio.Services.WebApi;
 using Octokit;
 
 namespace BuildDuty.Core;
 
-public static class RemoteClientHelper
+public static class GeneralTokenProviderExtensions
 {
-    public static async Task<VssConnection> GetAzureDevOpsConnectionAsync(this IRemoteTokenProvider tokenProvider, string organizationUrl)
+    public static async Task<VssConnection> GetAzureDevOpsConnectionAsync(this IGeneralTokenProvider tokenProvider, string organizationUrl)
     {
         // Ensure trailing slash so Maestro's AzureDevOpsTokenProvider regex can extract the account name
         var repoUrl = organizationUrl.TrimEnd('/') + "/";
@@ -22,7 +20,7 @@ public static class RemoteClientHelper
         return new VssConnection(new Uri(organizationUrl), credentials);
     }
 
-    public static async Task<GitHubClient> GetGitHubClientAsync(this IRemoteTokenProvider tokenProvider, string organization, string repository)
+    public static async Task<GitHubClient> GetGitHubClientAsync(this IGeneralTokenProvider tokenProvider, string organization, string repository)
     {
         var repoUrl = $"https://github.com/{organization}/{repository}";
         var token = await tokenProvider.GetTokenForRepositoryAsync(repoUrl);

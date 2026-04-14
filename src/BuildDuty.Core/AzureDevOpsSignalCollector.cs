@@ -1,5 +1,4 @@
 using BuildDuty.Core.Models;
-using Maestro.Common;
 using Microsoft.TeamFoundation.Build.WebApi;
 using Microsoft.VisualStudio.Services.WebApi;
 
@@ -12,7 +11,7 @@ public class AzureDevOpsSignalCollector : SignalCollector<AzureDevOpsConfig>
 
     public AzureDevOpsSignalCollector(
         AzureDevOpsConfig config,
-        IRemoteTokenProvider tokenProvider,
+        IGeneralTokenProvider tokenProvider,
         IStorageProvider storageProvider,
         ReleaseBranchResolver branchResolver)
         : base(config, tokenProvider, storageProvider)

@@ -1,7 +1,6 @@
 using System.Text.RegularExpressions;
 using BuildDuty.Core;
 using BuildDuty.Core.Models;
-using Maestro.Common;
 using Microsoft.TeamFoundation.Build.WebApi;
 using Microsoft.VisualStudio.Services.Common;
 using Microsoft.VisualStudio.Services.WebApi;
@@ -125,9 +124,9 @@ public class AzureDevOpsPipelineSignalTests
             return collectedSignals;
         }
 
-        private static IRemoteTokenProvider CreateMockTokenProvider()
+        private static IGeneralTokenProvider CreateMockTokenProvider()
         {
-            var mock = Substitute.For<IRemoteTokenProvider>();
+            var mock = Substitute.For<IGeneralTokenProvider>();
             mock.GetTokenForRepositoryAsync(Arg.Any<string>()).Returns("fake-token");
             return mock;
         }

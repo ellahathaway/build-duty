@@ -25,7 +25,7 @@ internal static class ServiceCollectionExtensions
         services
             .AddBuildDutyConfigProvider()
             .AddStorageProvider()
-            .AddRemoteTokenProvider();
+            .AddGeneralTokenProvider();
 
         services.TryAddTransient<GitHubSignalCollector>();
         services.TryAddSingleton<ReleaseBranchResolver>();
@@ -39,7 +39,7 @@ internal static class ServiceCollectionExtensions
     {
         services.AddBuildDutyConfigProvider();
         services.AddStorageProvider();
-        services.AddRemoteTokenProvider();
+        services.AddGeneralTokenProvider();
         services.TryAddSingleton(sp => new CopilotClient(new CopilotClientOptions
         {
             CliPath = ResolveCopilotCliPath(),
@@ -61,8 +61,9 @@ internal static class ServiceCollectionExtensions
                 ? Directory.GetDirectories(skillsDirectory).ToList()
                 : null;
 
-            var gitHubToken = sp.GetRequiredService<IRemoteTokenProvider>()
-                .GetTokenForRepositoryAsync("https://github.com").GetAwaiter().GetResult() ?? string.Empty;
+            var gitHubToken = sp.GetRequiredService<IGeneralTokenProvider>()
+                .GetTokenForRepositoryAsync("https://github.com").GetAwaiter().GetResult()
+                ?? throw new InvalidOperationException("Failed to retrieve GitHub token. Ensure the GitHub CLI is authenticated via 'gh auth login'.");
 
             return new CopilotAdapter(client, configProvider, gitHubToken, tools, skills);
         });
@@ -75,7 +76,7 @@ internal static class ServiceCollectionExtensions
         return services;
     }
 
-    private static IServiceCollection AddRemoteTokenProvider(this IServiceCollection services)
+    private static IServiceCollection AddGeneralTokenProvider(this IServiceCollection services)
     {
         // Azure DevOps token provider
         services.TryAddKeyedSingleton<IRemoteTokenProvider>("azdo", (_, _) =>
@@ -94,47 +95,13 @@ internal static class ServiceCollectionExtensions
         services.TryAddKeyedSingleton<IRemoteTokenProvider>("github", (sp, _) =>
             sp.GetRequiredService<GitHubTokenProvider>());
 
-        // Default provider used by components that do not request a keyed instance.
-        services.TryAddSingleton<IRemoteTokenProvider>(sp =>
-            new RoutedRemoteTokenProvider(
+        // General token provider that routes to the correct backing provider by URL.
+        services.TryAddSingleton<IGeneralTokenProvider>(sp =>
+            new GeneralTokenProvider(
                 sp.GetRequiredKeyedService<IRemoteTokenProvider>("azdo"),
                 sp.GetRequiredKeyedService<IRemoteTokenProvider>("github")));
 
         return services;
-    }
-
-    private sealed class RoutedRemoteTokenProvider(
-        IRemoteTokenProvider azureDevOpsTokenProvider,
-        IRemoteTokenProvider githubTokenProvider) : IRemoteTokenProvider
-    {
-        public string GetTokenForRepository(string repoUri)
-            => GetProvider(repoUri).GetTokenForRepository(repoUri)
-                ?? throw new InvalidOperationException($"No token available for repository '{repoUri}'.");
-
-        public Task<string?> GetTokenForRepositoryAsync(string repoUri)
-            => GetProvider(repoUri).GetTokenForRepositoryAsync(repoUri);
-
-        private IRemoteTokenProvider GetProvider(string repoUri)
-        {
-            if (!Uri.TryCreate(repoUri, UriKind.Absolute, out var uri))
-            {
-                return githubTokenProvider;
-            }
-
-            if (uri.Host.Contains("dev.azure.com", StringComparison.OrdinalIgnoreCase)
-                || uri.Host.Contains("visualstudio.com", StringComparison.OrdinalIgnoreCase))
-            {
-                return azureDevOpsTokenProvider;
-            }
-
-            if (uri.Host.Contains("github.com", StringComparison.OrdinalIgnoreCase)
-                || uri.Host.Contains("api.github.com", StringComparison.OrdinalIgnoreCase))
-            {
-                return githubTokenProvider;
-            }
-
-            return githubTokenProvider;
-        }
     }
 
     private static string? ResolveCopilotCliPath()

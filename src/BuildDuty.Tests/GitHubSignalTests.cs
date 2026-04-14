@@ -1,7 +1,6 @@
 using System.Text.RegularExpressions;
 using BuildDuty.Core;
 using BuildDuty.Core.Models;
-using Maestro.Common;
 using NSubstitute;
 using Octokit;
 using Xunit;
@@ -125,7 +124,7 @@ public class GitHubSignalTests
             GitHubConfig config,
             IStorageProvider storageProvider,
             IGitHubClient client)
-            : base(config, Substitute.For<IRemoteTokenProvider>(), storageProvider)
+            : base(config, Substitute.For<IGeneralTokenProvider>(), storageProvider)
         {
             _client = client;
         }
