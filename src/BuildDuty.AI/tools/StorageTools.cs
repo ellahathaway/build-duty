@@ -30,7 +30,10 @@ public class StorageTools
                     foreach (var wi in unresolvedWorkItems)
                     {
                         var triageLinks = wi.LinkedAnalyses.Where(la => triageSignalSet.Contains(la.SignalId)).ToList();
-                        if (triageLinks.Count == 0) continue;
+                        if (triageLinks.Count == 0)
+                        {
+                            continue;
+                        }
 
                         // Enrich each linked analysis with status and updatedAt from the signal
                         var enrichedLinks = new List<object>();
