@@ -1,5 +1,3 @@
-using Maestro.Common;
-
 namespace BuildDuty.Core;
 
 public interface ISignalCollector
@@ -12,7 +10,7 @@ public abstract class SignalCollector<TConfig> : ISignalCollector
 {
     protected SignalCollector(
         TConfig config,
-        IRemoteTokenProvider tokenProvider,
+        IGeneralTokenProvider tokenProvider,
         IStorageProvider storageProvider)
     {
         Config = config;
@@ -22,7 +20,7 @@ public abstract class SignalCollector<TConfig> : ISignalCollector
 
     protected TConfig Config { get; }
 
-    protected IRemoteTokenProvider TokenProvider { get; }
+    protected IGeneralTokenProvider TokenProvider { get; }
 
     protected IStorageProvider StorageProvider { get; }
 

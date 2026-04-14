@@ -2,7 +2,6 @@ using System.ComponentModel;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using BuildDuty.Core;
-using Maestro.Common;
 using Microsoft.Extensions.AI;
 using Microsoft.TeamFoundation.Build.WebApi;
 
@@ -11,12 +10,12 @@ namespace BuildDuty.AI.Tools;
 public class AzureDevOpsTools
 {
     private readonly IStorageProvider _storageProvider;
-    private readonly IRemoteTokenProvider _tokenProvider;
+    private readonly IGeneralTokenProvider _tokenProvider;
     private record PipelineContext(AzureDevOpsPipelineSignal Signal, BuildHttpClient BuildClient);
 
     public AzureDevOpsTools(
         IStorageProvider storageProvider,
-        IRemoteTokenProvider tokenProvider)
+        IGeneralTokenProvider tokenProvider)
     {
         _storageProvider = storageProvider;
         _tokenProvider = tokenProvider;
