@@ -9,7 +9,9 @@ public static class Utilities
         {
             var candidate = Path.Combine(dir, executable);
             if (File.Exists(candidate))
+            {
                 return candidate;
+            }
         }
         return null;
     }

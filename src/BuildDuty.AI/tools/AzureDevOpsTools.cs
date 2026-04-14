@@ -1,9 +1,9 @@
-using BuildDuty.Core;
-using Microsoft.Extensions.AI;
-using Microsoft.TeamFoundation.Build.WebApi;
 using System.ComponentModel;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using BuildDuty.Core;
+using Microsoft.Extensions.AI;
+using Microsoft.TeamFoundation.Build.WebApi;
 
 namespace BuildDuty.AI.Tools;
 

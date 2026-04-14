@@ -1,11 +1,11 @@
-using BuildDuty.Core;
 using BuildDuty.AI;
 using BuildDuty.AI.Tools;
+using BuildDuty.Core;
 using GitHub.Copilot.SDK;
 using Maestro.Common;
-using Microsoft.Extensions.AI;
 using Maestro.Common.AzureDevOpsTokens;
 using Microsoft.DotNet.DarcLib.Helpers;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;

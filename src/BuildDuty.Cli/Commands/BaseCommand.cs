@@ -1,5 +1,5 @@
-using Spectre.Console.Cli;
 using BuildDuty.Core;
+using Spectre.Console.Cli;
 
 namespace BuildDuty.Cli.Commands;
 

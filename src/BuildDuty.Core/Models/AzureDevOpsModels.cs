@@ -1,6 +1,6 @@
-using YamlDotNet.Serialization;
-using Microsoft.TeamFoundation.Build.WebApi;
 using System.Text.RegularExpressions;
+using Microsoft.TeamFoundation.Build.WebApi;
+using YamlDotNet.Serialization;
 
 namespace BuildDuty.Core.Models;
 
