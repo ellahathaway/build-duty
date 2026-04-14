@@ -1,6 +1,4 @@
 using System.ComponentModel;
-using System.Text.Json;
-using System.Text.RegularExpressions;
 using BuildDuty.AI;
 using BuildDuty.Core;
 using BuildDuty.Core.Models;
@@ -21,10 +19,6 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
     private readonly ISignalCollectorFactory _signalCollectorFactory;
     private readonly IStorageProvider _storageProvider;
     private readonly CopilotAdapter _copilotAdapter;
-
-    private record AnalysisResult(int AnalysesUpdated, int AnalysesCreated, int AnalysesResolved);
-    private sealed record UpdateWorkItemsResult(int WorkItemsUpdated, int WorkItemsResolved);
-    private sealed record CreateWorkItemsResult(int WorkItemsCreated);
 
     public TriageRunCommand(
         IBuildDutyConfigProvider configProvider,
@@ -156,7 +150,6 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
 
         AnsiConsole.MarkupLine("\n[bold]Analyzing signals...[/]");
 
-        var analysisResults = new List<AnalysisResult>();
         await RunWithProgressAsync(async ctx =>
             {
                 var progressTask = ctx.AddTask("[bold]Analysis[/]", maxValue: triageRun.SignalIds.Count);
@@ -177,11 +170,7 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
 
                         try
                         {
-                            var result = await _copilotAdapter.RunPromptAsync(session, analyzePrompt);
-                            return JsonSerializer.Deserialize<AnalysisResult?>(ExtractJson(result?.Data?.Content ?? ""), new JsonSerializerOptions
-                            {
-                                PropertyNameCaseInsensitive = true,
-                            }) ?? throw new InvalidOperationException($"AI did not return a valid response for analysis of signal {signalId}.");
+                            await _copilotAdapter.RunPromptAsync(session, analyzePrompt);
                         }
                         finally
                         {
@@ -195,14 +184,24 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
                     }
                 }));
 
-                analysisResults = (await Task.WhenAll(summarizeTasks)).ToList();
+                await Task.WhenAll(summarizeTasks);
 
                 progressTask.StopTask();
             });
 
-        AnsiConsole.MarkupLine($"[green]\u2713[/] Updated {analysisResults.Sum(r => r?.AnalysesUpdated ?? 0)} analyses");
-        AnsiConsole.MarkupLine($"[green]\u2713[/] Created {analysisResults.Sum(r => r?.AnalysesCreated ?? 0)} analyses");
-        AnsiConsole.MarkupLine($"[green]\u2713[/] Resolved {analysisResults.Sum(r => r?.AnalysesResolved ?? 0)} analyses");
+        // Count results from storage — analyses tagged with this triage run's ID
+        var signals = await Task.WhenAll(triageRun.SignalIds.Select(id => _storageProvider.GetSignalAsync(id)));
+        var triageAnalyses = signals
+            .SelectMany(s => s.Analyses)
+            .Where(a => a.LastTriageId == triageRun.Id);
+
+        int created = triageAnalyses.Count(a => a.Status == AnalysisStatus.New);
+        int updated = triageAnalyses.Count(a => a.Status == AnalysisStatus.Updated);
+        int resolved = triageAnalyses.Count(a => a.Status == AnalysisStatus.Resolved);
+
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Updated {updated} analyses");
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Created {created} analyses");
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Resolved {resolved} analyses");
     }
 
     private async Task UpdateWorkItemsAsync(TriageRun triageRun)
@@ -217,7 +216,11 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
 
         AnsiConsole.MarkupLine("\n[bold]Updating work items...[/]");
 
-        UpdateWorkItemsResult? updatedWorkItems = null;
+        // Snapshot resolved state before AI runs
+        var workItemsBefore = await _storageProvider.GetWorkItemsAsync();
+        var resolvedBefore = new HashSet<string>(
+            workItemsBefore.Where(wi => wi.Resolved).Select(wi => wi.Id));
+
         await RunWithProgressAsync(async ctx =>
             {
                 var progressTask = ctx.AddTask("[bold]Updating work items[/]", autoStart: true, maxValue: 1);
@@ -229,11 +232,7 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
 
                 try
                 {
-                    var result = await _copilotAdapter.RunPromptAsync(session, prompt);
-                    updatedWorkItems = JsonSerializer.Deserialize<UpdateWorkItemsResult?>(ExtractJson(result?.Data?.Content ?? ""), new JsonSerializerOptions
-                    {
-                        PropertyNameCaseInsensitive = true,
-                    });
+                    await _copilotAdapter.RunPromptAsync(session, prompt);
                 }
                 finally
                 {
@@ -244,13 +243,14 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
                 progressTask.StopTask();
             });
 
-        if (updatedWorkItems is null)
-        {
-            throw new InvalidOperationException("AI did not return a valid response for work item updates.");
-        }
+        // Count results from storage — work items touched by this triage run
+        var workItemsAfter = await _storageProvider.GetWorkItemsAsync();
+        var touched = workItemsAfter.Where(wi => wi.LastTriageId == triageRun.Id).ToList();
+        int workItemsResolved = touched.Count(wi => wi.Resolved && !resolvedBefore.Contains(wi.Id));
+        int workItemsUpdated = touched.Count - workItemsResolved;
 
-        AnsiConsole.MarkupLine($"[green]\u2713[/] Updated {updatedWorkItems.WorkItemsUpdated} existing work items");
-        AnsiConsole.MarkupLine($"[green]\u2713[/] Resolved {updatedWorkItems.WorkItemsResolved} existing work items");
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Updated {workItemsUpdated} existing work items");
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Resolved {workItemsResolved} existing work items");
     }
 
     private async Task CreateWorkItemsAsync(TriageRun triageRun)
@@ -265,7 +265,10 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
 
         AnsiConsole.MarkupLine("\n[bold]Creating work items for orphaned analyses...[/]");
 
-        CreateWorkItemsResult? createdWorkItems = null;
+        // Snapshot existing work item IDs before AI runs
+        var existingIds = new HashSet<string>(
+            (await _storageProvider.GetWorkItemsAsync()).Select(wi => wi.Id));
+
         await RunWithProgressAsync(async ctx =>
             {
                 var progressTask = ctx.AddTask("[bold]Creating work items[/]", autoStart: true, maxValue: 1);
@@ -277,11 +280,7 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
 
                 try
                 {
-                    var result = await _copilotAdapter.RunPromptAsync(session, prompt);
-                    createdWorkItems = JsonSerializer.Deserialize<CreateWorkItemsResult?>(ExtractJson(result?.Data?.Content ?? ""), new JsonSerializerOptions
-                    {
-                        PropertyNameCaseInsensitive = true,
-                    });
+                    await _copilotAdapter.RunPromptAsync(session, prompt);
                 }
                 finally
                 {
@@ -292,24 +291,11 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
                 progressTask.StopTask();
             });
 
-        if (createdWorkItems is null)
-        {
-            throw new InvalidOperationException("AI did not return a valid response for work item creation.");
-        }
+        // Count results from storage — new work items that didn't exist before
+        var allWorkItems = await _storageProvider.GetWorkItemsAsync();
+        int workItemsCreated = allWorkItems.Count(wi => !existingIds.Contains(wi.Id));
 
-        AnsiConsole.MarkupLine($"[green]\u2713[/] Created {createdWorkItems.WorkItemsCreated} new work items.");
-    }
-
-    private static readonly Regex s_jsonObject = new(@"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", RegexOptions.Singleline | RegexOptions.Compiled);
-
-    /// <summary>
-    /// Extracts the first JSON object from an AI response that may contain
-    /// markdown fences, prose, or other non-JSON wrapping.
-    /// </summary>
-    private static string ExtractJson(string text)
-    {
-        var match = s_jsonObject.Match(text);
-        return match.Success ? match.Value : text.Trim();
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Created {workItemsCreated} new work items.");
     }
 
     private static async Task RunWithProgressAsync(Func<ProgressContext, Task> action)

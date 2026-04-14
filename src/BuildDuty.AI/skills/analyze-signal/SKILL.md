@@ -30,13 +30,4 @@ Use the matching reference based on signal type:
 
 ## Output
 
-Return **only** the raw JSON object below — no markdown fences, no commentary, no extra text.
-
-```json
-{
-  "analysesUpdated": 1,
-  "analysesCreated": 2,
-  "analysesResolved": 1
-}
-```
-`analysesUpdated` counts existing analyses whose details were updated. `analysesCreated` counts newly persisted analyses. `analysesResolved` counts existing analyses marked as resolved.
+No text output is required. The CLI determines result counts by inspecting the persisted analyses after this skill completes.
