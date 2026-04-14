@@ -551,5 +551,49 @@ public class AzureDevOpsPipelineSignalTests
         Assert.Equal(existingSignal.Id, pipelineSignal.Id);
         Assert.Equal(101, pipelineSignal.TypedInfo.Build.Id);
     }
+
+    [Fact]
+    public async Task CollectAsync_RerunBuild_NewerQueuedBuildIsCollected()
+    {
+        // Scenario: Build 100 was a rerun of an old pipeline run — it was queued on April 1
+        // but rerun and finished on April 14. Build 200 is the genuinely newer build — queued
+        // on April 13 and finished on April 13. With QueueTimeDescending ordering, the API
+        // returns build 200 (most recently queued), not the rerun that finished later.
+        var rerunBuild = CreateBuild(100, BuildResult.Failed, finishTime: new DateTime(2026, 4, 14, 5, 0, 0));
+        var newerBuild = CreateBuild(200, BuildResult.Failed, finishTime: new DateTime(2026, 4, 13, 18, 15, 0));
+
+        var rerunRecord = CreateTimelineRecord(result: TaskResult.Failed);
+        var newerRecord = CreateTimelineRecord(result: TaskResult.Failed);
+
+        // Existing signal was collected from the rerun build (simulating the old FinishTimeDescending behavior)
+        var existingSignal = new AzureDevOpsPipelineSignal(
+            ToPipelineInfo("https://dev.azure.com/testorg", rerunBuild, [ToInfoRecord(rerunRecord)]),
+            new Uri("https://dev.azure.com/testorg"));
+
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns([new WorkItem { Id = "wi-1", LinkedAnalyses = [new LinkedAnalysis(existingSignal.Id, [])] }]);
+        storageProvider.GetSignalAsync(existingSignal.Id).Returns(existingSignal);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
+
+        // With QueueTimeDescending, the API returns the newer-queued build, not the rerun
+        var buildClient = CreateMockBuildClient(newerBuild, CreateTimeline(newerRecord));
+        var config = CreateConfig(1, ["refs/heads/main"]);
+        var collector = new TestableAzureDevOpsCollector(config, storageProvider, buildClient);
+
+        await collector.CollectAsync();
+
+        var signals = storageProvider.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
+            .Select(call => (Signal)call.GetArguments()[0]!)
+            .ToList();
+
+        var signal = Assert.Single(signals);
+        var pipelineSignal = Assert.IsType<AzureDevOpsPipelineSignal>(signal);
+
+        // The collected signal should have the newer-queued build, not the rerun
+        Assert.Equal(200, pipelineSignal.TypedInfo.Build.Id);
+        // Signal identity should be preserved from the existing signal
+        Assert.Equal(existingSignal.Id, pipelineSignal.Id);
+    }
 }
 
