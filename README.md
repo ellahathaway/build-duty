@@ -96,8 +96,8 @@ github:
 # Full pipeline: collect signals → analyze → reconcile work items
 build-duty triage run
 
-# Resume a previous run
-build-duty triage run --resume
+# Resume a previous run by ID
+build-duty triage run --resume <triage-run-id>
 
 # List past triage runs
 build-duty triage list
@@ -217,7 +217,7 @@ Each stage is status-gated — a resumed run picks up where it left off.
 | Option | Description |
 |---|---|
 | `--config <path>` | Path to config file (default: auto-detect) |
-| `--resume` | Resume the most recent incomplete triage run |
+| `--resume <id>` | Resume a specific triage run by ID |
 
 ### `build-duty triage list`
 
