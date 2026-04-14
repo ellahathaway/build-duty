@@ -1,7 +1,7 @@
+using System.ComponentModel;
+using System.Text.Json;
 using BuildDuty.Core;
 using Microsoft.Extensions.AI;
-using System.Text.Json;
-using System.ComponentModel;
 
 namespace BuildDuty.AI.Tools;
 

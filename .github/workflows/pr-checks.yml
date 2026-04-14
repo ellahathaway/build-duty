@@ -7,6 +7,22 @@ permissions:
   contents: read
 
 jobs:
+  format-check:
+    name: Format Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Check formatting
+        run: dotnet format BuildDuty.slnx --verify-no-changes
+
   build-and-pack-linux:
     name: Build and Pack (Linux)
     runs-on: ubuntu-latest

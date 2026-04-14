@@ -1,10 +1,10 @@
+using System.ComponentModel;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using BuildDuty.Core;
 using Maestro.Common;
 using Microsoft.Extensions.AI;
 using Microsoft.TeamFoundation.Build.WebApi;
-using System.ComponentModel;
-using System.Text.Json;
-using System.Text.RegularExpressions;
 
 namespace BuildDuty.AI.Tools;
 

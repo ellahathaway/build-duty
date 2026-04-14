@@ -1,6 +1,6 @@
-using YamlDotNet.Serialization;
 using System.Text.RegularExpressions;
 using Octokit;
+using YamlDotNet.Serialization;
 
 namespace BuildDuty.Core.Models;
 
