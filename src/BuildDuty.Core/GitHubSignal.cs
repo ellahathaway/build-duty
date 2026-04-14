@@ -1,43 +1,45 @@
 using Octokit;
+using System.Text.Json;
+using System.Diagnostics.CodeAnalysis;
 
 namespace BuildDuty.Core;
 
-public abstract class GitHubSignal<TInfo> : Signal<GitHubSignalType, TInfo> where TInfo : class;
-
-public sealed class GitHubIssueSignal : GitHubSignal<Issue>
+public sealed class GitHubIssueSignal : Signal
 {
-    public override GitHubSignalType Type => GitHubSignalType.Issue;
+    public override SignalType Type => SignalType.GitHubIssue;
 
-    public static GitHubIssueSignal Create(
-        Issue issue,
-        List<string>? workItemIds = null)
+    [SetsRequiredMembers]
+    public GitHubIssueSignal(Issue issue)
     {
-        return new GitHubIssueSignal
-        {
-            Info = issue,
-            WorkItemIds = workItemIds ?? [],
-        };
+        TypedInfo = issue;
+    }
+
+    public GitHubIssueSignal() { }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public Issue TypedInfo
+    {
+        get => Newtonsoft.Json.JsonConvert.DeserializeObject<Issue>(Info.GetRawText())!;
+        set => Info = System.Text.Json.JsonSerializer.SerializeToElement(value);
     }
 }
 
-public sealed class GitHubPullRequestSignal : GitHubSignal<PullRequest>
+public sealed class GitHubPullRequestSignal : Signal
 {
-    public override GitHubSignalType Type => GitHubSignalType.PullRequest;
+    public override SignalType Type => SignalType.GitHubPullRequest;
 
-    public static GitHubPullRequestSignal Create(
-        PullRequest pr,
-        List<string>? workItemIds = null)
+    [SetsRequiredMembers]
+    public GitHubPullRequestSignal(PullRequest pr)
     {
-        return new GitHubPullRequestSignal
-        {
-            Info = pr,
-            WorkItemIds = workItemIds ?? [],
-        };
+        TypedInfo = pr;
     }
-}
 
-public enum GitHubSignalType
-{
-    Issue,
-    PullRequest,
+    public GitHubPullRequestSignal() { }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public PullRequest TypedInfo
+    {
+        get => Newtonsoft.Json.JsonConvert.DeserializeObject<PullRequest>(Info.GetRawText())!;
+        set => Info = System.Text.Json.JsonSerializer.SerializeToElement(value);
+    }
 }

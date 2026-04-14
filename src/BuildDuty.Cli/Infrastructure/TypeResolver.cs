@@ -22,14 +22,10 @@ internal sealed class TypeResolver : ITypeResolver, IAsyncDisposable, IDisposabl
     public ValueTask DisposeAsync()
     {
         if (_provider is IAsyncDisposable asyncDisposable)
-        {
             return asyncDisposable.DisposeAsync();
-        }
 
         if (_provider is IDisposable disposable)
-        {
             disposable.Dispose();
-        }
 
         return ValueTask.CompletedTask;
     }
@@ -37,12 +33,8 @@ internal sealed class TypeResolver : ITypeResolver, IAsyncDisposable, IDisposabl
     public void Dispose()
     {
         if (_provider is IAsyncDisposable asyncDisposable)
-        {
             asyncDisposable.DisposeAsync().AsTask().GetAwaiter().GetResult();
-        }
         else if (_provider is IDisposable disposable)
-        {
             disposable.Dispose();
-        }
     }
 }

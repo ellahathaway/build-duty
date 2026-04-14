@@ -1,25 +1,23 @@
+using System.Text.Json;
+
 namespace BuildDuty.Core;
 
-public interface ISignal
+public abstract class Signal
 {
-    DateTime CollectionTime { get; }
-    Enum Type { get; }
-    object Info { get; }
-    List<string> WorkItemIds { get; }
+    public string Id { get; set; } = IdGenerator.NewSignalId();
+
+    public abstract SignalType Type { get; }
+
+    public required JsonElement Info { get; set; }
+
+    public string? Summary { get; set; }
+
+    public List<string> WorkItemIds { get; set; } = new();
 }
 
-public abstract class Signal<TType, TInfo> : ISignal
-    where TType : struct, Enum
-    where TInfo : class
+public enum SignalType
 {
-    public DateTime CollectionTime { get; init; } = DateTime.UtcNow;
-
-    public abstract TType Type { get; }
-
-    public required TInfo Info { get; init; }
-
-    public List<string> WorkItemIds { get; init; } = [];
-
-    Enum ISignal.Type => Type;
-    object ISignal.Info => Info;
+    GitHubIssue,
+    GitHubPullRequest,
+    AzureDevOpsPipeline
 }

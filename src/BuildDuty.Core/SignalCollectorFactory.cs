@@ -1,25 +1,32 @@
 using BuildDuty.Core.Models;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace BuildDuty.Core;
 
 public interface ISignalCollectorFactory
 {
-    ISignalCollector CreateCollector(object config);
+    ISignalCollector? CreateCollector<TConfig>() where TConfig : class;
 }
 
 public sealed class SignalCollectorFactory(
-    Func<AzureDevOpsConfig, AzureDevOpsSignalCollector> azureDevOpsCollectorFactory,
-    Func<GitHubConfig, GitHubSignalCollector> gitHubCollectorFactory) : ISignalCollectorFactory
+    IServiceProvider serviceProvider,
+    IBuildDutyConfigProvider configProvider) : ISignalCollectorFactory
 {
-    public ISignalCollector CreateCollector(object config)
+    public ISignalCollector? CreateCollector<TConfig>() where TConfig : class
     {
-        ArgumentNullException.ThrowIfNull(config);
+        var config = configProvider.Get();
 
-        return config switch
+        return typeof(TConfig) switch
         {
-            AzureDevOpsConfig azureDevOpsConfig => azureDevOpsCollectorFactory(azureDevOpsConfig),
-            GitHubConfig gitHubConfig => gitHubCollectorFactory(gitHubConfig),
-            _ => throw new NotSupportedException($"Unsupported collector config type: {config.GetType().Name}"),
+            var t when t == typeof(AzureDevOpsConfig) =>
+                config.AzureDevOps is null
+                    ? null
+                    : ActivatorUtilities.CreateInstance<AzureDevOpsSignalCollector>(serviceProvider, config.AzureDevOps),
+            var t when t == typeof(GitHubConfig) =>
+                config.GitHub is null
+                    ? null
+                    : ActivatorUtilities.CreateInstance<GitHubSignalCollector>(serviceProvider, config.GitHub),
+            _ => throw new NotSupportedException($"Unsupported collector config type: {typeof(TConfig).Name}"),
         };
     }
 }

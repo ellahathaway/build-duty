@@ -1,4 +1,3 @@
-using BuildDuty.Cli;
 using BuildDuty.Cli.Commands;
 using BuildDuty.Cli.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;

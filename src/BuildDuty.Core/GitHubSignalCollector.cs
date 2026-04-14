@@ -5,60 +5,66 @@ using Octokit;
 
 namespace BuildDuty.Core;
 
-public class GitHubSignalCollector(GitHubConfig config, IRemoteTokenProvider tokenProvider, IWorkItemsProvider workItemsProvider)
-    : SignalCollector<GitHubConfig>(config, tokenProvider, workItemsProvider)
+public class GitHubSignalCollector : SignalCollector<GitHubConfig>
 {
-    protected override async Task<List<ISignal>> CollectCoreAsync(CancellationToken ct = default)
+    public GitHubSignalCollector(
+        GitHubConfig config,
+        IRemoteTokenProvider tokenProvider,
+        IStorageProvider storageProvider)
+        : base(config, tokenProvider, storageProvider)
     {
-        var existingIssuesByUrl = (await WorkItemsProvider.GetWorkItemsAsync(GitHubSignalType.Issue, ct))
-            .SelectMany(item => item.Signals)
-            .OfType<GitHubIssueSignal>()
-            .ToDictionary(s => s.Info.HtmlUrl, StringComparer.OrdinalIgnoreCase);
+    }
 
-        var existingPrsByUrl = (await WorkItemsProvider.GetWorkItemsAsync(GitHubSignalType.PullRequest, ct))
-            .SelectMany(item => item.Signals)
-            .OfType<GitHubPullRequestSignal>()
-            .ToDictionary(s => s.Info.HtmlUrl, StringComparer.OrdinalIgnoreCase);
+    protected override async Task<List<Signal>> CollectCoreAsync()
+    {
+        var signals = await StorageProvider.GetSignalsFromWorkItemsAsync();
 
-        var signals = new List<ISignal>();
+        var issueSignals = signals
+            .Where(s => s.Type == SignalType.GitHubIssue)
+            .OfType<GitHubIssueSignal>();
+
+        var prSignals = signals
+            .Where(s => s.Type == SignalType.GitHubPullRequest)
+            .OfType<GitHubPullRequestSignal>();
+
+        var collectedSignals = new List<Signal>();
 
         foreach (var org in Config.Organizations)
         {
             foreach (var repo in org.Repositories)
             {
-                ct.ThrowIfCancellationRequested();
-
                 var context = await CreateRepositoryContextAsync(org.Organization, repo.Name);
 
-                var issueTask = CollectIssueSignalsAsync(context, repo.Issues, existingIssuesByUrl, ct);
-                var prTask = CollectPullRequestSignalsAsync(context, repo.PullRequests, existingPrsByUrl, ct);
+                var issueTask = CollectIssueSignalsAsync(context, repo.Issues, issueSignals);
+                var prTask = CollectPullRequestSignalsAsync(context, repo.PullRequests, prSignals);
 
                 await Task.WhenAll(issueTask, prTask);
 
-                signals.AddRange(issueTask.Result);
-                signals.AddRange(prTask.Result);
+                var repoSignals = issueTask.Result
+                    .Cast<Signal>()
+                    .Concat(prTask.Result)
+                    .ToList();
+
+                collectedSignals.AddRange(repoSignals);
             }
         }
 
-        return signals;
+        return collectedSignals;
     }
 
     private static async Task<List<GitHubIssueSignal>> CollectIssueSignalsAsync(
         RepositoryContext context,
         GitHubIssueConfig? issueConfig,
-        Dictionary<string, GitHubIssueSignal> existingByUrl,
-        CancellationToken ct)
+        IEnumerable<GitHubIssueSignal> existingSignals)
     {
         if (issueConfig is null)
         {
             return [];
         }
 
-        ct.ThrowIfCancellationRequested();
-
         var request = new RepositoryIssueRequest
         {
-            State = issueConfig.State,
+            State = issueConfig.State
         };
 
         foreach (var label in issueConfig.Labels)
@@ -78,16 +84,22 @@ public class GitHubSignalCollector(GitHubConfig config, IRemoteTokenProvider tok
                 continue; // GitHub API returns PRs as issues too
             }
 
-            existingByUrl.TryGetValue(issue.HtmlUrl, out var existing);
-
-            if (existing is not null
-                && existing.Info.State.Value == issue.State.Value
-                && existing.Info.UpdatedAt == issue.UpdatedAt)
+            var existingSignal = existingSignals.FirstOrDefault(s => s.TypedInfo.HtmlUrl == issue.HtmlUrl);
+            if (existingSignal != null && existingSignal.TypedInfo.State.Value == issue.State.Value && existingSignal.TypedInfo.UpdatedAt == issue.UpdatedAt)
             {
                 continue;
             }
 
-            signals.Add(GitHubIssueSignal.Create(issue, existing?.WorkItemIds));
+            var signal = new GitHubIssueSignal(issue);
+            if (existingSignal is null)
+            {
+                signals.Add(signal);
+                continue;
+            }
+
+            signal.Id = existingSignal.Id; // Preserve the same ID for updates
+            signal.WorkItemIds = existingSignal.WorkItemIds; // Preserve linked work items
+            signals.Add(signal);
         }
 
         return signals;
@@ -96,15 +108,13 @@ public class GitHubSignalCollector(GitHubConfig config, IRemoteTokenProvider tok
     private static async Task<List<GitHubPullRequestSignal>> CollectPullRequestSignalsAsync(
         RepositoryContext context,
         List<GitHubPullRequestPattern>? prPatterns,
-        Dictionary<string, GitHubPullRequestSignal> existingByUrl,
-        CancellationToken ct)
+        IEnumerable<GitHubPullRequestSignal> existingSignals
+        )
     {
         if (prPatterns is null || prPatterns.Count == 0)
         {
             return [];
         }
-
-        ct.ThrowIfCancellationRequested();
 
         var patternsByState = prPatterns
             .Where(pattern => pattern.Name is not null)
@@ -115,8 +125,6 @@ public class GitHubSignalCollector(GitHubConfig config, IRemoteTokenProvider tok
 
         foreach (var patternGroup in patternsByState)
         {
-            ct.ThrowIfCancellationRequested();
-
             var pulls = await context.Client.PullRequest.GetAllForRepository(
                 context.Organization, context.RepositoryName,
                 new PullRequestRequest { State = patternGroup.Key });
@@ -125,21 +133,28 @@ public class GitHubSignalCollector(GitHubConfig config, IRemoteTokenProvider tok
 
             foreach (var pr in matchingPulls)
             {
-                existingByUrl.TryGetValue(pr.HtmlUrl, out var existing);
+                var signal = new GitHubPullRequestSignal(pr);
+                var existingSignal = existingSignals.FirstOrDefault(s => s.TypedInfo.HtmlUrl == pr.HtmlUrl);
 
-                if (existing is not null
-                    && existing.Info.State.Value == pr.State.Value
-                    && existing.Info.UpdatedAt == pr.UpdatedAt)
+                if (existingSignal is not null)
                 {
+                    if (existingSignal.TypedInfo.State.Value == pr.State.Value
+                        && existingSignal.TypedInfo.UpdatedAt == pr.UpdatedAt)
+                    {
+                        continue;
+                    }
+                    signal.Id = existingSignal.Id; // Preserve the same ID for updates
+                    signal.WorkItemIds = existingSignal.WorkItemIds; // Preserve linked work items
+                    signals.Add(signal);
                     continue;
                 }
 
-                signals.Add(GitHubPullRequestSignal.Create(pr, existing?.WorkItemIds));
+                signals.Add(signal);
             }
         }
 
         return signals
-            .GroupBy(signal => signal.Info.HtmlUrl, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(signal => signal.TypedInfo.HtmlUrl, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
             .ToList();
     }

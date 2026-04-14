@@ -1,8 +1,7 @@
 using BuildDuty.Core;
 using GitHub.Copilot.SDK;
 using Microsoft.Extensions.AI;
-using System.Text.Json;
-using System.Text.Json.Serialization;
+using System.Text;
 
 namespace BuildDuty.AI;
 
@@ -13,111 +12,243 @@ namespace BuildDuty.AI;
 /// </summary>
 public class CopilotAdapter : IAsyncDisposable
 {
+    private static readonly object s_logWriteLock = new();
+
     private readonly IBuildDutyConfigProvider _configProvider;
+    private readonly IStorageProvider _storageProvider;
+    private readonly StorageTools _storageTools;
     private CopilotClient? _client;
 
-    public CopilotAdapter(IBuildDutyConfigProvider configProvider)
+    public CopilotAdapter(
+        IBuildDutyConfigProvider configProvider,
+        IStorageProvider storageProvider,
+        StorageTools storageTools)
     {
         _configProvider = configProvider;
+        _storageProvider = storageProvider;
+        _storageTools = storageTools;
     }
 
     /// <summary>
     /// Run an AI action on a signal.
     /// </summary>
-    public virtual async Task<SignalResult> RunSignalActionAsync(
-        ISignal signal,
-        string action,
-        CancellationToken ct = default)
+    public virtual async Task<string> RunSignalActionAsync(
+        string signalId,
+        string action)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(signalId);
+
+        var logPath = CreateAgentLogFilePath("summarize", signalId);
+        await using var logWriter = CreateLogWriter(logPath);
+        await LogAsync(logWriter, $"start summarize signalId={signalId}");
+
+        _client ??= new CopilotClient(new CopilotClientOptions());
+        await _client.StartAsync();
+
+        var skills = new[]
+        {
+            "skills/summarize",
+        };
+
+        await using var session = await CopilotSessionFactory.CreateAsync(
+            _client,
+            skills: skills,
+            tools: _storageTools.GetTools(),
+            model: _configProvider.Get().Ai?.Model);
+
+        session.On(e =>
+        {
+            switch (e)
+            {
+                case ToolExecutionStartEvent toolStart:
+                {
+                    var toolName = toolStart.Data?.McpToolName ?? toolStart.Data?.ToolName ?? "?";
+                    var server = toolStart.Data?.McpServerName;
+                    var fqToolName = server is null ? toolName : $"{server}/{toolName}";
+                    var argsText = toolStart.Data?.Arguments?.ToString();
+                    var message = string.IsNullOrWhiteSpace(argsText)
+                        ? $"tool-start: {fqToolName}"
+                        : $"tool-start: {fqToolName}; args={argsText}";
+                    LogSync(logWriter, message);
+                    break;
+                }
+
+                case ToolExecutionCompleteEvent toolEnd:
+                {
+                    var success = toolEnd.Data?.Success == true;
+                    LogSync(logWriter, success ? "tool-end: success=True" : "tool-end: success=False");
+                    break;
+                }
+
+                case SessionErrorEvent sessionError:
+                    LogSync(logWriter, $"session-error: {sessionError.Data}");
+                    break;
+            }
+        });
+
+        var prompt = $"""
+            Perform the following action on the given signal id:
+
+            {action}
+
+            SignalId: {signalId}
+            """;
+        await LogAsync(logWriter, $"prompt: {prompt.Replace("\r", " ").Replace("\n", " ")}");
+
         try
         {
-            _client ??= new CopilotClient(new CopilotClientOptions());
-            await _client.StartAsync(ct);
-
-            var mcpServers = signal switch
-            {
-                AzureDevOpsPipelineSignal pipelineSignal => GetAzureDevOpsPipelineServer(pipelineSignal),
-                _ => new Dictionary<string, object>(),
-            };
-
-            var skills = new[]
-            {
-                "skills/summarize",
-                "skills/cluster",
-            };
-
-            await using var session = await CopilotSessionFactory.CreateAsync(
-                _client,
-                skills: skills,
-                mcpServers: mcpServers,
-                model: _configProvider.GetConfig().Ai?.Model,
-                ct: ct);
-
-            var signalPayload = JsonSerializer.Serialize(signal, new JsonSerializerOptions
-            {
-                WriteIndented = true,
-                Converters = { new JsonStringEnumConverter() },
-            });
-
-            var prompt = $"""
-                Perform the following action on the given signal:
-
-                {action}
-
-                Signal payload (JSON):
-                {signalPayload}
-                """;
-
             var response = await session.SendAndWaitAsync(
                 new MessageOptions { Prompt = prompt },
-                timeout: TimeSpan.FromMinutes(5),
-                cancellationToken: ct);
+                timeout: TimeSpan.FromMinutes(5));
 
             var content = response?.Data?.Content ?? "(no response)";
-
-            return new SignalResult
-            {
-                Signal = signal,
-                Action = action,
-                Success = true,
-                Response = content,
-            };
+            await LogAsync(logWriter, $"response: {content}");
+            await LogAsync(logWriter, "completed summarize");
+            return content;
         }
         catch (Exception ex)
         {
-            return new SignalResult
+            await LogAsync(logWriter, $"error summarize: {ex}");
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Run an AI action across a set of signals.
+    /// </summary>
+    public virtual async Task<string> RunSignalSetActionAsync(
+        IReadOnlyList<string> signalIds,
+        string action)
+    {
+        if (signalIds.Count == 0)
+        {
+            return "(no signals)";
+        }
+
+        var logPath = CreateAgentLogFilePath("reconcile", string.Join("_", signalIds.Take(3)));
+        await using var logWriter = CreateLogWriter(logPath);
+        await LogAsync(logWriter, $"start reconcile signalCount={signalIds.Count}");
+
+        _client ??= new CopilotClient(new CopilotClientOptions());
+        await _client.StartAsync();
+
+        var skills = new[]
+        {
+            "skills/reconcile-work-items",
+        };
+
+        await using var session = await CopilotSessionFactory.CreateAsync(
+            _client,
+            skills: skills,
+            mcpServers: null,
+            tools: _storageTools.GetTools(),
+            model: _configProvider.Get().Ai?.Model);
+
+        session.On(e =>
+        {
+            switch (e)
             {
-                Signal = signal,
-                Action = action,
-                Success = false,
-                Response = $"Error: {ex.Message}",
-            };
+                case ToolExecutionStartEvent toolStart:
+                {
+                    var toolName = toolStart.Data?.McpToolName ?? toolStart.Data?.ToolName ?? "?";
+                    var server = toolStart.Data?.McpServerName;
+                    var fqToolName = server is null ? toolName : $"{server}/{toolName}";
+                    var argsText = toolStart.Data?.Arguments?.ToString();
+                    var message = string.IsNullOrWhiteSpace(argsText)
+                        ? $"tool-start: {fqToolName}"
+                        : $"tool-start: {fqToolName}; args={argsText}";
+                    LogSync(logWriter, message);
+                    break;
+                }
+
+                case ToolExecutionCompleteEvent toolEnd:
+                {
+                    var success = toolEnd.Data?.Success == true;
+                    LogSync(logWriter, success ? "tool-end: success=True" : "tool-end: success=False");
+                    break;
+                }
+
+                case SessionErrorEvent sessionError:
+                    LogSync(logWriter, $"session-error: {sessionError.Data}");
+                    break;
+            }
+        });
+
+        var prompt = $"""
+            Perform the following action on the given set of signal ids:
+
+            {action}
+
+            SignalIds:
+            {string.Join('\n', signalIds.Select(id => $"- {id}"))}
+            """;
+        await LogAsync(logWriter, $"prompt: {prompt.Replace("\r", " ").Replace("\n", " ")}");
+
+        try
+        {
+            var response = await session.SendAndWaitAsync(
+                new MessageOptions { Prompt = prompt },
+                timeout: TimeSpan.FromMinutes(10));
+
+            var content = response?.Data?.Content ?? "(no response)";
+            await LogAsync(logWriter, $"response: {content}");
+            await LogAsync(logWriter, "completed reconcile");
+            return content;
+        }
+        catch (Exception ex)
+        {
+            await LogAsync(logWriter, $"error reconcile: {ex}");
+            throw;
         }
     }
 
     public async ValueTask DisposeAsync()
     {
         if (_client is IAsyncDisposable d)
+        {
             await d.DisposeAsync();
+        }
         GC.SuppressFinalize(this);
     }
 
-    private static Dictionary<string, object> GetAzureDevOpsPipelineServer(AzureDevOpsPipelineSignal signal)
+    private string CreateAgentLogFilePath(string action, string key)
     {
-        string org = signal.Info.Build.Url.Split('/')[3];
-        return new Dictionary<string, object>
+        var configName = _configProvider.Get().Name;
+        var root = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".build-duty",
+            configName,
+            "agent-logs");
+        Directory.CreateDirectory(root);
+
+        var safeKey = string.Join("_", key.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries));
+        if (string.IsNullOrWhiteSpace(safeKey))
         {
-            ["azure-devops"] = new McpLocalServerConfig
-            {
-                Command = "npx",
-                Args = ["-y", "@azure-devops/mcp", org, "-a", "azcli", "-d", "pipelines"],
-                Tools = ["*"],
-                Env = new Dictionary<string, string>
-                {
-                    ["GIT_TERMINAL_PROMPT"] = "0",
-                },
-            }
-        };
+            safeKey = "signal";
+        }
+
+        return Path.Combine(root, $"{DateTime.UtcNow:yyyyMMdd-HHmmss-fff}-{action}-{safeKey}.log");
+    }
+
+    private static StreamWriter CreateLogWriter(string logPath)
+    {
+        var stream = new FileStream(logPath, FileMode.Create, FileAccess.Write, FileShare.Read);
+        return new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+    }
+
+    private static Task LogAsync(StreamWriter writer, string message)
+    {
+        LogSync(writer, message);
+        return Task.CompletedTask;
+    }
+
+    private static void LogSync(StreamWriter writer, string message)
+    {
+        lock (s_logWriteLock)
+        {
+            writer.WriteLine($"[{DateTime.UtcNow:O}] {message}");
+            writer.Flush();
+        }
     }
 
 //     /// <summary>
@@ -127,7 +258,7 @@ public class CopilotAdapter : IAsyncDisposable
 //     public async Task<ReviewSession> CreateReviewSessionAsync(
 //         IReadOnlyList<string> skills,
 //         Dictionary<string, object> mcpServers,
-//         CancellationToken ct = default)
+//         )
 //     {
 //         _client ??= new CopilotClient(_clientOptions);
 //         await _client.StartAsync(ct);
@@ -195,7 +326,7 @@ public class CopilotAdapter : IAsyncDisposable
 //     public void OnStream(Action<AgentStreamEvent> handler) => _streamHandler = handler;
 
 //     /// <summary>Send a message and wait for the agent's response.</summary>
-//     public async Task<string> SendAsync(string prompt, CancellationToken ct = default)
+//     public async Task<string> SendAsync(string prompt, )
 //     {
 //         var response = await _session.SendAndWaitAsync(
 //             new MessageOptions { Prompt = prompt },
