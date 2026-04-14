@@ -1,11 +1,14 @@
 using Octokit;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Diagnostics.CodeAnalysis;
 
 namespace BuildDuty.Core;
 
 public sealed class GitHubIssueSignal : Signal
 {
+    private Issue? _typedInfo;
+
     public override SignalType Type => SignalType.GitHubIssue;
 
     [SetsRequiredMembers]
@@ -16,16 +19,22 @@ public sealed class GitHubIssueSignal : Signal
 
     public GitHubIssueSignal() { }
 
-    [System.Text.Json.Serialization.JsonIgnore]
+    [JsonIgnore]
     public Issue TypedInfo
     {
-        get => Newtonsoft.Json.JsonConvert.DeserializeObject<Issue>(Info.GetRawText())!;
-        set => Info = System.Text.Json.JsonSerializer.SerializeToElement(value);
+        get => _typedInfo ??= Newtonsoft.Json.JsonConvert.DeserializeObject<Issue>(Info.GetRawText())!;
+        set
+        {
+            _typedInfo = value;
+            Info = JsonSerializer.SerializeToElement(value);
+        }
     }
 }
 
 public sealed class GitHubPullRequestSignal : Signal
 {
+    private PullRequest? _typedInfo;
+
     public override SignalType Type => SignalType.GitHubPullRequest;
 
     [SetsRequiredMembers]
@@ -36,10 +45,14 @@ public sealed class GitHubPullRequestSignal : Signal
 
     public GitHubPullRequestSignal() { }
 
-    [System.Text.Json.Serialization.JsonIgnore]
+    [JsonIgnore]
     public PullRequest TypedInfo
     {
-        get => Newtonsoft.Json.JsonConvert.DeserializeObject<PullRequest>(Info.GetRawText())!;
-        set => Info = System.Text.Json.JsonSerializer.SerializeToElement(value);
+        get => _typedInfo ??= Newtonsoft.Json.JsonConvert.DeserializeObject<PullRequest>(Info.GetRawText())!;
+        set
+        {
+            _typedInfo = value;
+            Info = JsonSerializer.SerializeToElement(value);
+        }
     }
 }

@@ -65,5 +65,3 @@ From the logs and timeline data, extract:
 - Any referenced issue or PR numbers
 
 No speculation. If you can't find a cause in the logs, set cause to the narrowest failure scope observed and note in evidence that the specific cause was not found.
-
-Persist with `update_signal_analysis(signalId, cause, effect, evidence)`.
