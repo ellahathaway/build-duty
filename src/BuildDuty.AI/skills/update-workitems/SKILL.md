@@ -49,6 +49,7 @@ Each work item has a `LinkedAnalyses` list — entries of `(SignalId, AnalysisId
 9. For each, load its linked analyses and check whether **all** now indicate the underlying issue is resolved (e.g., a previously-failing pipeline is passing, an issue is closed).
    - **All resolved** — resolve the work item.
    - **Mixed** — keep unresolved; some evidence still shows the issue is active.
+   - **Zero linked analyses** — all evidence has been unlinked. Resolve the work item.
 
 ## Output
 

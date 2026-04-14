@@ -306,7 +306,7 @@ build-duty triage run
   │   └─ AzureDevOpsTools → fetch pipeline logs
   │
   ├─ 3. Update Work Items  (AI)
-  │   ├─ CopilotAdapter  → update-workitems / update-linked-work-items skills
+  │   ├─ CopilotAdapter  → update-workitems skill
   │   └─ StorageTools     → read/write work items and signals
   │
   └─ 4. Create Work Items  (AI)
