@@ -35,7 +35,7 @@ public class StorageTools
                             continue;
                         }
 
-                        // Enrich each linked analysis with status and updatedAt from the signal
+                        // Enrich each linked analysis with status and lastTriageId from the signal
                         var enrichedLinks = new List<object>();
                         foreach (var la in triageLinks)
                         {
