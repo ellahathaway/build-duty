@@ -1,59 +1,65 @@
 ---
 name: update-workitems
-description: Takes the collected signals and their analyses from a triage run and updates existing work items accordingly — fixing stale links, adopting orphaned analyses, and resolving work items.
+description: Takes the collected signals and their analyses from a triage run and reconciles them with existing work items — evaluating links, adopting unlinked analyses, and resolving fully-resolved work items.
 ---
 
 # Update Work Items
 
-Maintain work items in three sequential phases: fix stale links, adopt orphaned analyses, and resolve work items.
+Reconcile analyses from a triage run with existing work items.
 
 ## Input
 
 You receive:
 - A **triage run ID** (`triage_{guid}`)
 
-## Early exit
+## Setup
 
-List unresolved work items for this triage run. If there are **none**, skip all phases and return immediately with `{"workItemsUpdated": 0, "workItemsResolved": 0}`.
+1. Use `list_analyses_for_triage` to get all analyses that changed during this triage run.
+2. Use `list_work_items` (state: `unresolved`) to load all unresolved work items.
+
+If there are no analyses for this triage run, return immediately with `{"workItemsUpdated": 0, "workItemsResolved": 0}`.
 
 ## Context
 
 Each work item has a `LinkedAnalyses` list — entries of `(SignalId, AnalysisIds[])`. Each analysis ID points to a specific analysis entry on a signal. Analyses have a `Status` (new, updated, or resolved) — resolved analyses stay linked and preserve provenance.
 
-## Phase 1 — Fix existing links
+Use [references/incident-grouping.md](./references/incident-grouping.md) for correlation criteria throughout.
 
-Use [references/incident-grouping.md](./references/incident-grouping.md) for correlation criteria.
+## Per-analysis reconciliation
 
-1. List unresolved work items for this triage run — these are work items with at least one linked analysis that changed during this triage.
-2. For each work item, load the analyses that changed during this triage (use the triage analyses list to identify them).
-3. **Per-analysis evaluation** — using the correlation criteria from incident-grouping, compare each changed linked analysis against the work item's `IssueSignature`, `Summary`, and the evidence in other linked analyses:
-   - **Still correlates** — the analysis (active or resolved) still describes the same root cause. Keep it linked.
-   - **No longer correlates** — the analysis root cause has shifted to something unrelated. Unlink it.
-   - **Analysis resolved** — do NOT unlink. Resolved analyses stay linked — resolution is handled in Phase 3.
-4. **Signal-level cleanup** — if a signal has zero remaining linked analysis IDs, unlink the signal entirely.
-5. **Metadata refresh** — if remaining active analyses provide better evidence, update `IssueSignature`, `Summary`, or `CorrelationRationale`.
+For each analysis from the triage run, load it with `get_analysis` and use `get_work_items_for_analysis` to determine if it is linked to any work items.
 
-## Phase 2 — Link orphaned analyses
+### Linked analyses — evaluate existing links
 
-Use [references/incident-grouping.md](./references/incident-grouping.md) for correlation criteria.
+If the analysis is linked to one or more work items:
 
-Only consider analyses that were created during the current analysis step (new analyses not linked to any work item).
+1. For each linked work item, compare the analysis against the work item's `IssueSignature`, `Summary`, and evidence in other linked analyses using the correlation criteria.
+   - **Still correlates** — keep it linked. If the analysis is resolved, do NOT unlink — resolved analyses stay linked for provenance.
+   - **No longer correlates** — unlink it. If the signal has zero remaining linked analysis IDs on that work item, it is fully unlinked.
 
-6. List orphaned analyses for this triage run — non-resolved analyses on triage signals that are not linked to any work item.
-7. For each orphaned analysis, compare it against every unresolved work item using the correlation criteria from incident-grouping (same-cause grouping, causal chain detection, cross-type correlation). Additionally check:
-   - **Evidence cross-references** — load the work item's existing linked analyses (via their signal IDs and analysis IDs) and compare evidence fields: build IDs, pipeline URLs, run IDs, repository names, issue/PR numbers, and error signatures. A shared build ID, pipeline reference, or issue link is strong evidence of the same incident.
+2. If the analysis was unlinked, attempt to find a better match among unresolved work items (same as the unlinked flow below).
+
+### Unlinked analyses — find a matching work item
+
+If the analysis is not linked to any work item (either newly created or just unlinked above):
+
+1. Compare it against every unresolved work item using the correlation criteria (same-cause grouping, causal chain detection, cross-type correlation). Additionally check:
+   - **Evidence cross-references** — load the work item's existing linked analyses (via `get_analysis`) and compare evidence fields: build IDs, pipeline URLs, run IDs, repository names, issue/PR numbers, and error signatures. A shared build ID, pipeline reference, or issue link is strong evidence of the same incident.
    - **Cross-type correlation** — signals of different types (AzDo pipeline, GitHub issue, GitHub PR) frequently describe the same incident from different angles. A GitHub issue that references a failing build URL, or a PR linked to a tracked pipeline, should match the work item tracking that pipeline (and vice versa).
 
-   Evaluation:
-   - **Match found** — link the analysis (signal ID + analysis ID) to that work item. Update metadata if it adds new evidence. Update the work item's issue signature or summary if the new analysis broadens or sharpens the issue description.
-   - **No match** — leave unlinked. The grouping step will handle it.
+2. Evaluation:
+   - **Match found** — link the analysis (signal ID + analysis ID) to that work item. Update metadata if it adds new evidence.
+   - **No match** — leave unlinked. The create-workitems step will handle it.
 
-## Phase 3 — Resolve
+## Metadata refresh
 
-8. List unresolved work items for this triage run.
-9. For each, load its linked analyses and check their status:
-   - **All resolved** — every linked analysis has `status: resolved`. Resolve the work item.
-   - **Mixed** — some analyses are still new or updated. Keep unresolved.
+For each work item whose links changed, update `IssueSignature`, `Summary`, or `CorrelationRationale` if the remaining active analyses provide better evidence.
+
+## Resolution
+
+For each unresolved work item that was touched during reconciliation, load its linked analyses and check their status:
+- **All resolved** — every linked analysis has `status: resolved`. Resolve the work item.
+- **Mixed** — some analyses are still new or updated. Keep unresolved.
 
 ## Output
 
@@ -65,4 +71,4 @@ Return **only** the raw JSON object below — no markdown fences, no commentary,
   "workItemsResolved": 1
 }
 ```
-`workItemsUpdated` counts work items whose links or metadata changed (phases 1–2). `workItemsResolved` counts work items resolved (phase 3). A work item that was both updated and resolved counts only in `workItemsResolved`.
+`workItemsUpdated` counts work items whose links or metadata changed. `workItemsResolved` counts work items resolved. A work item that was both updated and resolved counts only in `workItemsResolved`.

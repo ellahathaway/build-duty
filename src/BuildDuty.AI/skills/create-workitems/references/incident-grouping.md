@@ -11,7 +11,7 @@ Determine which analyses represent the same underlying issue.
 ---
 
  ## Workflow
- 1. For each orphaned analysis (from `list_orphaned_analyses`), load the analysis by its signal ID and analysis ID.
+ 1. For each analysis, load the analysis by its signal ID and analysis ID using `get_analysis` if not already loaded.
  2. Use the analysis's root cause text and structural evidence (build IDs, pipeline definition IDs, file paths, failing task names, error signatures) as primary correlation criteria.
  3. Cross-reference evidence across orphaned analyses to find causal chains (see below).
  4. Use the signal's `context` field to understand pipeline/repo dependencies and relationships.

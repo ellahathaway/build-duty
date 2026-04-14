@@ -172,7 +172,7 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
                         string analyzePrompt = $"Triage run: `{triageRun.Id}`. Analyze the following signal: `{signalId}`.";
                         await using var session = await _copilotAdapter.CreateSessionAsync(
                             streaming: false,
-                            agent: CopilotAdapter.Agents.Analyze,
+                            agent: CopilotAdapter.Agents.AnalyzeSignalTriage,
                             throwAfterRetries: true);
 
                         try
@@ -224,7 +224,7 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
 
                 string prompt = $"/update-workitems Triage ID: {triageRun.Id}.";
                 await using var session = await _copilotAdapter.CreateSessionAsync(
-                    agent: CopilotAdapter.Agents.Reconcile,
+                    agent: CopilotAdapter.Agents.WorkItemTriage,
                     throwAfterRetries: true);
 
                 try
@@ -272,7 +272,7 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
 
                 string prompt = $"/create-workitems Triage ID: {triageRun.Id}.";
                 await using var session = await _copilotAdapter.CreateSessionAsync(
-                    agent: CopilotAdapter.Agents.Reconcile,
+                    agent: CopilotAdapter.Agents.WorkItemTriage,
                     throwAfterRetries: true);
 
                 try

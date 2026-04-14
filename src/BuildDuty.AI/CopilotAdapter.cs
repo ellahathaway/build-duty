@@ -41,8 +41,8 @@ public class CopilotAdapter
 
     public static class Agents
     {
-        public const string Analyze = "analyze";
-        public const string Reconcile = "reconcile";
+        public const string AnalyzeSignalTriage = "analyze_signal_triage";
+        public const string WorkItemTriage = "work_item_triage";
         public const string Review = "review";
     }
 
@@ -50,17 +50,17 @@ public class CopilotAdapter
     [
         new CustomAgentConfig
         {
-            Name = Agents.Analyze,
-            Description = "Analyzes a single signal — extracts cause, effect, and evidence.",
+            Name = Agents.AnalyzeSignalTriage,
+            Description = "Analyzes a signal to create, update, and resolve analyses of the signal.",
             Tools = ["get_signal", "read_pipeline_log", "create_signal_analysis", "update_signal_analysis", "resolve_signal_analysis", "get_json_value"],
-            Prompt = "You analyze a single signal to extract cause, effect, and evidence. Use the analyze-signal skill.",
+            Prompt = "You analyze a signal to create, update, and resolve analyses of the signal.",
         },
         new CustomAgentConfig
         {
-            Name = Agents.Reconcile,
-            Description = "Reconciles analyzed signals into work items — groups by root cause, creates/links/updates, resolves/reopens work items.",
-            Tools = ["get_signal", "get_work_item", "get_analysis_from_signal", "list_unresolved_work_items_for_triage", "list_analyses_for_triage", "list_orphaned_analyses", "create_work_item", "link_signal_to_work_item", "unlink_signal_from_work_item", "update_work_item", "resolve_work_item"],
-            Prompt = "You reconcile analyzed signals into work items.",
+            Name = Agents.WorkItemTriage,
+            Description = "Updates, resolves, and creates work items based on analyzed signals.",
+            Tools = ["get_signal", "get_work_item", "get_analysis", "get_work_items_for_analysis", "list_work_items", "list_work_items_for_triage", "list_analyses_for_triage", "create_work_item", "link_analysis_to_work_item", "unlink_analysis_from_work_item", "update_work_item", "resolve_work_item", "get_json_value"],
+            Prompt = "You update, resolve, and create work items based on analyzed signals.",
         },
         new CustomAgentConfig
         {
