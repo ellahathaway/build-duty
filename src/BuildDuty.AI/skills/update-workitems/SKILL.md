@@ -24,7 +24,7 @@ Each work item has a `LinkedAnalyses` list — entries of `(SignalId, AnalysisId
 
 1. List unresolved work items that have linked signals in this triage run, filtered to only the `LinkedAnalyses` entries whose signal is in the run.
 2. For each work item, load each linked analysis by its signal ID and analysis ID. Inspect the analysis content against the work item.
-3. **Per-analysis evaluation** — compare each linked analysis against the work item's `IssueSignature` and `Summary`:
+3. **Per-analysis evaluation** — compare each linked analysis against the work item's `IssueSignature`, `Summary`, and the evidence in other linked analyses (build IDs, pipeline definition IDs, file paths, failing task names, error signatures):
    - **Still correlates** — keep it linked.
    - **No longer correlates** — remove that analysis ID from the link.
    - **Analysis deleted** — the analysis ID no longer exists on the signal. Remove it from the link.

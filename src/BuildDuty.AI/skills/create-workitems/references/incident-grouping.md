@@ -17,9 +17,14 @@ Determine which signals represent the same underlying issue.
 ## Correlation strategy
 
 ### Same-cause grouping
-Merge signals when their `cause` fields indicate the same failure mechanism. Examples:
+Merge signals when their analyses indicate the same failure mechanism. Compare using:
+- **Cause text** — do the analyses describe the same failure?
+- **Structural evidence** — do the analyses share pipeline definition IDs, failing task/stage names, file paths, error messages, or affected components? Shared structural evidence is strong correlation even when cause wording differs.
+
+Examples:
 - Two pipelines both failed with `error NU1301: Unable to load service index` → same NuGet infra issue.
 - Three source-build phases failed with the same compiler error → same code issue.
+- Two analyses reference the same file path and failing task but describe the symptom differently → same root cause.
 
 ### Causal chain detection
 A downstream signal may fail **because** of an upstream signal's failure. Detect this by cross-referencing `evidence` fields:
