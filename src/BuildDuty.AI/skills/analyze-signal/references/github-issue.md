@@ -11,7 +11,7 @@ Check the signal context, is available, for monitoring rationale and correlation
 From the signal's info, determine:
 
 - **Active problem** — issue is open; describes an unresolved bug/regression/outage/build break.
-- **Resolved / mitigated** — issue is closed or clearly indicates the problem is fixed.
+- **Resolved / mitigated** — issue is closed or clearly indicates the problem is fixed. Resolve any existing active analyses on the signal.
 - **Tracker / meta issue** — aggregates links to other issues/PRs/failures rather than one concrete problem.
 
 If the info is insufficient, use the GitHub MCP to pull additional information.
@@ -48,6 +48,9 @@ Example — resolved issue:
   "relatedLinks": ["https://github.com/dotnet/runtime/pull/12400"]
 }
 ```
+Use `resolve_signal_analysis` on existing active analyses when the issue is closed or when a new analysis supersedes them. Resolution criteria examples:
+- `Issue closed via PR #12400.`
+- `Superseded by more specific analysis identifying the OpenSSL 3.5 incompatibility.`
 
 #### `analysis` — concise cause statement
 

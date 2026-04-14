@@ -22,7 +22,7 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
     private readonly IStorageProvider _storageProvider;
     private readonly CopilotAdapter _copilotAdapter;
 
-    private record AnalysisResult(int AnalysesUpdated, int AnalysesCreated, int AnalysesRemoved);
+    private record AnalysisResult(int AnalysesUpdated, int AnalysesCreated, int AnalysesResolved);
     private sealed record UpdateWorkItemsResult(int WorkItemsUpdated, int WorkItemsResolved);
     private sealed record CreateWorkItemsResult(int WorkItemsCreated);
 
@@ -169,10 +169,10 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
                     await semaphore.WaitAsync();
                     try
                     {
-                        string analyzePrompt = $"Analyze the following signal: `{signalId}`.";
+                        string analyzePrompt = $"Triage run: `{triageRun.Id}`. Analyze the following signal: `{signalId}`.";
                         await using var session = await _copilotAdapter.CreateSessionAsync(
                             streaming: false,
-                            agent: CopilotAdapter.Agents.Analyze,
+                            agent: CopilotAdapter.Agents.AnalyzeSignalTriage,
                             throwAfterRetries: true);
 
                         try
@@ -202,7 +202,7 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
 
         AnsiConsole.MarkupLine($"[green]\u2713[/] Updated {analysisResults.Sum(r => r?.AnalysesUpdated ?? 0)} analyses");
         AnsiConsole.MarkupLine($"[green]\u2713[/] Created {analysisResults.Sum(r => r?.AnalysesCreated ?? 0)} analyses");
-        AnsiConsole.MarkupLine($"[green]\u2713[/] Removed {analysisResults.Sum(r => r?.AnalysesRemoved ?? 0)} analyses");
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Resolved {analysisResults.Sum(r => r?.AnalysesResolved ?? 0)} analyses");
     }
 
     private async Task UpdateWorkItemsAsync(TriageRun triageRun)
@@ -224,7 +224,7 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
 
                 string prompt = $"/update-workitems Triage ID: {triageRun.Id}.";
                 await using var session = await _copilotAdapter.CreateSessionAsync(
-                    agent: CopilotAdapter.Agents.Reconcile,
+                    agent: CopilotAdapter.Agents.WorkItemTriage,
                     throwAfterRetries: true);
 
                 try
@@ -272,7 +272,7 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
 
                 string prompt = $"/create-workitems Triage ID: {triageRun.Id}.";
                 await using var session = await _copilotAdapter.CreateSessionAsync(
-                    agent: CopilotAdapter.Agents.Reconcile,
+                    agent: CopilotAdapter.Agents.WorkItemTriage,
                     throwAfterRetries: true);
 
                 try

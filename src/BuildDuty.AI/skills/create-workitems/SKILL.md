@@ -16,11 +16,11 @@ You receive:
 
 ### 1. Collect orphaned analyses
 
-List orphaned analyses for this triage run — analyses on triage signals that are not linked to any work item. If there are none, return early with zeros.
+Use `list_analyses_for_triage` (linkedStatus: `unlinked`) to get non-resolved analyses on triage signals that are not linked to any work item. If there are none, return early with zeros.
 
 ### 2. Load each orphaned analysis
 
-For each orphaned entry, load the analysis by its signal ID and analysis ID. Collect the root cause, effect, and evidence from each.
+For each orphaned entry, load the analysis using `get_analysis` by its signal ID and analysis ID.
 
 ### 3. Group by root cause
 
