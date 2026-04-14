@@ -170,11 +170,18 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
                             agent: CopilotAdapter.Agents.Analyze,
                             throwAfterRetries: true);
 
-                        var result = await _copilotAdapter.RunPromptAsync(session, analyzePrompt);
-                        return JsonSerializer.Deserialize<AnalysisResult?>(ExtractJson(result?.Data?.Content ?? ""), new JsonSerializerOptions
+                        try
                         {
-                            PropertyNameCaseInsensitive = true,
-                        }) ?? throw new InvalidOperationException($"AI did not return a valid response for analysis of signal {signalId}.");
+                            var result = await _copilotAdapter.RunPromptAsync(session, analyzePrompt);
+                            return JsonSerializer.Deserialize<AnalysisResult?>(ExtractJson(result?.Data?.Content ?? ""), new JsonSerializerOptions
+                            {
+                                PropertyNameCaseInsensitive = true,
+                            }) ?? throw new InvalidOperationException($"AI did not return a valid response for analysis of signal {signalId}.");
+                        }
+                        finally
+                        {
+                            await _copilotAdapter.DeleteSessionAsync(session);
+                        }
                     }
                     finally
                     {
@@ -215,11 +222,18 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
                     agent: CopilotAdapter.Agents.Reconcile,
                     throwAfterRetries: true);
 
-                var result = await _copilotAdapter.RunPromptAsync(session, prompt);
-                updatedWorkItems = JsonSerializer.Deserialize<UpdateWorkItemsResult?>(ExtractJson(result?.Data?.Content ?? ""), new JsonSerializerOptions
+                try
                 {
-                    PropertyNameCaseInsensitive = true,
-                });
+                    var result = await _copilotAdapter.RunPromptAsync(session, prompt);
+                    updatedWorkItems = JsonSerializer.Deserialize<UpdateWorkItemsResult?>(ExtractJson(result?.Data?.Content ?? ""), new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true,
+                    });
+                }
+                finally
+                {
+                    await _copilotAdapter.DeleteSessionAsync(session);
+                }
 
                 progressTask.Increment(1);
                 progressTask.StopTask();
@@ -256,11 +270,18 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
                     agent: CopilotAdapter.Agents.Reconcile,
                     throwAfterRetries: true);
 
-                var result = await _copilotAdapter.RunPromptAsync(session, prompt);
-                createdWorkItems = JsonSerializer.Deserialize<CreateWorkItemsResult?>(ExtractJson(result?.Data?.Content ?? ""), new JsonSerializerOptions
+                try
                 {
-                    PropertyNameCaseInsensitive = true,
-                });
+                    var result = await _copilotAdapter.RunPromptAsync(session, prompt);
+                    createdWorkItems = JsonSerializer.Deserialize<CreateWorkItemsResult?>(ExtractJson(result?.Data?.Content ?? ""), new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true,
+                    });
+                }
+                finally
+                {
+                    await _copilotAdapter.DeleteSessionAsync(session);
+                }
 
                 progressTask.Increment(1);
                 progressTask.StopTask();
