@@ -57,7 +57,8 @@ For each work item whose links changed, update `IssueSignature`, `Summary`, or `
 
 ## Resolution
 
-For each unresolved work item that was touched during reconciliation, load its linked analyses and check their status:
+For each unresolved work item that was touched during reconciliation, check:
+- **No linked analyses** — all analyses were unlinked. Resolve the work item with reason "all analyses unlinked".
 - **All resolved** — every linked analysis has `status: resolved`. Resolve the work item.
 - **Mixed** — some analyses are still new or updated. Keep unresolved.
 
