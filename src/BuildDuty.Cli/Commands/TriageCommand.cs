@@ -50,6 +50,11 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
                 AnsiConsole.MarkupLine($"[red]✗[/] Could not find triage run with ID {settings.Resume}");
                 return 1;
             }
+            if (triageRun.Status == TriageRunStatus.Done)
+            {
+                AnsiConsole.MarkupLine($"[red]✗[/] Triage run {settings.Resume} is already Done and cannot be resumed.");
+                return 1;
+            }
         }
         else
         {
