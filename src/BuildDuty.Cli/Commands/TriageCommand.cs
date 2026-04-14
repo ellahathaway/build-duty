@@ -169,7 +169,7 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
                     await semaphore.WaitAsync();
                     try
                     {
-                        string analyzePrompt = $"Analyze the following signal: `{signalId}`.";
+                        string analyzePrompt = $"Triage run: `{triageRun.Id}`. Analyze the following signal: `{signalId}`.";
                         await using var session = await _copilotAdapter.CreateSessionAsync(
                             streaming: false,
                             agent: CopilotAdapter.Agents.Analyze,

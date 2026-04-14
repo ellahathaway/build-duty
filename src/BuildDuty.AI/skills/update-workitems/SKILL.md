@@ -26,8 +26,8 @@ Use [references/incident-grouping.md](./references/incident-grouping.md) for cor
 
 Only process work items whose linked signals are in this triage run and whose analyses were created, updated, or resolved during the current analysis step.
 
-1. List unresolved work items that have linked signals in this triage run, filtered to only the `LinkedAnalyses` entries whose signal is in the run.
-2. For each work item, load each linked analysis that changed during this triage (created, updated, or resolved). Skip unchanged analyses.
+1. List unresolved work items that have linked signals in this triage run, filtered to only the `LinkedAnalyses` entries whose signal is in the run. The response includes each analysis's `status` and `lastTriageId`.
+2. For each work item, identify linked analyses that changed during this triage — those whose `lastTriageId` matches the current triage run. Skip analyses that haven't changed.
 3. **Per-analysis evaluation** — using the correlation criteria from incident-grouping, compare each changed linked analysis against the work item's `IssueSignature`, `Summary`, and the evidence in other linked analyses:
    - **Still correlates** — the analysis (active or resolved) still describes the same root cause. Keep it linked.
    - **No longer correlates** — the analysis root cause has shifted to something unrelated. Unlink it.
@@ -41,7 +41,7 @@ Use [references/incident-grouping.md](./references/incident-grouping.md) for cor
 
 Only consider analyses that were created during the current analysis step (new active analyses not linked to any work item).
 
-6. List orphaned analyses for this triage run — active analyses on triage signals that are not linked to any work item.
+6. List orphaned analyses for this triage run — non-resolved analyses on triage signals that are not linked to any work item. The response includes each analysis's `status` and `updatedAt`.
 7. For each orphaned analysis, compare it against every unresolved work item using the correlation criteria from incident-grouping (same-cause grouping, causal chain detection, cross-type correlation). Additionally check:
    - **Evidence cross-references** — load the work item's existing linked analyses (via their signal IDs and analysis IDs) and compare evidence fields: build IDs, pipeline URLs, run IDs, repository names, issue/PR numbers, and error signatures. A shared build ID, pipeline reference, or issue link is strong evidence of the same incident.
    - **Cross-type correlation** — signals of different types (AzDo pipeline, GitHub issue, GitHub PR) frequently describe the same incident from different angles. A GitHub issue that references a failing build URL, or a PR linked to a tracked pipeline, should match the work item tracking that pipeline (and vice versa).

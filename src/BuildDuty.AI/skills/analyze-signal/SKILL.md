@@ -15,7 +15,7 @@ Use the matching reference based on signal type:
 - [references/github-issue.md](./references/github-issue.md) -> GitHubIssue
 
 ## Workflow
-1. Load the signal data for the provided `signalId`.
+1. Load the signal data for the provided `signalId`. Note the triage run ID — pass it to all analysis tools (`create_signal_analysis`, `update_signal_analysis`, `resolve_signal_analysis`).
 2. Determine signal type and use the matching reference document for instructions and evidence selection.
 3. Note the signal's context field — it describes what this signal source is and what it depends on.
 4. Analyze the current signal according to the matching reference. Determine the set of analyses you would persist.

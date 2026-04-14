@@ -26,17 +26,32 @@ public class StorageTools
                     var unresolvedWorkItems = (await _storageProvider.GetWorkItemsAsync()).Where(wi => !wi.Resolved);
                     var triageSignalSet = new HashSet<string>(triageRun.SignalIds, StringComparer.Ordinal);
 
-                    return unresolvedWorkItems
-                        .Select(wi => new
+                    var results = new List<object>();
+                    foreach (var wi in unresolvedWorkItems)
+                    {
+                        var triageLinks = wi.LinkedAnalyses.Where(la => triageSignalSet.Contains(la.SignalId)).ToList();
+                        if (triageLinks.Count == 0) continue;
+
+                        // Enrich each linked analysis with status and updatedAt from the signal
+                        var enrichedLinks = new List<object>();
+                        foreach (var la in triageLinks)
                         {
-                            WorkItem = wi,
-                            LinkedAnalyses = wi.LinkedAnalyses.Where(la => triageSignalSet.Contains(la.SignalId)).ToList()
-                        })
-                        .Where(x => x.LinkedAnalyses.Count > 0)
-                        .ToList();
+                            var signal = await _storageProvider.GetSignalAsync(la.SignalId);
+                            var analysisDetails = la.AnalysisIds
+                                .Select(aid => signal.Analyses.FirstOrDefault(a => a.Id == aid))
+                                .Where(a => a is not null)
+                                .Select(a => new { a!.Id, a.Status, a.LastTriageId })
+                                .ToList();
+                            enrichedLinks.Add(new { la.SignalId, Analyses = analysisDetails });
+                        }
+
+                        results.Add(new { WorkItem = wi, LinkedAnalyses = enrichedLinks });
+                    }
+
+                    return results;
                 },
                 "list_unresolved_work_items_with_signals",
-                "List unresolved work items that have linked signals in the specified triage run. Returns each work item with only the LinkedAnalyses entries whose SignalId is in the triage run."),
+                "List unresolved work items that have linked signals in the specified triage run. Returns each work item with enriched LinkedAnalyses including each analysis's status and lastTriageId."),
 
             AIFunctionFactory.Create(
                 async (
@@ -58,26 +73,26 @@ public class StorageTools
                         }
                     }
 
-                    // For each triage signal, find analyses not linked anywhere
+                    // For each triage signal, find non-resolved analyses not linked anywhere
                     var orphaned = new List<object>();
                     foreach (var signalId in triageRun.SignalIds)
                     {
                         var signal = await _storageProvider.GetSignalAsync(signalId);
-                        var unlinkedIds = signal.Analyses
-                            .Where(a => !linkedSet.Contains((signalId, a.Id)))
-                            .Select(a => a.Id)
+                        var unlinked = signal.Analyses
+                            .Where(a => a.Status != AnalysisStatus.Resolved && !linkedSet.Contains((signalId, a.Id)))
+                            .Select(a => new { a.Id, a.Status, a.LastTriageId })
                             .ToList();
 
-                        if (unlinkedIds.Count > 0)
+                        if (unlinked.Count > 0)
                         {
-                            orphaned.Add(new { SignalId = signalId, AnalysisIds = unlinkedIds });
+                            orphaned.Add(new { SignalId = signalId, Analyses = unlinked });
                         }
                     }
 
                     return orphaned;
                 },
                 "list_orphaned_analyses",
-                "List analyses on triage run signals that are not linked to any work item. Returns entries of { signalId, analysisIds[] }."),
+                "List non-resolved analyses on triage run signals that are not linked to any work item. Returns entries of { signalId, analyses[] } where each analysis has id, status, and lastTriageId."),
 
             AIFunctionFactory.Create(
                 async (
@@ -300,13 +315,14 @@ public class StorageTools
 
             AIFunctionFactory.Create(
                 async (
+                    [Description("The ID of the triage run")] string triageId,
                     [Description("The ID of the signal")] string signalId,
                     [Description("The data related to the signal analysis, in JSON format")] JsonElement analysisData,
                     [Description("The string analysis of the data")] string analysis) =>
                 {
                     var signal = await _storageProvider.GetSignalAsync(signalId);
 
-                    var signalAnalysis = new SignalAnalysis(analysisData, analysis);
+                    var signalAnalysis = new SignalAnalysis(analysisData, analysis) { LastTriageId = triageId };
                     signal.Analyses.Add(signalAnalysis);
                     await _storageProvider.SaveSignalAsync(signal);
 
@@ -317,6 +333,7 @@ public class StorageTools
 
             AIFunctionFactory.Create(
                 async (
+                    [Description("The ID of the triage run")] string triageId,
                     [Description("The ID of the signal")] string signalId,
                     [Description("The ID of the analysis to resolve")] string analysisId,
                     [Description("The criteria that were met for resolution (e.g. pipeline succeeded, issue closed via PR #123, fix merged)")] string resolutionCriteria) =>
@@ -330,7 +347,7 @@ public class StorageTools
                     }
 
                     var index = signal.Analyses.IndexOf(existing);
-                    signal.Analyses[index] = existing with { Status = AnalysisStatus.Resolved, ResolutionCriteria = resolutionCriteria };
+                    signal.Analyses[index] = existing with { Status = AnalysisStatus.Resolved, ResolutionCriteria = resolutionCriteria, LastTriageId = triageId };
                     await _storageProvider.SaveSignalAsync(signal);
                     return "resolved";
                 },
@@ -339,6 +356,7 @@ public class StorageTools
 
             AIFunctionFactory.Create(
                 async (
+                    [Description("The ID of the triage run")] string triageId,
                     [Description("The ID of the signal")] string signalId,
                     [Description("The ID of the analysis to update")] string analysisId,
                     [Description("The updated data related to the signal analysis, in JSON format")] JsonElement analysisData,
@@ -353,7 +371,7 @@ public class StorageTools
                     }
 
                     var index = signal.Analyses.IndexOf(existing);
-                    signal.Analyses[index] = new SignalAnalysis(existing.Id, analysisData, analysis, AnalysisStatus.Updated, existing.ResolutionCriteria);
+                    signal.Analyses[index] = new SignalAnalysis(existing.Id, analysisData, analysis, AnalysisStatus.Updated, existing.ResolutionCriteria, triageId);
                     await _storageProvider.SaveSignalAsync(signal);
                     return "updated";
                 },
