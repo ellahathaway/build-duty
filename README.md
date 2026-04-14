@@ -335,7 +335,7 @@ Data is stored under `~/.build-duty/<name>/`, where `<name>` comes from the
 
 ## Dogfooding
 
-Team members are encouraged to use BuildDuty in their regular build-duty
+Users are encouraged to use BuildDuty in their regular build-duty
 rotations and report what they find. See [docs/dogfooding.md](docs/dogfooding.md)
 for guidelines on getting started, filing feedback, and tracking adoption.
 
