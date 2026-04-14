@@ -24,37 +24,60 @@ public class StorageTools
                 {
                     var triageRun = await _storageProvider.GetTriageRunAsync(triageRunId);
                     var unresolvedWorkItems = (await _storageProvider.GetWorkItemsAsync()).Where(wi => !wi.Resolved);
-                    var triageSignalSet = new HashSet<string>(triageRun.SignalIds, StringComparer.Ordinal);
 
-                    var results = new List<object>();
+                    // Find work items that have at least one linked analysis touched in this triage
+                    var result = new List<string>();
                     foreach (var wi in unresolvedWorkItems)
                     {
-                        var triageLinks = wi.LinkedAnalyses.Where(la => triageSignalSet.Contains(la.SignalId)).ToList();
-                        if (triageLinks.Count == 0)
+                        foreach (var la in wi.LinkedAnalyses)
                         {
-                            continue;
-                        }
+                            if (!triageRun.SignalIds.Contains(la.SignalId))
+                            {
+                                continue;
+                            }
 
-                        // Enrich each linked analysis with status and lastTriageId from the signal
-                        var enrichedLinks = new List<object>();
-                        foreach (var la in triageLinks)
-                        {
                             var signal = await _storageProvider.GetSignalAsync(la.SignalId);
-                            var analysisDetails = la.AnalysisIds
-                                .Select(aid => signal.Analyses.FirstOrDefault(a => a.Id == aid))
-                                .Where(a => a is not null)
-                                .Select(a => new { a!.Id, a.Status, a.LastTriageId })
-                                .ToList();
-                            enrichedLinks.Add(new { la.SignalId, Analyses = analysisDetails });
-                        }
+                            var hasChanged = la.AnalysisIds.Any(aid =>
+                                signal.Analyses.Any(a => a.Id == aid && a.LastTriageId == triageRunId));
 
-                        results.Add(new { WorkItem = wi, LinkedAnalyses = enrichedLinks });
+                            if (hasChanged)
+                            {
+                                result.Add(wi.Id);
+                                break;
+                            }
+                        }
                     }
 
-                    return results;
+                    return result;
                 },
-                "list_unresolved_work_items_with_signals",
-                "List unresolved work items that have linked signals in the specified triage run. Returns each work item with enriched LinkedAnalyses including each analysis's status and lastTriageId."),
+                "list_unresolved_work_items_for_triage",
+                "List IDs of unresolved work items that have at least one linked analysis created, updated, or resolved during the specified triage run."),
+
+            AIFunctionFactory.Create(
+                async (
+                    [Description("The ID of the triage run")] string triageRunId) =>
+                {
+                    var triageRun = await _storageProvider.GetTriageRunAsync(triageRunId);
+
+                    var result = new List<object>();
+                    foreach (var signalId in triageRun.SignalIds)
+                    {
+                        var signal = await _storageProvider.GetSignalAsync(signalId);
+                        var changed = signal.Analyses
+                            .Where(a => a.LastTriageId == triageRunId)
+                            .Select(a => new { a.Id, a.Status })
+                            .ToList();
+
+                        if (changed.Count > 0)
+                        {
+                            result.Add(new { SignalId = signalId, Analyses = changed });
+                        }
+                    }
+
+                    return result;
+                },
+                "list_analyses_for_triage",
+                "List analyses that were created, updated, or resolved during the specified triage run. Returns entries of { signalId, analyses[] } where each analysis has id and status."),
 
             AIFunctionFactory.Create(
                 async (
@@ -96,17 +119,6 @@ public class StorageTools
                 },
                 "list_orphaned_analyses",
                 "List non-resolved analyses on triage run signals that are not linked to any work item. Returns entries of { signalId, analyses[] } where each analysis has id, status, and lastTriageId."),
-
-            AIFunctionFactory.Create(
-                async (
-                    [Description("The ID of the triage run")] string triageRunId) =>
-                {
-                    return (await _storageProvider.GetWorkItemsAsync())
-                        .Where(wi => !wi.Resolved && wi.LastTriageId == triageRunId)
-                        .ToList();
-                },
-                "list_unresolved_work_items_updated_in_triage",
-                "List unresolved work items that were modified during the specified triage run (LastTriageId matches)."),
 
             AIFunctionFactory.Create(
                 async (

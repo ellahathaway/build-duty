@@ -59,7 +59,7 @@ public class CopilotAdapter
         {
             Name = Agents.Reconcile,
             Description = "Reconciles analyzed signals into work items — groups by root cause, creates/links/updates, resolves/reopens work items.",
-            Tools = ["get_signal", "get_work_item", "get_analysis_from_signal", "list_unresolved_work_items_with_signals", "list_orphaned_analyses", "list_unresolved_work_items_updated_in_triage", "create_work_item", "link_signal_to_work_item", "unlink_signal_from_work_item", "update_work_item", "resolve_work_item"],
+            Tools = ["get_signal", "get_work_item", "get_analysis_from_signal", "list_unresolved_work_items_for_triage", "list_analyses_for_triage", "list_orphaned_analyses", "create_work_item", "link_signal_to_work_item", "unlink_signal_from_work_item", "update_work_item", "resolve_work_item"],
             Prompt = "You reconcile analyzed signals into work items.",
         },
         new CustomAgentConfig

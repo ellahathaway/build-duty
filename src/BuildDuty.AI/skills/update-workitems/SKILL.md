@@ -14,7 +14,7 @@ You receive:
 
 ## Early exit
 
-List unresolved work items. If there are **none**, skip all phases and return immediately with `{"workItemsUpdated": 0, "workItemsResolved": 0}`.
+List unresolved work items for this triage run. If there are **none**, skip all phases and return immediately with `{"workItemsUpdated": 0, "workItemsResolved": 0}`.
 
 ## Context
 
@@ -24,10 +24,8 @@ Each work item has a `LinkedAnalyses` list — entries of `(SignalId, AnalysisId
 
 Use [references/incident-grouping.md](./references/incident-grouping.md) for correlation criteria.
 
-Only process work items whose linked signals are in this triage run and whose analyses were created, updated, or resolved during the current analysis step.
-
-1. List unresolved work items that have linked signals in this triage run, filtered to only the `LinkedAnalyses` entries whose signal is in the run. The response includes each analysis's `status` and `lastTriageId`.
-2. For each work item, identify linked analyses that changed during this triage — those whose `lastTriageId` matches the current triage run. Skip analyses that haven't changed.
+1. List unresolved work items for this triage run — these are work items with at least one linked analysis that changed during this triage.
+2. For each work item, load the analyses that changed during this triage (use the triage analyses list to identify them).
 3. **Per-analysis evaluation** — using the correlation criteria from incident-grouping, compare each changed linked analysis against the work item's `IssueSignature`, `Summary`, and the evidence in other linked analyses:
    - **Still correlates** — the analysis (active or resolved) still describes the same root cause. Keep it linked.
    - **No longer correlates** — the analysis root cause has shifted to something unrelated. Unlink it.
@@ -39,9 +37,9 @@ Only process work items whose linked signals are in this triage run and whose an
 
 Use [references/incident-grouping.md](./references/incident-grouping.md) for correlation criteria.
 
-Only consider analyses that were created during the current analysis step (new active analyses not linked to any work item).
+Only consider analyses that were created during the current analysis step (new analyses not linked to any work item).
 
-6. List orphaned analyses for this triage run — non-resolved analyses on triage signals that are not linked to any work item. The response includes each analysis's `status` and `updatedAt`.
+6. List orphaned analyses for this triage run — non-resolved analyses on triage signals that are not linked to any work item.
 7. For each orphaned analysis, compare it against every unresolved work item using the correlation criteria from incident-grouping (same-cause grouping, causal chain detection, cross-type correlation). Additionally check:
    - **Evidence cross-references** — load the work item's existing linked analyses (via their signal IDs and analysis IDs) and compare evidence fields: build IDs, pipeline URLs, run IDs, repository names, issue/PR numbers, and error signatures. A shared build ID, pipeline reference, or issue link is strong evidence of the same incident.
    - **Cross-type correlation** — signals of different types (AzDo pipeline, GitHub issue, GitHub PR) frequently describe the same incident from different angles. A GitHub issue that references a failing build URL, or a PR linked to a tracked pipeline, should match the work item tracking that pipeline (and vice versa).
@@ -52,7 +50,7 @@ Only consider analyses that were created during the current analysis step (new a
 
 ## Phase 3 — Resolve
 
-8. List unresolved work items that were updated in this triage run.
+8. List unresolved work items for this triage run.
 9. For each, load its linked analyses and check their status:
    - **All resolved** — every linked analysis has `status: resolved`. Resolve the work item.
    - **Mixed** — some analyses are still new or updated. Keep unresolved.
