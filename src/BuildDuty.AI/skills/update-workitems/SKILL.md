@@ -17,7 +17,7 @@ You receive:
 1. Use `list_analyses_for_triage` to get all analyses that changed during this triage run.
 2. Use `list_work_items` (state: `unresolved`) to load all unresolved work items.
 
-If there are no analyses for this triage run, return immediately with `{"workItemsUpdated": 0, "workItemsResolved": 0}`.
+If there are no analyses for this triage run, stop — no further action is needed.
 
 ## Context
 
@@ -64,12 +64,4 @@ For each unresolved work item that was touched during reconciliation, check:
 
 ## Output
 
-Return **only** the raw JSON object below — no markdown fences, no commentary, no extra text.
-
-```json
-{
-  "workItemsUpdated": 3,
-  "workItemsResolved": 1
-}
-```
-`workItemsUpdated` counts work items whose links or metadata changed. `workItemsResolved` counts work items resolved. A work item that was both updated and resolved counts only in `workItemsResolved`.
+No text output is required. The CLI determines result counts by inspecting work item state after this skill completes.

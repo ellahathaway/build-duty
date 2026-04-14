@@ -39,10 +39,4 @@ For each group, using [references/issue-writing.md](./references/issue-writing.m
 
 ## Output
 
-Return **only** the raw JSON object below — no markdown fences, no commentary, no extra text.
-
-```json
-{
-  "workItemsCreated": 2
-}
-```
+No text output is required. The CLI determines result counts by inspecting work item state after this skill completes.
