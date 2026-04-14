@@ -190,7 +190,8 @@ public class AzureDevOpsSignalCollector : SignalCollector<AzureDevOpsConfig>
             project: context.ProjectName,
             definitions: [definitionId],
             branchName: branch.StartsWith("refs/", StringComparison.OrdinalIgnoreCase) ? branch : $"refs/heads/{branch}",
-            queryOrder: BuildQueryOrder.FinishTimeDescending,
+            statusFilter: BuildStatus.Completed,
+            queryOrder: BuildQueryOrder.QueueTimeDescending,
             top: 1);
 
         var build = builds?.FirstOrDefault();
