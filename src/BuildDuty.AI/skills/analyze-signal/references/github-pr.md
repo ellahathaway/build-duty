@@ -16,7 +16,7 @@ From `signal.Info`, determine the PR's situation:
 - **Blocked on review** — approvals missing or changes requested.
 - **Merge blocked by policy** — conflicts, failing checks, or missing sign-offs.
 - **Ready / passing** — checks passing, reviews sufficient.
-- **Merged / closed** — PR landed or was closed.
+- **Merged / closed** — PR landed or was closed. Resolve any existing active analyses on the signal.
 
 If the info is insufficient, use the GitHub MCP to pull additional information.
 
@@ -57,3 +57,5 @@ Examples:
 - `CI failing: sdk-diff test regression after dotnet/dotnet#45231 merged.`
 - `PR blocked on required review from @dotnet/source-build-internal.`
 - `PR merged: fixes Alpine 3.23 OpenSSL SHA-1 issue. Source-build should pass on next unified-build run.`
+
+For merged/closed PRs, use `resolve_signal_analysis` on existing active analyses. Resolution reason example: `PR merged; fix should flow to downstream pipelines.`

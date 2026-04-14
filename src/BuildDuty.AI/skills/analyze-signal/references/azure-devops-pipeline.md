@@ -81,22 +81,8 @@ If no concrete error is found, use the narrowest failure scope (e.g., "Task X fa
 
 Result is no longer in `MonitoredStatuses` (e.g. `Succeeded`, or `PartiallySucceeded` when only `Failed`/`Canceled` are monitored).
 
-Persist the signal analysis for one resolution analysis.
+Resolve any existing active analyses on the signal — the failures they describe are no longer occurring. Use `resolve_signal_analysis` with a resolution reason describing the new build result.
 
-#### Analysis Data — same pipeline fields as above, without `records`/`logExcerpts`:
-
-```json
-{
-  "buildId": 12347,
-  "definitionId": 42,
-  "sourceBranch": "refs/heads/main",
-  "buildResult": "Succeeded",
-  "monitoredStatuses": ["Failed", "Canceled"],
-  "organizationUrl": "https://dev.azure.com/dnceng",
-  "projectId": "9ee6d478-d288-47f7-aacc-f6e6d082ae6d"
-}
-```
-
-#### Analysis Text — resolution statement
+#### Analysis Text — resolution reason
 
 Example: `Pipeline result changed to Succeeded; no longer in monitored failure states [Failed, Canceled].`

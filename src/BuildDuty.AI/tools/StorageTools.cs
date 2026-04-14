@@ -333,7 +333,29 @@ public class StorageTools
                     return "removed";
                 },
                 "remove_signal_analysis",
-                "Remove a stale or irrelevant analysis from a signal by its analysis ID."),
+                "Remove an analysis that was wrong or irrelevant (misidentified root cause, bad data, duplicate). Do NOT use this for resolved issues — use resolve_signal_analysis instead."),
+
+            AIFunctionFactory.Create(
+                async (
+                    [Description("The ID of the signal")] string signalId,
+                    [Description("The ID of the analysis to resolve")] string analysisId,
+                    [Description("The reason for resolution (e.g. pipeline recovered, issue closed, fix merged)")] string resolutionReason) =>
+                {
+                    var signal = await _storageProvider.GetSignalAsync(signalId);
+                    var existing = signal.Analyses.FirstOrDefault(a => a.Id == analysisId);
+
+                    if (existing is null)
+                    {
+                        return "cannot resolve - analysis not found on signal";
+                    }
+
+                    var index = signal.Analyses.IndexOf(existing);
+                    signal.Analyses[index] = existing with { Status = AnalysisStatus.Resolved, ResolutionReason = resolutionReason };
+                    await _storageProvider.SaveSignalAsync(signal);
+                    return "resolved";
+                },
+                "resolve_signal_analysis",
+                "Mark an analysis as resolved when the issue it describes is no longer active (pipeline recovered, issue closed, fix merged). The analysis is preserved for provenance."),
 
             AIFunctionFactory.Create(
                 async (
@@ -351,7 +373,7 @@ public class StorageTools
                     }
 
                     var index = signal.Analyses.IndexOf(existing);
-                    signal.Analyses[index] = new SignalAnalysis(existing.Id, analysisData, analysis);
+                    signal.Analyses[index] = new SignalAnalysis(existing.Id, analysisData, analysis, existing.Status, existing.ResolutionReason);
                     await _storageProvider.SaveSignalAsync(signal);
                     return "updated";
                 },
