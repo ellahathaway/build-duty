@@ -187,6 +187,16 @@ public class CopilotAdapter
     }
 
     /// <summary>
+    /// Permanently deletes a session and removes it from the local session list.
+    /// Unlike <see cref="CopilotSession.DisposeAsync"/>, which only releases in-memory resources,
+    /// this method removes all session data from disk so the session no longer appears in the CLI session list.
+    /// </summary>
+    public virtual async Task DeleteSessionAsync(CopilotSession session)
+    {
+        await _client.DeleteSessionAsync(session.SessionId);
+    }
+
+    /// <summary>
     /// Subscribe to SDK session events and translate them to <see cref="AgentStreamEvent"/>.
     /// </summary>
     public static IDisposable SubscribeToStream(CopilotSession session, Action<AgentStreamEvent> handler)
