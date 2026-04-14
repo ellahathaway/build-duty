@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using BuildDuty.AI;
@@ -5,7 +6,6 @@ using BuildDuty.Core;
 using BuildDuty.Core.Models;
 using Spectre.Console;
 using Spectre.Console.Cli;
-using System.ComponentModel;
 
 namespace BuildDuty.Cli.Commands;
 
@@ -334,11 +334,11 @@ internal sealed class TriageShowSettings : BaseSettings
     public string Id { get; set; } = string.Empty;
 
     public override ValidationResult Validate()
-	{
-		return string.IsNullOrWhiteSpace(Id)
-			? ValidationResult.Error("--id is required")
-			: ValidationResult.Success();
-	}
+    {
+        return string.IsNullOrWhiteSpace(Id)
+            ? ValidationResult.Error("--id is required")
+            : ValidationResult.Success();
+    }
 }
 
 internal sealed class TriageShowCommand : BaseCommand<TriageShowSettings>
