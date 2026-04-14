@@ -1,35 +1,32 @@
-using System.ComponentModel;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using BuildDuty.AI;
 using BuildDuty.Core;
 using BuildDuty.Core.Models;
 using Spectre.Console;
 using Spectre.Console.Cli;
+using System.ComponentModel;
 
 namespace BuildDuty.Cli.Commands;
 
-internal sealed class TriageSettings : BaseSettings
+internal sealed class TriageRunSettings : BaseSettings
 {
-    [CommandOption("--review")]
-    [Description("Enter interactive review mode after triage")]
-    public bool Review { get; set; }
+    [CommandOption("--resume")]
+    [Description("The ID of the triage run to resume.")]
+    public string Resume { get; set; } = string.Empty;
 }
 
-internal sealed class TriageCommand : BaseCommand<TriageSettings>
+internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
 {
     private readonly ISignalCollectorFactory _signalCollectorFactory;
     private readonly IStorageProvider _storageProvider;
     private readonly CopilotAdapter _copilotAdapter;
 
-    private sealed record ReconcileMetrics
-    {
-        public int CreatedWorkItems { get; set; }
-        public int UpdatedWorkItems { get; set; }
-        public int ResolvedWorkItems { get; set; }
-        public int ReopenedWorkItems { get; set; }
-    }
+    private record AnalysisResult(int AnalysesUpdated, int AnalysesCreated, int AnalysesRemoved);
+    private sealed record UpdateWorkItemsResult(int WorkItemsUpdated, int WorkItemsResolved);
+    private sealed record CreateWorkItemsResult(int WorkItemsCreated);
 
-    public TriageCommand(
+    public TriageRunCommand(
         IBuildDutyConfigProvider configProvider,
         ISignalCollectorFactory signalCollectorFactory,
         IStorageProvider storageProvider,
@@ -41,14 +38,57 @@ internal sealed class TriageCommand : BaseCommand<TriageSettings>
         _copilotAdapter = copilotAdapter;
     }
 
-    protected override async Task<int> ExecuteCommandAsync(CommandContext context, TriageSettings settings)
+    protected override async Task<int> ExecuteCommandAsync(CommandContext context, TriageRunSettings settings)
     {
-        // Start a new triage run
-        var triageRun = new TriageRun();
-        await _storageProvider.SaveTriageRunAsync(triageRun);
+        TriageRun triageRun;
+        if (!string.IsNullOrEmpty(settings.Resume))
+        {
+            // We are resuming a previous triage run
+            triageRun = await _storageProvider.GetTriageRunAsync(settings.Resume);
+            if (triageRun is null)
+            {
+                AnsiConsole.MarkupLine($"[red]✗[/] Could not find triage run with ID {settings.Resume}");
+                return 1;
+            }
+        }
+        else
+        {
+            triageRun = new TriageRun();
+            await _storageProvider.SaveTriageRunAsync(triageRun);
+        }
 
-        // === Collect signals ===
-        AnsiConsole.MarkupLine("\n[bold][/]Collecting signals...");
+        await CollectAllSignalsAsync(triageRun);
+        if (triageRun.SignalIds.Count == 0)
+        {
+            AnsiConsole.MarkupLine("[yellow]↷[/] No signals collected. Nothing to triage.");
+            triageRun.Status = TriageRunStatus.Done;
+            await _storageProvider.SaveTriageRunAsync(triageRun);
+            return 0;
+        }
+
+        await AnalyzeCollectedSignalsAsync(triageRun);
+        await UpdateWorkItemsAsync(triageRun);
+        await CreateWorkItemsAsync(triageRun);
+
+        triageRun.Status = TriageRunStatus.Done;
+        await _storageProvider.SaveTriageRunAsync(triageRun);
+        return 0;
+    }
+
+    private async Task CollectAllSignalsAsync(TriageRun triageRun)
+    {
+        if (triageRun.Status != TriageRunStatus.CollectingSignals && triageRun.Status != TriageRunStatus.NotStarted)
+        {
+            return;
+        }
+
+        foreach (var signalId in triageRun.SignalIds)
+        {
+            await _storageProvider.DeleteSignalAsync(signalId);
+        }
+        triageRun.SignalIds.Clear();
+
+        AnsiConsole.MarkupLine("\n[bold]Collecting signals...[/]");
 
         triageRun.Status = TriageRunStatus.CollectingSignals;
         await _storageProvider.SaveTriageRunAsync(triageRun);
@@ -64,124 +104,10 @@ internal sealed class TriageCommand : BaseCommand<TriageSettings>
             });
 
         triageRun.SignalIds = collectedSignalIds;
-        if (collectedSignalIds.Count == 0)
+        if (collectedSignalIds.Count > 0)
         {
-            AnsiConsole.MarkupLine("[dim]No signals collected. Nothing to triage.[/]");
-            triageRun.Status = TriageRunStatus.Done;
-            await _storageProvider.SaveTriageRunAsync(triageRun);
-            return 0;
+            AnsiConsole.MarkupLine($"[green]✓[/] Collected [bold]{collectedSignalIds.Count}[/] signals.");
         }
-        AnsiConsole.MarkupLine($"[green]✓[/] Collected [bold]{collectedSignalIds.Count}[/] signals.");
-
-        triageRun.Status = TriageRunStatus.SummarizingSignals;
-        await _storageProvider.SaveTriageRunAsync(triageRun);
-
-        // === AI-powered summarization ===
-        AnsiConsole.MarkupLine("\n[bold][/] Summarizing signals...");
-
-        await RunWithProgressAsync(async ctx =>
-            {
-                var progressTask = ctx.AddTask("[bold]Summarization[/]", maxValue: collectedSignalIds.Count);
-
-                var maxParallelSummaries = Math.Max(1, Math.Min(8, Environment.ProcessorCount - 1));
-                using var semaphore = new SemaphoreSlim(maxParallelSummaries);
-
-                string summarizePrompt = """
-                    Analyze the following signal.
-                    """;
-
-                var summarizeTasks = collectedSignalIds.Select(signalId => Task.Run(async () =>
-                {
-                    await semaphore.WaitAsync();
-                    try
-                    {
-                        await _copilotAdapter.RunSignalActionAsync(signalId, summarizePrompt);
-                    }
-                    finally
-                    {
-                        semaphore.Release();
-                        progressTask.Increment(1);
-                    }
-                }));
-
-                await Task.WhenAll(summarizeTasks);
-
-                progressTask.StopTask();
-            });
-
-        AnsiConsole.MarkupLine($"[green]✓[/] Analyzed [bold]{collectedSignalIds.Count}[/] signals.");
-
-        // === Reconcile work items (create/update/resolve) ===
-        triageRun.Status = TriageRunStatus.ReconcilingWorkItems;
-        await _storageProvider.SaveTriageRunAsync(triageRun);
-
-        AnsiConsole.MarkupLine("\n[bold][/] Reconciling work items...");
-
-        ReconcileMetrics metrics = new();
-        await RunWithProgressAsync(async ctx =>
-            {
-                var progressTask = ctx.AddTask("[bold]Reconciliation[/]", autoStart: true, maxValue: 1);
-                metrics = await ReconcileWorkItemsWithAiAsync(collectedSignalIds, triageRun.Id);
-                progressTask.Increment(1);
-                progressTask.StopTask();
-            });
-
-        AnsiConsole.MarkupLine(
-            $"[green]✓[/] Reconciled work items. Created [bold]{metrics.CreatedWorkItems}[/], updated [bold]{metrics.UpdatedWorkItems}[/], resolved [bold]{metrics.ResolvedWorkItems}[/], reopened [bold]{metrics.ReopenedWorkItems}[/].");
-
-        triageRun.Status = TriageRunStatus.Done;
-        await _storageProvider.SaveTriageRunAsync(triageRun);
-
-        return 0;
-    }
-
-    private async Task<ReconcileMetrics> ReconcileWorkItemsWithAiAsync(
-        IEnumerable<string> signalIds,
-        string triageId)
-    {
-        var distinctSignalIds = signalIds.Distinct(StringComparer.Ordinal).ToList();
-        if (distinctSignalIds.Count == 0)
-        {
-            return new ReconcileMetrics();
-        }
-
-        string reconcileWorkItemsPrompt = $$"""
-            Run `reconcile-work-items` for triage run `{{triageId}}` on the provided signal IDs.
-            Return only the metrics JSON required by that skill.
-            """;
-
-        var response = await _copilotAdapter.RunSignalSetActionAsync(distinctSignalIds, reconcileWorkItemsPrompt);
-        var metrics = ParseReconcileMetrics(response);
-
-        return metrics;
-    }
-
-    private static ReconcileMetrics ParseReconcileMetrics(string response)
-    {
-        if (string.IsNullOrWhiteSpace(response))
-        {
-            throw new InvalidOperationException("AI reconciliation returned an empty response; expected JSON metrics.");
-        }
-
-        string candidate = response.Trim();
-        int firstBrace = candidate.IndexOf('{');
-        int lastBrace = candidate.LastIndexOf('}');
-        if (firstBrace >= 0 && lastBrace > firstBrace)
-        {
-            candidate = candidate.Substring(firstBrace, lastBrace - firstBrace + 1);
-        }
-
-        var metrics = JsonSerializer.Deserialize<ReconcileMetrics>(candidate, new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true,
-        });
-
-        if (metrics is null)
-        {
-            throw new InvalidOperationException("AI reconciliation response could not be parsed into metrics JSON.");
-        }
-
-        return metrics;
     }
 
     private async Task<List<string>> CollectSignalsAsync<TConfig>(dynamic ctx) where TConfig : class
@@ -213,6 +139,160 @@ internal sealed class TriageCommand : BaseCommand<TriageSettings>
         }
     }
 
+    private async Task AnalyzeCollectedSignalsAsync(TriageRun triageRun)
+    {
+        if (triageRun.Status != TriageRunStatus.CollectingSignals && triageRun.Status != TriageRunStatus.AnalyzingSignals)
+        {
+            return;
+        }
+
+        triageRun.Status = TriageRunStatus.AnalyzingSignals;
+        await _storageProvider.SaveTriageRunAsync(triageRun);
+
+        AnsiConsole.MarkupLine("\n[bold]Analyzing signals...[/]");
+
+        var analysisResults = new List<AnalysisResult>();
+        await RunWithProgressAsync(async ctx =>
+            {
+                var progressTask = ctx.AddTask("[bold]Analysis[/]", maxValue: triageRun.SignalIds.Count);
+
+                var maxParallelSummaries = Math.Max(1, Math.Min(8, Environment.ProcessorCount - 1));
+                using var semaphore = new SemaphoreSlim(maxParallelSummaries);
+
+                var summarizeTasks = triageRun.SignalIds.Select(signalId => Task.Run(async () =>
+                {
+                    await semaphore.WaitAsync();
+                    try
+                    {
+                        string analyzePrompt = $"Analyze the following signal: `{signalId}`.";
+                        await using var session = await _copilotAdapter.CreateSessionAsync(
+                            streaming: false,
+                            agent: CopilotAdapter.Agents.Analyze,
+                            throwAfterRetries: true);
+                        using var logWriter = _storageProvider.CreateAgentLogWriter(triageRun.Id, $"analyze_{signalId}");
+                        using var logSub = CopilotAdapter.SubscribeToLog(session, logWriter);
+                        var result = await _copilotAdapter.RunPromptAsync(session, analyzePrompt);
+                        return JsonSerializer.Deserialize<AnalysisResult?>(ExtractJson(result?.Data?.Content ?? ""), new JsonSerializerOptions
+                        {
+                            PropertyNameCaseInsensitive = true,
+                        }) ?? throw new InvalidOperationException($"AI did not return a valid response for analysis of signal {signalId}.");
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                        progressTask.Increment(1);
+                    }
+                }));
+
+                analysisResults = (await Task.WhenAll(summarizeTasks)).ToList();
+
+                progressTask.StopTask();
+            });
+
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Updated {analysisResults.Sum(r => r?.AnalysesUpdated ?? 0)} analyses");
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Created {analysisResults.Sum(r => r?.AnalysesCreated ?? 0)} analyses");
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Removed {analysisResults.Sum(r => r?.AnalysesRemoved ?? 0)} analyses");
+    }
+
+    private async Task UpdateWorkItemsAsync(TriageRun triageRun)
+    {
+        if (triageRun.Status != TriageRunStatus.AnalyzingSignals && triageRun.Status != TriageRunStatus.UpdatingWorkItems)
+        {
+            return;
+        }
+
+        triageRun.Status = TriageRunStatus.UpdatingWorkItems;
+        await _storageProvider.SaveTriageRunAsync(triageRun);
+
+        AnsiConsole.MarkupLine("\n[bold]Updating work items...[/]");
+
+        UpdateWorkItemsResult? updatedWorkItems = null;
+        await RunWithProgressAsync(async ctx =>
+            {
+                var progressTask = ctx.AddTask("[bold]Updating work items[/]", autoStart: true, maxValue: 1);
+
+                string prompt = $"/update-workitems Triage ID: {triageRun.Id}.";
+                await using var session = await _copilotAdapter.CreateSessionAsync(
+                    agent: CopilotAdapter.Agents.Reconcile,
+                    throwAfterRetries: true);
+
+                using var logWriter = _storageProvider.CreateAgentLogWriter(triageRun.Id, $"update-workitems_{triageRun.Id}");
+                using var logSub = CopilotAdapter.SubscribeToLog(session, logWriter);
+
+                var result = await _copilotAdapter.RunPromptAsync(session, prompt);
+                updatedWorkItems = JsonSerializer.Deserialize<UpdateWorkItemsResult?>(ExtractJson(result?.Data?.Content ?? ""), new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true,
+                });
+
+                progressTask.Increment(1);
+                progressTask.StopTask();
+            });
+
+        if (updatedWorkItems is null)
+        {
+            throw new InvalidOperationException("AI did not return a valid response for work item updates.");
+        }
+
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Updated {updatedWorkItems.WorkItemsUpdated} existing work items");
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Resolved {updatedWorkItems.WorkItemsResolved} existing work items");
+    }
+
+    private async Task CreateWorkItemsAsync(TriageRun triageRun)
+    {
+        if (triageRun.Status != TriageRunStatus.UpdatingWorkItems && triageRun.Status != TriageRunStatus.CreatingWorkItems)
+        {
+            return;
+        }
+
+        triageRun.Status = TriageRunStatus.CreatingWorkItems;
+        await _storageProvider.SaveTriageRunAsync(triageRun);
+
+        AnsiConsole.MarkupLine("\n[bold]Creating work items for orphaned analyses...[/]");
+
+        CreateWorkItemsResult? createdWorkItems = null;
+        await RunWithProgressAsync(async ctx =>
+            {
+                var progressTask = ctx.AddTask("[bold]Creating work items[/]", autoStart: true, maxValue: 1);
+
+                string prompt = $"/create-workitems Triage ID: {triageRun.Id}.";
+                await using var session = await _copilotAdapter.CreateSessionAsync(
+                    agent: CopilotAdapter.Agents.Reconcile,
+                    throwAfterRetries: true);
+
+                using var logWriter = _storageProvider.CreateAgentLogWriter(triageRun.Id, $"create-workitems_{triageRun.Id}");
+                using var logSub = CopilotAdapter.SubscribeToLog(session, logWriter);
+
+                var result = await _copilotAdapter.RunPromptAsync(session, prompt);
+                createdWorkItems = JsonSerializer.Deserialize<CreateWorkItemsResult?>(ExtractJson(result?.Data?.Content ?? ""), new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true,
+                });
+
+                progressTask.Increment(1);
+                progressTask.StopTask();
+            });
+
+        if (createdWorkItems is null)
+        {
+            throw new InvalidOperationException("AI did not return a valid response for work item creation.");
+        }
+
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Created {createdWorkItems.WorkItemsCreated} new work items.");
+    }
+
+    private static readonly Regex s_jsonObject = new(@"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", RegexOptions.Singleline | RegexOptions.Compiled);
+
+    /// <summary>
+    /// Extracts the first JSON object from an AI response that may contain
+    /// markdown fences, prose, or other non-JSON wrapping.
+    /// </summary>
+    private static string ExtractJson(string text)
+    {
+        var match = s_jsonObject.Match(text);
+        return match.Success ? match.Value : text.Trim();
+    }
+
     private static async Task RunWithProgressAsync(Func<ProgressContext, Task> action)
     {
         await AnsiConsole.Progress()
@@ -222,5 +302,84 @@ internal sealed class TriageCommand : BaseCommand<TriageSettings>
                 new SpinnerColumn(),
                 new ElapsedTimeColumn())
             .StartAsync(action);
+    }
+}
+
+internal sealed class TriageListCommand : BaseCommand<BaseSettings>
+{
+    private readonly IStorageProvider _storageProvider;
+
+    public TriageListCommand(
+        IBuildDutyConfigProvider configProvider,
+        IStorageProvider storageProvider)
+        : base(configProvider)
+    {
+        _storageProvider = storageProvider;
+    }
+
+    protected override async Task<int> ExecuteCommandAsync(CommandContext context, BaseSettings settings)
+    {
+        var triageRuns = await _storageProvider.GetTriageRunsAsync();
+        if (!triageRuns.Any())
+        {
+            AnsiConsole.MarkupLine("[yellow]No triage runs found.[/]");
+            return 0;
+        }
+
+        foreach (var run in triageRuns)
+        {
+            AnsiConsole.MarkupLine($"[green]{run.Id}[/] - {run.Status}");
+        }
+        return 0;
+    }
+}
+
+internal sealed class TriageShowSettings : BaseSettings
+{
+    [CommandOption("--id")]
+    [Description("The ID of the triage run to show.")]
+    public string Id { get; set; } = string.Empty;
+
+    public override ValidationResult Validate()
+	{
+		return string.IsNullOrWhiteSpace(Id)
+			? ValidationResult.Error("--id is required")
+			: ValidationResult.Success();
+	}
+}
+
+internal sealed class TriageShowCommand : BaseCommand<TriageShowSettings>
+{
+    IStorageProvider _storageProvider;
+
+    public TriageShowCommand(
+        IBuildDutyConfigProvider configProvider,
+        IStorageProvider storageProvider)
+        : base(configProvider)
+    {
+        _storageProvider = storageProvider;
+    }
+
+    protected override async Task<int> ExecuteCommandAsync(CommandContext context, TriageShowSettings settings)
+    {
+        var triageRun = await _storageProvider.GetTriageRunAsync(settings.Id);
+        // Show the details of the triage run, including its ID, status, and any associated work items and signals
+        AnsiConsole.MarkupLine($"[green]{triageRun.Id}[/] - {triageRun.Status}");
+        var workItems = await _storageProvider.GetWorkItemsForTriageRunAsync(triageRun.Id);
+
+        AnsiConsole.MarkupLine("[yellow]Work Items:[/]");
+        foreach (var workItem in workItems)
+        {
+            AnsiConsole.MarkupLine($"  [green]{workItem.Id}[/] - {workItem.IssueSignature}");
+        }
+
+        var signals = await Task.WhenAll(triageRun.SignalIds.Select(si => _storageProvider.GetSignalAsync(si)));
+        AnsiConsole.MarkupLine("[yellow]Signals:[/]");
+        foreach (var signal in signals)
+        {
+            AnsiConsole.MarkupLine($"  [green]{signal.Id}[/] - {signal.Type}");
+        }
+
+        return 0;
     }
 }

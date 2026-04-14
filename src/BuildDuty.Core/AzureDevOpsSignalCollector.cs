@@ -1,13 +1,14 @@
 using BuildDuty.Core.Models;
 using Maestro.Common;
 using Microsoft.TeamFoundation.Build.WebApi;
+using Microsoft.VisualStudio.Services.WebApi;
 
 namespace BuildDuty.Core;
 
 public class AzureDevOpsSignalCollector : SignalCollector<AzureDevOpsConfig>
 {
     private readonly ReleaseBranchResolver _branchResolver;
-    private record OrganizationProjectContext(string OrganizationUrl, string ProjectName, BuildHttpClient BuildClient);
+    internal record OrganizationProjectContext(string OrganizationUrl, string ProjectName, VssConnection Connection, BuildHttpClient BuildClient);
 
     public AzureDevOpsSignalCollector(
         AzureDevOpsConfig config,
@@ -21,20 +22,22 @@ public class AzureDevOpsSignalCollector : SignalCollector<AzureDevOpsConfig>
 
     protected override async Task<List<Signal>> CollectCoreAsync()
     {
-        var pipelineSignals = (await StorageProvider.GetSignalsFromWorkItemsAsync())
+        var pipelineSignals = (await StorageProvider.GetAllSignalsAsync())
             .Where(s => s.Type == SignalType.AzureDevOpsPipeline)
             .OfType<AzureDevOpsPipelineSignal>();
 
         var collectedSignals = new List<Signal>();
         foreach (var organization in Config.Organizations)
         {
-            var buildClient = await GetBuildClientAsync(organization.Url);
+            var connection = await TokenProvider.GetAzureDevOpsConnectionAsync(organization.Url);
+            var buildClient = await connection.GetClientAsync<BuildHttpClient>();
 
             foreach (var project in organization.Projects)
             {
                 var context = new OrganizationProjectContext(
                     organization.Url,
                     project.Name,
+                    connection,
                     buildClient
                 );
 
@@ -46,15 +49,43 @@ public class AzureDevOpsSignalCollector : SignalCollector<AzureDevOpsConfig>
         return collectedSignals;
     }
 
-    protected virtual Task<BuildHttpClient> GetBuildClientAsync(string organizationUrl)
-        => TokenProvider.GetAzureDevOpsBuildClientAsync(organizationUrl);
-
-    private async Task<List<AzureDevOpsPipelineSignal>> CollectPipelineSignalsAsync(
+    internal async Task<List<AzureDevOpsPipelineSignal>> CollectPipelineSignalsAsync(
         OrganizationProjectContext context,
         List<AzureDevOpsPipelineConfig> pipelines,
         IEnumerable<AzureDevOpsPipelineSignal> existingSignals
         )
     {
+        foreach (var pipeline in pipelines)
+        {
+            if (pipeline.Status?.Contains(BuildResult.Succeeded) == true)
+            {
+                throw new InvalidOperationException(
+                    $"Pipeline {pipeline.Id} has 'Succeeded' in its status list. " +
+                    "Only non-successful results (Failed, PartiallySucceeded, Canceled) are supported. " +
+                    "Successful builds are automatically tracked as recovery signals when a previously failing pipeline succeeds.");
+            }
+
+            if (pipeline.TimelineResults is not { Count: > 0 })
+            {
+                throw new InvalidOperationException(
+                    $"Pipeline {pipeline.Id} has an empty 'timelineResults' list. " +
+                    "At least one TaskResult must be specified.");
+            }
+
+            if (pipeline.TimelineFilters is { Count: > 0 })
+            {
+                foreach (var filter in pipeline.TimelineFilters)
+                {
+                    if (filter.Status is not { Count: > 0 })
+                    {
+                        throw new InvalidOperationException(
+                            $"Pipeline {pipeline.Id} has a timeline filter with an empty 'status' list. " +
+                            "At least one TaskResult must be specified per filter.");
+                    }
+                }
+            }
+        }
+
         var pipelineTasks = pipelines.Select(pipeline => CollectSinglePipelineSignalsAsync(context, pipeline, existingSignals));
 
         var results = await Task.WhenAll(pipelineTasks);
@@ -72,73 +103,82 @@ public class AzureDevOpsSignalCollector : SignalCollector<AzureDevOpsConfig>
 
         foreach (var branch in branches)
         {
+            // Find existing signal for this pipeline+branch (not by build ID — the latest build may differ)
+            var normalizedBranch = branch.StartsWith("refs/", StringComparison.OrdinalIgnoreCase) ? branch : $"refs/heads/{branch}";
+            var existingSignal = existingSignals.FirstOrDefault(s =>
+                s.TypedInfo.Build.DefinitionId == pipeline.Id
+                && string.Equals(s.TypedInfo.Build.SourceBranch, normalizedBranch, StringComparison.OrdinalIgnoreCase));
+
             var build = await GetLatestBuildAsync(context, pipeline.Id, branch, pipeline.Age);
-            if (build == null || build.Result is not BuildResult buildResult || pipeline.Status?.Contains(buildResult) != true)
+
+            if (build == null || build.Result is not BuildResult buildResult)
+            {
+                if (existingSignal != null)
+                {
+                    // No build found, but we had a previous signal
+                    // Update the existing signal to have null build info so AI can see it's now "recovered" (no active failure)
+                    var updatedSignal = new AzureDevOpsPipelineSignal(existingSignal.TypedInfo, existingSignal.Url);
+                    updatedSignal.PreserveFrom(existingSignal);
+                    signals.Add(updatedSignal);
+                }
+                continue;
+            }
+
+            if (existingSignal?.TypedInfo.Build.FinishTime == build.FinishTime)
+            {
+                // Build is the same as the existing signal's build, so skip (no new information for AI)
+                continue;
+            }
+
+            if (!pipeline.Status.Contains(build.Result ?? BuildResult.None))
+            {
+                // Latest build is no longer a status we collect for (e.g. it succeeded).
+                // If there's an existing signal tied to a work item, update it so AI can see it's now changed.
+                if (existingSignal != null)
+                {
+                    var buildInfo = ToBuildInfo(build);
+                    var pipelineInfo = new AzureDevOpsPipelineInfo(context.OrganizationUrl, build.Project?.Id ?? Guid.Empty, buildInfo, [], pipeline.Status);
+                    var updatedSignal = new AzureDevOpsPipelineSignal(pipelineInfo, existingSignal.Url);
+                    updatedSignal.Context = pipeline.Context;
+                    updatedSignal.PreserveFrom(existingSignal);
+                    signals.Add(updatedSignal);
+                }
+                continue;
+            }
+
+            var timelineRecords = await GetTimelineRecordsAsync(context, build.Id, pipeline.TimelineResults, pipeline.TimelineFilters);
+
+            // If timeline filters are configured but no records matched, the failure is
+            // in stages/jobs we don't monitor — skip this build.
+            if (pipeline.TimelineFilters is { Count: > 0 } && timelineRecords.Count == 0)
             {
                 continue;
             }
 
-            var timelineRecords = await GetTimelineRecordsAsync(context, build.Id, pipeline.TimelineFilters, pipeline.Status);
-            if (timelineRecords.Count == 0)
-            {
-                continue;
-            }
-
-            var signal = new AzureDevOpsPipelineSignal(context.OrganizationUrl, build, timelineRecords);
+            var pInfo = new AzureDevOpsPipelineInfo(context.OrganizationUrl, build.Project?.Id ?? Guid.Empty, ToBuildInfo(build), timelineRecords, pipeline.Status);
+            var buildUrl = new Uri($"{context.OrganizationUrl.TrimEnd('/')}/{build.Project?.Id ?? Guid.Empty}/_build/results?buildId={build.Id}");
+            var signal = new AzureDevOpsPipelineSignal(pInfo, buildUrl);
             signal.Context = pipeline.Context;
-            var existingSignal = existingSignals.FirstOrDefault(s => s.TypedInfo.Build.Id == build.Id);
 
             if (existingSignal == null)
             {
                 signals.Add(signal);
                 continue;
             }
-            
-            if (existingSignal.TypedInfo.Build.Result == buildResult
-                && HasSameTimelineRecords(existingSignal.TypedInfo.TimelineRecords, timelineRecords))
-            {
-                continue;
-            }
 
-            signal.Id = existingSignal.Id; // Preserve the same ID for updates
-            signal.WorkItemIds = existingSignal.WorkItemIds; // Preserve linked work items
+            signal.PreserveFrom(existingSignal);
             signals.Add(signal);
         }
 
         return signals;
     }
 
-    internal static bool HasSameTimelineRecords(
-        List<AzureDevOpsTimelineRecordInfo>? existing,
-        List<AzureDevOpsTimelineRecordInfo> current)
-    {
-        if (existing is null || existing.Count != current.Count)
-        {
-            return false;
-        }
-
-        var existingSet = existing
-            .Select(r => (r.Id, r.Result))
-            .ToHashSet();
-
-        return current.All(r => existingSet.Contains((r.Id, r.Result)));
-    }
-
-    internal static bool HasSameTimelineRecords(
-        List<TimelineRecord>? existing,
-        List<TimelineRecord> current)
-    {
-        if (existing is null || existing.Count != current.Count)
-        {
-            return false;
-        }
-
-        var existingSet = existing
-            .Select(r => (r.Id, r.Result))
-            .ToHashSet();
-
-        return current.All(r => existingSet.Contains((r.Id, r.Result)));
-    }
+    internal static AzureDevOpsBuildInfo ToBuildInfo(Build build) => new(
+        build.Id,
+        build.Result,
+        build.Definition.Id,
+        build.SourceBranch,
+        build.FinishTime);
 
     private async Task<Build?> GetLatestBuildAsync(
         OrganizationProjectContext context,
@@ -200,8 +240,8 @@ public class AzureDevOpsSignalCollector : SignalCollector<AzureDevOpsConfig>
     private static async Task<List<AzureDevOpsTimelineRecordInfo>> GetTimelineRecordsAsync(
         OrganizationProjectContext context,
         int buildId,
-        List<TimelineFilter>? filters,
-        List<BuildResult>? status
+        List<TaskResult> timelineResults,
+        List<TimelineFilter>? filters
         )
     {
         var timeline = await context.BuildClient.GetBuildTimelineAsync(context.ProjectName, buildId)
@@ -209,136 +249,147 @@ public class AzureDevOpsSignalCollector : SignalCollector<AzureDevOpsConfig>
 
         var allRecords = timeline.Records?.ToList() ?? [];
         var recordsById = allRecords.ToDictionary(r => r.Id, r => r);
-        var allowedResults = status?
-            .Select(result => GetTaskResult(result))
-            .OfType<TaskResult>()
-            .ToHashSet();
 
-        var nonSuccessRecords = allRecords.Where(r =>
-            r.Result is TaskResult result
-            && allowedResults?.Contains(result) == true)
-            .ToList();
+        // 1. Find matching records: filter by type/name/status from config,
+        //    then walk down to the lowest (leaf) failures in the hierarchy.
+        var matching = FindMatchingRecords(allRecords, recordsById, timelineResults, filters);
+        var leaf = FindLeafRecords(matching, recordsById);
 
-        var filteredNonSuccessRecords = ApplyFilters(nonSuccessRecords, allRecords, recordsById, filters);
-        var lowestRecords = GetLowestRecords(filteredNonSuccessRecords, recordsById);
+        // 2. Convert to info models with parent chains.
+        return leaf.Select(r => ToRecordInfo(r, recordsById)).ToList();
+    }
 
-        return lowestRecords
-            .Select(r => ToRecordInfo(r, recordsById))
-            .ToList();
-
-        static List<TimelineRecord> ApplyFilters(
-            List<TimelineRecord> failing,
-            List<TimelineRecord> all,
-            Dictionary<Guid, TimelineRecord> byId,
-            List<TimelineFilter>? timelineFilters)
+    /// <summary>
+    /// Finds timeline records matching the configured filters.
+    /// When no filters are configured, returns all non-successful records.
+    /// When filters are configured, returns records that are descendants of
+    /// (or are themselves) filter-matched anchors.
+    /// </summary>
+    private static List<TimelineRecord> FindMatchingRecords(
+        List<TimelineRecord> allRecords,
+        Dictionary<Guid, TimelineRecord> recordsById,
+        List<TaskResult> timelineResults,
+        List<TimelineFilter>? filters)
+    {
+        if (filters is null or { Count: 0 })
         {
-            if (timelineFilters == null || timelineFilters.Count == 0)
-            {
-                return failing;
-            }
-
-            var anchors = all.Where(r => timelineFilters.Any(f => IsMatch(r, f))).ToList();
-            if (anchors.Count == 0)
-            {
-                return [];
-            }
-
-            var anchorIds = anchors.Select(a => a.Id).ToHashSet();
-            return failing.Where(r => IsSelfOrDescendantOfAny(r, anchorIds, byId)).ToList();
-
-            static bool IsSelfOrDescendantOfAny(
-                TimelineRecord record,
-                HashSet<Guid> anchorIds,
-                Dictionary<Guid, TimelineRecord> byId)
-            {
-                if (anchorIds.Contains(record.Id))
-                {
-                    return true;
-                }
-
-                var currentParentId = record.ParentId;
-                while (currentParentId is Guid parentId && byId.TryGetValue(parentId, out var parent))
-                {
-                    if (anchorIds.Contains(parent.Id))
-                    {
-                        return true;
-                    }
-
-                    currentParentId = parent.ParentId;
-                }
-
-                return false;
-            }
-        }
-
-        static List<TimelineRecord> GetLowestRecords(
-            List<TimelineRecord> candidates,
-            Dictionary<Guid, TimelineRecord> byId)
-        {
-            var candidateIds = candidates.Select(c => c.Id).ToHashSet();
-            var nonLowestIds = new HashSet<Guid>();
-
-            foreach (var candidate in candidates)
-            {
-                var currentParentId = candidate.ParentId;
-                while (currentParentId is Guid parentId && byId.TryGetValue(parentId, out var parent))
-                {
-                    if (candidateIds.Contains(parent.Id))
-                    {
-                        nonLowestIds.Add(parent.Id);
-                    }
-
-                    currentParentId = parent.ParentId;
-                }
-            }
-
-            return candidates
-                .Where(candidate => !nonLowestIds.Contains(candidate.Id))
+            var allowedResults = timelineResults.ToHashSet();
+            return allRecords
+                .Where(r => r.Result.HasValue && allowedResults.Contains(r.Result.Value))
                 .ToList();
         }
 
-        static AzureDevOpsTimelineRecordInfo ToRecordInfo(
-            TimelineRecord record,
-            Dictionary<Guid, TimelineRecord> byId)
+        // Find anchor records that match a filter by type + name + status.
+        var anchorIds = allRecords
+            .Where(r => filters.Any(f => MatchesFilter(r, f)))
+            .Select(r => r.Id)
+            .ToHashSet();
+
+        if (anchorIds.Count == 0)
         {
-            var parents = new List<AzureDevOpsTimelineParentInfo>();
+            return [];
+        }
 
-            var currentParentId = record.ParentId;
-            while (currentParentId is Guid parentId && byId.TryGetValue(parentId, out var parent))
+        // Return all non-successful records that are an anchor or a descendant of an anchor.
+        var allowedStatuses = filters.SelectMany(f => f.Status).ToHashSet();
+        return allRecords
+            .Where(r => r.Result.HasValue && allowedStatuses.Contains(r.Result.Value))
+            .Where(r => IsOrDescendsFrom(r, anchorIds, recordsById))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Returns true if the record matches type, name pattern, and status filter.
+    /// </summary>
+    private static bool MatchesFilter(TimelineRecord record, TimelineFilter filter)
+    {
+        if (!record.RecordType.Equals(filter.Type.ToString(), StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return filter.Names.Any(name => name.IsMatch(record.Name))
+            && (filter.Status.Count == 0 || filter.Status.Contains(record.Result.GetValueOrDefault()));
+    }
+
+    /// <summary>
+    /// Returns true if the record's ID is in <paramref name="ancestorIds"/>,
+    /// or if any of its parents are.
+    /// </summary>
+    private static bool IsOrDescendsFrom(
+        TimelineRecord record,
+        HashSet<Guid> ancestorIds,
+        Dictionary<Guid, TimelineRecord> recordsById)
+    {
+        if (ancestorIds.Contains(record.Id))
+        {
+            return true;
+        }
+
+        var parentId = record.ParentId;
+        while (parentId is Guid pid && recordsById.TryGetValue(pid, out var parent))
+        {
+            if (ancestorIds.Contains(parent.Id))
             {
-                parents.Add(new AzureDevOpsTimelineParentInfo(parent.Name, parent.RecordType, parent.Log?.Id));
-
-                currentParentId = parent.ParentId;
+                return true;
             }
-
-            parents.Reverse();
-
-            return new AzureDevOpsTimelineRecordInfo(
-                record.Id,
-                record.Result,
-                record.RecordType,
-                record.Name,
-                parents,
-                record.Log?.Id);
+            parentId = parent.ParentId;
         }
 
-        static TaskResult? GetTaskResult(BuildResult? result)
+        return false;
+    }
+
+    /// <summary>
+    /// Given a set of candidate records, removes any record that has a descendant
+    /// also in the set — returning only the leaf-level (most specific) records.
+    /// </summary>
+    private static List<TimelineRecord> FindLeafRecords(
+        List<TimelineRecord> candidates,
+        Dictionary<Guid, TimelineRecord> recordsById)
+    {
+        var candidateIds = candidates.Select(c => c.Id).ToHashSet();
+        var nonLeafIds = new HashSet<Guid>();
+
+        foreach (var candidate in candidates)
         {
-            return result switch
+            var parentId = candidate.ParentId;
+            while (parentId is Guid pid && recordsById.TryGetValue(pid, out var parent))
             {
-                BuildResult.Succeeded => TaskResult.Succeeded,
-                BuildResult.PartiallySucceeded => TaskResult.SucceededWithIssues,
-                BuildResult.Failed => TaskResult.Failed,
-                BuildResult.Canceled => TaskResult.Canceled,
-                _ => null,
-            };
+                if (candidateIds.Contains(parent.Id))
+                {
+                    nonLeafIds.Add(parent.Id);
+                }
+                parentId = parent.ParentId;
+            }
         }
 
-        static bool IsMatch(TimelineRecord record, TimelineFilter filter)
+        return candidates
+            .Where(c => !nonLeafIds.Contains(c.Id))
+            .ToList();
+    }
+
+    private static AzureDevOpsTimelineRecordInfo ToRecordInfo(
+        TimelineRecord record,
+        Dictionary<Guid, TimelineRecord> recordsById)
+    {
+        var parents = new List<AzureDevOpsTimelineParentInfo>();
+
+        var parentId = record.ParentId;
+        while (parentId is Guid pid && recordsById.TryGetValue(pid, out var parent))
         {
-            return record.RecordType.Equals(filter.Type.ToString(), StringComparison.OrdinalIgnoreCase) &&
-                   filter.Names.Any(name => name.IsMatch(record.Name));
+            parents.Add(new AzureDevOpsTimelineParentInfo(parent.Name, parent.RecordType, parent.Log?.Id));
+            parentId = parent.ParentId;
         }
+
+        parents.Reverse();
+
+        return new AzureDevOpsTimelineRecordInfo(
+            record.Id,
+            record.Result,
+            record.RecordType,
+            record.Name,
+            parents,
+            record.Log?.Id);
     }
 
     private async Task<List<string>> ResolveBranchesAsync(
@@ -351,7 +402,7 @@ public class AzureDevOpsSignalCollector : SignalCollector<AzureDevOpsConfig>
         }
 
         return await _branchResolver.ResolveAsync(
-            context.OrganizationUrl,
+            context.Connection,
             context.ProjectName,
             pipeline.Id,
             pipeline.Release.SupportPhases is { Count: > 0 }

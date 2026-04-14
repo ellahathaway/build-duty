@@ -1,11 +1,15 @@
 using BuildDuty.Core;
 using BuildDuty.AI;
+using BuildDuty.AI.Tools;
+using GitHub.Copilot.SDK;
 using Maestro.Common;
+using Microsoft.Extensions.AI;
 using Maestro.Common.AzureDevOpsTokens;
 using Microsoft.DotNet.DarcLib.Helpers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Azure.Pipelines.WebApi;
 
 namespace BuildDuty.Cli.Infrastructure;
 
@@ -37,9 +41,29 @@ internal static class ServiceCollectionExtensions
         services.AddBuildDutyConfigProvider();
         services.AddStorageProvider();
         services.AddRemoteTokenProvider();
-        services.TryAddSingleton<StorageTools>();
+        services.TryAddSingleton(sp => new CopilotClient(new CopilotClientOptions
+        {
+            CliPath = ResolveCopilotCliPath(),
+        }));
         services.TryAddSingleton<AzureDevOpsTools>();
-        services.TryAddSingleton<CopilotAdapter>();
+        services.TryAddSingleton<StorageTools>();
+        services.TryAddSingleton<CopilotAdapter>(sp =>
+        {
+            var client = sp.GetRequiredService<CopilotClient>();
+            var configProvider = sp.GetRequiredService<IBuildDutyConfigProvider>();
+            var storageProvider = sp.GetRequiredService<IStorageProvider>();
+
+            var tools = new List<AIFunction>();
+            tools.AddRange(sp.GetRequiredService<AzureDevOpsTools>().GetTools());
+            tools.AddRange(sp.GetRequiredService<StorageTools>().GetTools());
+
+            var skillsDirectory = Path.Combine(AppContext.BaseDirectory, "skills");
+            var skills = Directory.Exists(skillsDirectory)
+                ? Directory.GetDirectories(skillsDirectory).ToList()
+                : null;
+
+            return new CopilotAdapter(client, configProvider, tools, skills);
+        });
         return services;
     }
 
@@ -109,5 +133,27 @@ internal static class ServiceCollectionExtensions
 
             return githubTokenProvider;
         }
+    }
+
+    private static string? ResolveCopilotCliPath()
+    {
+        var envPath = Environment.GetEnvironmentVariable("COPILOT_CLI_PATH");
+        if (!string.IsNullOrEmpty(envPath))
+        {
+            return envPath;
+        }
+
+        var exeName = OperatingSystem.IsWindows() ? "copilot.exe" : "copilot";
+        var pathDirs = Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator) ?? [];
+        foreach (var dir in pathDirs)
+        {
+            var candidate = Path.Combine(dir, exeName);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
     }
 }

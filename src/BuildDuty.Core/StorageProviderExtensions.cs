@@ -2,14 +2,29 @@ namespace BuildDuty.Core;
 
 public static class StorageProviderExtensions
 {
-    public static async Task<IEnumerable<Signal>> GetSignalsFromWorkItemsAsync(this IStorageProvider storageProvider)
+    public static async Task<ICollection<Signal>> GetAllSignalsAsync(this IStorageProvider storageProvider)
     {
         var workItems = await storageProvider.GetWorkItemsAsync();
-        var signalTasks = workItems
-            .SelectMany(wi => wi.SignalIds)
-            .Distinct()
-            .Select(storageProvider.GetSignalAsync);
+        var signalIds = workItems
+            .SelectMany(wi => wi.LinkedAnalyses.Select(la => la.SignalId))
+            .Distinct();
 
-        return await Task.WhenAll(signalTasks);
+        var signals = new List<Signal>();
+        foreach (var signalId in signalIds)
+        {
+            try
+            {
+                signals.Add(await storageProvider.GetSignalAsync(signalId));
+            }
+            catch (FileNotFoundException) { }
+        }
+
+        return signals;
+    }
+
+    public static async Task<ICollection<WorkItem>> GetWorkItemsForTriageRunAsync(this IStorageProvider storageProvider, string triageRunId)
+    {
+        var workItems = await storageProvider.GetWorkItemsAsync();
+        return workItems.Where(w => w.LastTriageId == triageRunId).ToArray();
     }
 }

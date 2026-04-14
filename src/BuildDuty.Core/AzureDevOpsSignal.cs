@@ -1,7 +1,7 @@
-using Microsoft.TeamFoundation.Build.WebApi;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.TeamFoundation.Build.WebApi;
 
 namespace BuildDuty.Core;
 
@@ -15,24 +15,38 @@ public record AzureDevOpsTimelineRecordInfo(
     List<AzureDevOpsTimelineParentInfo> Parents,
     int? LogId);
 
-public record AzureDevOpsPipelineInfo(string OrganizationUrl, Build Build, List<AzureDevOpsTimelineRecordInfo> TimelineRecords);
+public record AzureDevOpsBuildInfo(
+    int Id,
+    BuildResult? Result,
+    int DefinitionId,
+    string SourceBranch,
+    DateTime? FinishTime);
+
+public record AzureDevOpsPipelineInfo(
+    string OrganizationUrl,
+    Guid ProjectId,
+    AzureDevOpsBuildInfo Build,
+    List<AzureDevOpsTimelineRecordInfo> TimelineRecords,
+    List<BuildResult> MonitoredStatuses);
 
 public sealed class AzureDevOpsPipelineSignal : Signal
 {
+    private static readonly JsonSerializerOptions s_jsonOptions = new()
+    {
+        Converters = { new JsonStringEnumConverter() }
+    };
+
     public override SignalType Type => SignalType.AzureDevOpsPipeline;
 
     [SetsRequiredMembers]
-    public AzureDevOpsPipelineSignal(string organizationUrl, Build build, List<AzureDevOpsTimelineRecordInfo> timelineRecords)
+    public AzureDevOpsPipelineSignal(AzureDevOpsPipelineInfo typedInfo, Uri url)
     {
-        TypedInfo = new AzureDevOpsPipelineInfo(organizationUrl, build, timelineRecords);
+        Info = JsonSerializer.SerializeToElement(typedInfo, s_jsonOptions);
+        Url = url;
     }
 
     public AzureDevOpsPipelineSignal() { }
 
     [JsonIgnore]
-    public AzureDevOpsPipelineInfo TypedInfo
-    {
-        get => JsonSerializer.Deserialize<AzureDevOpsPipelineInfo>(Info.GetRawText())!;
-        set => Info = JsonSerializer.SerializeToElement(value);
-    }
+    public AzureDevOpsPipelineInfo TypedInfo => JsonSerializer.Deserialize<AzureDevOpsPipelineInfo>(Info.GetRawText(), s_jsonOptions)!;
 }

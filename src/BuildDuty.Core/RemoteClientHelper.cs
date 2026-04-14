@@ -8,7 +8,7 @@ namespace BuildDuty.Core;
 
 public static class RemoteClientHelper
 {
-    public static async Task<BuildHttpClient> GetAzureDevOpsBuildClientAsync(this IRemoteTokenProvider tokenProvider, string organizationUrl)
+    public static async Task<VssConnection> GetAzureDevOpsConnectionAsync(this IRemoteTokenProvider tokenProvider, string organizationUrl)
     {
         // Ensure trailing slash so Maestro's AzureDevOpsTokenProvider regex can extract the account name
         var repoUrl = organizationUrl.TrimEnd('/') + "/";
@@ -19,8 +19,7 @@ public static class RemoteClientHelper
         }
 
         var credentials = new VssOAuthAccessTokenCredential(token);
-        var connection = new VssConnection(new Uri(organizationUrl), credentials);
-        return connection.GetClient<BuildHttpClient>();
+        return new VssConnection(new Uri(organizationUrl), credentials);
     }
 
     public static async Task<GitHubClient> GetGitHubClientAsync(this IRemoteTokenProvider tokenProvider, string organization, string repository)

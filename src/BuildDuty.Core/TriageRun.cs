@@ -21,7 +21,8 @@ public enum TriageRunStatus
 {
     NotStarted,
     CollectingSignals,
-    SummarizingSignals,
-    ReconcilingWorkItems,
+    AnalyzingSignals,
+    UpdatingWorkItems,
+    CreatingWorkItems,
     Done
 }

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using BuildDuty.Core;
 using GitHub.Copilot.SDK;
 using Microsoft.Extensions.AI;
@@ -5,256 +6,259 @@ using Microsoft.Extensions.AI;
 namespace BuildDuty.AI;
 
 /// <summary>
-/// Executes AI analysis via the GitHub Copilot SDK. Uses
-/// <see cref="CopilotSessionFactory"/> to create sessions pre-configured
-/// with build-duty skills, data-access tools, and MCP servers.
+/// Executes AI analysis via the GitHub Copilot SDK. Uses a single
+/// <see cref="CopilotClient"/> and creates sessions on demand.
+/// Multiple sessions can run concurrently from the same client.
 /// </summary>
-public class CopilotAdapter : IAsyncDisposable
+public class CopilotAdapter
 {
+    private readonly CopilotClient _client;
     private readonly IBuildDutyConfigProvider _configProvider;
-    private readonly IStorageProvider _storageProvider;
-    private readonly StorageTools _storageTools;
-    private readonly AzureDevOpsTools _azureDevOpsTools;
-    private readonly SemaphoreSlim _clientStartLock = new(1, 1);
-    private CopilotClient? _client;
-    private bool _clientStarted;
+    private readonly ICollection<AIFunction>? _tools;
+    private readonly ICollection<string>? _skills;
+
+    private const string DefaultInstructions = """
+        You are a build-duty agent that helps engineers with the build-duty process (non-interactive triaging and interactive reviewing).
+
+        You work with **triage runs** (a single triage process for a set of related signals and work items, identified by a triage ID),
+        **signals** (pre-collected snapshots of Azure DevOps pipeline runs, GitHub issues/PRs)
+        and **work items** (groups of correlated signals by root cause).
+
+        ### Triage Runs
+        A triage run represents a single execution of the triage process, identified by a triage ID.
+        The triage run tracks the status of the triage process (e.g. collecting signals, analyzing, recommending actions, etc.) and the associated signals and work items.
+
+        ### Signals
+        Each signal represents a single CI/CD instance (e.g. a pipeline run, a GitHub issue, or a GitHub pull request) collected during a triage run.
+        The content of the signal should be treated as factual evidence at the time of triage, indicated by the corresponding triage ID.
+        Signals may be updated with new evidence over time.
+
+        ### Work Items
+        A work item represents a cluster of signals that are believed to be caused by the same underlying issue.
+        The work item may be updated over time with new signals and evidence, and eventually resolved.
+        """;
+
+    public static class Agents
+    {
+        public const string Analyze = "analyze";
+        public const string Reconcile = "reconcile";
+        public const string Review = "review";
+    }
+
+    private static readonly List<CustomAgentConfig> CustomAgentConfigs =
+    [
+        new CustomAgentConfig
+        {
+            Name = Agents.Analyze,
+            Description = "Analyzes a single signal — extracts cause, effect, and evidence.",
+            Tools = ["get_signal", "read_pipeline_log", "create_signal_analysis", "update_signal_analysis", "remove_signal_analysis", "get_json_value"],
+            Prompt = "You analyze a single signal to extract cause, effect, and evidence. Use the analyze-signal skill.",
+        },
+        new CustomAgentConfig
+        {
+            Name = Agents.Reconcile,
+            Description = "Reconciles analyzed signals into work items — groups by root cause, creates/links/updates, resolves/reopens work items.",
+            Tools = ["get_signal", "get_analysis_from_signal", "list_unresolved_work_items_with_signals", "list_orphaned_analyses", "list_unresolved_work_items_updated_in_triage", "create_work_item", "link_signal_to_work_item", "unlink_signal_from_work_item", "update_work_item", "resolve_work_item"],
+            Prompt = "You reconcile analyzed signals into work items.",
+        },
+        new CustomAgentConfig
+        {
+            Name = Agents.Review,
+            Description = "Interactive review of work items.",
+            Tools = null, // all tools
+            Prompt = "You help the user review work items interactively. Users will send unfiltered messages. You have access to MCP servers and other external tools beyond the built-in storage tools. When the user asks about live information (e.g. PR approval status, build results, issue comments), use available MCP tools or external integrations to fetch current data rather than relying solely on the signal snapshot.",
+        },
+    ];
 
     public CopilotAdapter(
+        CopilotClient client,
         IBuildDutyConfigProvider configProvider,
-        IStorageProvider storageProvider,
-        StorageTools storageTools,
-        AzureDevOpsTools azureDevOpsTools)
+        ICollection<AIFunction>? tools = null,
+        ICollection<string>? skills = null)
     {
+        _client = client;
         _configProvider = configProvider;
-        _storageProvider = storageProvider;
-        _storageTools = storageTools;
-        _azureDevOpsTools = azureDevOpsTools;
+        _tools = tools;
+        _skills = skills;
     }
 
     /// <summary>
-    /// Run an AI action on a signal.
+    /// Run an AI prompt in a copilot session
     /// </summary>
-    public virtual async Task<string> RunSignalActionAsync(
-        string signalId,
-        string action)
+    public virtual async Task<AssistantMessageEvent?> RunPromptAsync(CopilotSession session, string prompt, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(signalId);
-
-        var client = await EnsureClientStartedAsync();
-
-        var skills = new[]
-        {
-            "skills/analyze",
-        };
-
-        await using var session = await CopilotSessionFactory.CreateAsync(
-            client,
-            skills: skills,
-            mcpServers: null,
-            tools: BuildTools(),
-            model: _configProvider.Get().Ai?.Model);
-
-        var prompt = $"""
-            Perform the following action on the given signal id:
-
-            {action}
-
-            SignalId: {signalId}
-            """;
-        var response = await session.SendAndWaitAsync(
+        return await session.SendAndWaitAsync(
             new MessageOptions { Prompt = prompt },
-            timeout: TimeSpan.FromMinutes(10));
-
-        return response?.Data?.Content ?? "(no response)";
+            timeout: TimeSpan.FromMinutes(10),
+            cancellationToken: cancellationToken);
     }
 
     /// <summary>
-    /// Run an AI action across a set of signals.
+    /// Create a persistent session.
     /// </summary>
-    public virtual async Task<string> RunSignalSetActionAsync(
-        IReadOnlyList<string> signalIds,
-        string action)
+    public virtual async Task<CopilotSession> CreateSessionAsync(
+        bool streaming = false,
+        string? agent = null,
+        bool throwAfterRetries = false)
     {
-        if (signalIds.Count == 0)
+        var config = new SessionConfig
         {
-            return "(no signals)";
-        }
-
-        var client = await EnsureClientStartedAsync();
-
-        var skills = new[]
-        {
-            "skills/reconcile-work-items",
-        };
-
-        await using var session = await CopilotSessionFactory.CreateAsync(
-            client,
-            skills: skills,
-            mcpServers: null,
-            tools: BuildTools(),
-            model: _configProvider.Get().Ai?.Model);
-
-        var prompt = $"""
-            Perform the following action on the given set of signal ids:
-
-            {action}
-
-            SignalIds:
-            {string.Join('\n', signalIds.Select(id => $"- {id}"))}
-            """;
-        var response = await session.SendAndWaitAsync(
-            new MessageOptions { Prompt = prompt },
-            timeout: TimeSpan.FromMinutes(10));
-
-        return response?.Data?.Content ?? "(no response)";
-    }
-
-    public async ValueTask DisposeAsync()
-    {
-        if (_client is IAsyncDisposable d)
-        {
-            await d.DisposeAsync();
-        }
-        GC.SuppressFinalize(this);
-    }
-
-    private async Task<CopilotClient> EnsureClientStartedAsync()
-    {
-        if (_clientStarted && _client is not null)
-        {
-            return _client;
-        }
-
-        await _clientStartLock.WaitAsync();
-        try
-        {
-            if (_clientStarted)
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+            SkillDirectories = _skills?.Select(Path.GetFullPath).ToList(),
+            Streaming = streaming,
+            SystemMessage = new SystemMessageConfig
             {
-                return _client!;
+                Content = DefaultInstructions,
+            },
+            Tools = _tools,
+            CustomAgents = CustomAgentConfigs,
+            Agent = agent,
+            Hooks = new SessionHooks
+            {
+                OnErrorOccurred = async (input, _) =>
+                {
+                    if (input.Recoverable == true)
+                    {
+                        return new ErrorOccurredHookOutput
+                        {
+                            ErrorHandling = "retry",
+                            RetryCount = 2,
+                        };
+                    }
+
+                    if (throwAfterRetries)
+                    {
+                        throw new InvalidOperationException(
+                            $"Copilot session error [{input.ErrorContext}]: {input.Error}");
+                    }
+
+                    return new ErrorOccurredHookOutput
+                    {
+                        ErrorHandling = "skip",
+                        UserNotification = $"An error occurred, skipping: {input.Error}",
+                    };
+                }
             }
+        };
 
-            _client ??= new CopilotClient(CreateCopilotClientOptions());
-            await _client.StartAsync();
-            _clientStarted = true;
-            return _client;
-        }
-        finally
+        var model = _configProvider.Get().Ai?.Model;
+        if (model is not null)
         {
-            _clientStartLock.Release();
+            config.Model = model;
         }
-    }
 
-    private static CopilotClientOptions CreateCopilotClientOptions()
-    {
-        var options = new CopilotClientOptions();
-        options.CliPath = ResolveCopilotCliPath();
+        var session = await _client.CreateSessionAsync(config);
 
-        return options;
-    }
-
-    private static string ResolveCopilotCliPath()
-    {
-        var explicitPath = Environment.GetEnvironmentVariable("COPILOT_CLI_PATH");
-        if (!string.IsNullOrWhiteSpace(explicitPath) && File.Exists(explicitPath))
+        if (_skills != null)
         {
-            return explicitPath;
+            foreach (var skill in _skills)
+            {
+                var skillName = Path.GetFileName(skill);
+                await session.Rpc.Skills.EnableAsync(skillName);
+            }
         }
 
-        return "copilot";
+        return session;
     }
 
-    private ICollection<AIFunction> BuildTools()
-        => _storageTools.GetTools()
-            .Concat(_azureDevOpsTools.GetTools())
-            .ToList();
+    /// <summary>
+    /// Subscribe to SDK session events and translate them to <see cref="AgentStreamEvent"/>.
+    /// </summary>
+    public static IDisposable SubscribeToStream(CopilotSession session, Action<AgentStreamEvent> handler)
+    {
+        return session.On(e =>
+        {
+            switch (e)
+            {
+                case AssistantReasoningDeltaEvent reasoning:
+                    handler(new AgentStreamEvent { Type = "reasoning", Content = reasoning.Data?.DeltaContent });
+                    break;
+                case AssistantMessageDeltaEvent delta:
+                    handler(new AgentStreamEvent { Type = "delta", Content = delta.Data?.DeltaContent });
+                    break;
+                case ToolExecutionStartEvent toolStart:
+                    var name = toolStart.Data?.McpToolName ?? toolStart.Data?.ToolName ?? "?";
+                    var server = toolStart.Data?.McpServerName;
+                    handler(new AgentStreamEvent
+                    {
+                        Type = "tool-start",
+                        ToolName = server is not null ? $"{server}/{name}" : name,
+                        ToolArgs = toolStart.Data?.Arguments?.ToString(),
+                    });
+                    break;
+                case ToolExecutionCompleteEvent toolEnd:
+                    handler(new AgentStreamEvent { Type = "tool-end", ToolSuccess = toolEnd.Data?.Success == true });
+                    break;
+                case SessionErrorEvent err:
+                    handler(new AgentStreamEvent { Type = "error", Content = err.Data?.ToString() });
+                    break;
+            }
+        });
+    }
 
-//     /// <summary>
-//     /// Create a persistent review session for multi-turn interaction.
-//     /// The caller is responsible for disposing the returned session.
-//     /// </summary>
-//     public async Task<ReviewSession> CreateReviewSessionAsync(
-//         IReadOnlyList<string> skills,
-//         Dictionary<string, object> mcpServers,
-//         )
-//     {
-//         _client ??= new CopilotClient(_clientOptions);
-//         await _client.StartAsync(ct);
+    private static readonly JsonSerializerOptions s_logJsonOptions = new()
+    {
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+    };
 
+    /// <summary>
+    /// Subscribe to all SDK session events and write each as a JSONL line to <paramref name="writer"/> in real-time.
+    /// </summary>
+    public static IDisposable SubscribeToLog(CopilotSession session, StreamWriter writer)
+    {
+        var lockObj = new object();
 
-//         var session = await CopilotSessionFactory.CreateAsync(
-//             _client,
-//             skills: skills,
-//             mcpServers: mcpServers,
-//             model: _configProvider.GetConfig().Ai?.Model,
-//             tools: _tools,
-//             ct: ct);
+        void Write(object entry)
+        {
+            var line = JsonSerializer.Serialize(entry, s_logJsonOptions);
+            lock (lockObj)
+            {
+                writer.WriteLine(line);
+            }
+        }
 
-//         return new ReviewSession(session);
-//     }
-// }
+        return session.On(e =>
+        {
+            var ts = DateTime.UtcNow.ToString("o");
 
-// /// <summary>
-// /// A long-lived session that supports multi-turn conversation with
-// /// the AI agent. Created via <see cref="CopilotAdapter.CreateReviewSessionAsync"/>.
-// /// Supports streaming events for live terminal rendering.
-// /// </summary>
-// public sealed class ReviewSession : IAsyncDisposable
-// {
-//     private readonly CopilotSession _session;
-//     private volatile Action<AgentStreamEvent>? _streamHandler;
-
-//     internal ReviewSession(CopilotSession session)
-//     {
-//         _session = session;
-//         _session.On(e =>
-//         {
-//             var handler = _streamHandler;
-//             if (handler is null) return;
-
-//             switch (e)
-//             {
-//                 case AssistantMessageDeltaEvent delta:
-//                     handler(new AgentStreamEvent { Type = "delta", Content = delta.Data?.DeltaContent });
-//                     break;
-//                 case ToolExecutionStartEvent toolStart:
-//                     var name = toolStart.Data?.McpToolName ?? toolStart.Data?.ToolName ?? "?";
-//                     var server = toolStart.Data?.McpServerName;
-//                     handler(new AgentStreamEvent
-//                     {
-//                         Type = "tool-start",
-//                         ToolName = server is not null ? $"{server}/{name}" : name,
-//                         ToolArgs = toolStart.Data?.Arguments?.ToString(),
-//                     });
-//                     break;
-//                 case ToolExecutionCompleteEvent toolEnd:
-//                     handler(new AgentStreamEvent { Type = "tool-end", ToolSuccess = toolEnd.Data?.Success == true });
-//                     break;
-//                 case AssistantMessageEvent msg:
-//                     handler(new AgentStreamEvent { Type = "message", Content = msg.Data?.Content });
-//                     break;
-//                 case SessionErrorEvent err:
-//                     handler(new AgentStreamEvent { Type = "error", Content = err.Data?.ToString() });
-//                     break;
-//             }
-//         });
-//     }
-
-//     /// <summary>Register a handler to receive streaming events (token deltas, tool calls, etc.).</summary>
-//     public void OnStream(Action<AgentStreamEvent> handler) => _streamHandler = handler;
-
-//     /// <summary>Send a message and wait for the agent's response.</summary>
-//     public async Task<string> SendAsync(string prompt, )
-//     {
-//         var response = await _session.SendAndWaitAsync(
-//             new MessageOptions { Prompt = prompt },
-//             timeout: TimeSpan.FromMinutes(10),
-//             cancellationToken: ct);
-
-//         return response?.Data?.Content ?? "(no response)";
-//     }
-
-//     public async ValueTask DisposeAsync()
-//     {
-//         await _session.DisposeAsync();
-//     }
+            switch (e)
+            {
+                case AssistantReasoningDeltaEvent reasoning:
+                    Write(new { ts, type = "reasoning-delta", content = reasoning.Data?.DeltaContent });
+                    break;
+                case AssistantReasoningEvent reasoning:
+                    Write(new { ts, type = "reasoning", content = reasoning.Data?.Content });
+                    break;
+                case AssistantMessageDeltaEvent delta:
+                    Write(new { ts, type = "message-delta", content = delta.Data?.DeltaContent });
+                    break;
+                case AssistantMessageEvent msg:
+                    Write(new { ts, type = "message", content = msg.Data?.Content, phase = msg.Data?.Phase, outputTokens = msg.Data?.OutputTokens });
+                    break;
+                case AssistantUsageEvent usage:
+                    Write(new { ts, type = "usage", model = usage.Data?.Model, inputTokens = usage.Data?.InputTokens, outputTokens = usage.Data?.OutputTokens, cacheReadTokens = usage.Data?.CacheReadTokens, cacheWriteTokens = usage.Data?.CacheWriteTokens, durationMs = usage.Data?.Duration, reasoningEffort = usage.Data?.ReasoningEffort });
+                    break;
+                case ToolExecutionStartEvent toolStart:
+                    var name = toolStart.Data?.McpToolName ?? toolStart.Data?.ToolName;
+                    var server = toolStart.Data?.McpServerName;
+                    Write(new { ts, type = "tool-start", toolCallId = toolStart.Data?.ToolCallId, toolName = server is not null ? $"{server}/{name}" : name, args = toolStart.Data?.Arguments?.ToString() });
+                    break;
+                case ToolExecutionCompleteEvent toolEnd:
+                    Write(new { ts, type = "tool-end", toolCallId = toolEnd.Data?.ToolCallId, success = toolEnd.Data?.Success, model = toolEnd.Data?.Model, result = toolEnd.Data?.Result?.ToString(), error = toolEnd.Data?.Error?.Message });
+                    break;
+                case SkillInvokedEvent skill:
+                    Write(new { ts, type = "skill-invoked", name = skill.Data?.Name, path = skill.Data?.Path });
+                    break;
+                case SessionErrorEvent err:
+                    Write(new { ts, type = "error", errorType = err.Data?.ErrorType, message = err.Data?.Message, statusCode = err.Data?.StatusCode });
+                    break;
+                case HookStartEvent hook:
+                    Write(new { ts, type = "hook-start", hookType = hook.Data?.HookType, hookInvocationId = hook.Data?.HookInvocationId });
+                    break;
+                case HookEndEvent hook:
+                    Write(new { ts, type = "hook-end", hookType = hook.Data?.HookType, hookInvocationId = hook.Data?.HookInvocationId, success = hook.Data?.Success });
+                    break;
+            }
+        });
+    }
 }
