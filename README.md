@@ -333,6 +333,12 @@ Data is stored under `~/.build-duty/<name>/`, where `<name>` comes from the
     └── triage/                    # Triage run JSON files
 ```
 
+## Dogfooding
+
+Team members are encouraged to use BuildDuty in their regular build-duty
+rotations and report what they find. See [docs/dogfooding.md](docs/dogfooding.md)
+for guidelines on getting started, filing feedback, and tracking adoption.
+
 ## Contributing
 
 1. Fork and clone the repository.
