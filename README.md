@@ -86,8 +86,10 @@ github:
       repositories:
         - name: my-repo
           issues:
-            labels: ["Build Break"]
-            state: open
+            - name: ".*"
+              labels:
+                - "Build Break"
+              state: open
 ```
 
 ### 5. Run the triage pipeline
@@ -183,11 +185,41 @@ github:
       repositories:
         - name: source-build
           issues:
-            labels: ["Build Break"]
-            state: open
+            - name: ".*"
+              labels:
+                - "Build Break"
+              state: open
+              authors:
+                - app/dotnet-maestro
+              excludeLabels:
+                - wontfix
+                - duplicate
           prs:
             - name: "dotnet-*"
+              authors:
+                - app/dotnet-maestro
+                - dotnet-bot
+              labels:
+                - bug
+              excludeLabels:
+                - backport
+                - "DO NOT MERGE"
 ```
+
+### GitHub Issue and PR fields
+
+Each entry under `issues` or `prs` is a pattern that matches issues or pull requests in a repository.
+All fields except `name` are optional; omitting them means no filtering on that
+dimension.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | regex | Title regex — only whose title matches are included |
+| `state` | `open` \| `closed` \| `all` | state filter (default: `open`) |
+| `authors` | list of strings | Allowlist of login names. Use `app/<name>` for GitHub Apps (resolves to `<name>[bot]`). If omitted, all authors are included |
+| `labels` | list of strings | Include only items that carry **all** of these labels (AND). If omitted, no label filtering is applied |
+| `excludeLabels` | list of strings | Exclude any item that carries **any** of these labels (OR). If omitted, no items are excluded by label |
+| `context` | string | Optional free-text context injected into the AI analysis prompt for signals from this pattern |
 
 ### Release branch auto-discovery
 
