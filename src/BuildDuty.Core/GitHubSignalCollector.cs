@@ -299,7 +299,7 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
         {
             if (author.StartsWith("app/", StringComparison.OrdinalIgnoreCase))
             {
-                var appName = author.Substring(4);
+                var appName = author[4..];
                 if (string.Equals(login, $"{appName}[bot]", StringComparison.OrdinalIgnoreCase))
                 {
                     return true;
