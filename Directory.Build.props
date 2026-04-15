@@ -6,4 +6,9 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <RootNamespace>BuildDuty.$(MSBuildProjectName.Replace("BuildDuty.", ""))</RootNamespace>
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.6" />
+    <PackageReference Include="NuGet.Packaging" Version="7.0.3" />
+  </ItemGroup>
 </Project>

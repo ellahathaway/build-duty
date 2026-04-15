@@ -28,28 +28,13 @@ public sealed class GitHubRepositoryConfig
     public string Name { get; set; } = string.Empty;
 
     [YamlMember(Alias = "issues")]
-    public GitHubIssueConfig? Issues { get; set; }
+    public List<GitHubItemConfig>? Issues { get; set; }
 
     [YamlMember(Alias = "prs")]
-    public List<GitHubPullRequestPattern>? PullRequests { get; set; }
+    public List<GitHubItemConfig>? PullRequests { get; set; }
 }
 
-public sealed class GitHubIssueConfig
-{
-    [YamlMember(Alias = "labels")]
-    public List<string> Labels { get; set; } = [];
-
-    [YamlMember(Alias = "state")]
-    public ItemStateFilter State { get; set; } = ItemStateFilter.Open;
-
-    [YamlMember(Alias = "context")]
-    public string? Context { get; set; }
-}
-
-/// <summary>
-/// A PR name pattern to match. Prefix with <c>*</c> for suffix matching.
-/// </summary>
-public sealed class GitHubPullRequestPattern
+public sealed class GitHubItemConfig
 {
     [YamlMember(Alias = "name")]
     public Regex Name { get; set; } = new Regex(".*");
@@ -59,4 +44,13 @@ public sealed class GitHubPullRequestPattern
 
     [YamlMember(Alias = "context")]
     public string? Context { get; set; }
+
+    [YamlMember(Alias = "authors")]
+    public List<string> Authors { get; set; } = [];
+
+    [YamlMember(Alias = "labels")]
+    public List<string> Labels { get; set; } = [];
+
+    [YamlMember(Alias = "excludeLabels")]
+    public List<string> ExcludeLabels { get; set; } = [];
 }
