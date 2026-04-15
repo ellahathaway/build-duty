@@ -24,40 +24,7 @@ jobs:
         run: dotnet format BuildDuty.slnx --verify-no-changes
 
   build-and-pack-linux:
-    name: Build and Pack (Linux)
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup .NET SDK
-        uses: actions/setup-dotnet@v4
-        with:
-          global-json-file: global.json
-
-      - name: Build and Pack
-        run: ./eng/build.sh --pack
-
-  build-and-pack-windows:
-    name: Build and Pack (Windows)
-    runs-on: windows-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup .NET SDK
-        uses: actions/setup-dotnet@v4
-        with:
-          global-json-file: global.json
-
-      - name: Build and Pack
-        shell: pwsh
-        run: ./eng/build.ps1 -Pack
-
-  install-test-linux:
-    name: Install Test (Linux)
+    name: Build, Pack, and Install (Linux)
     runs-on: ubuntu-latest
 
     steps:
@@ -73,10 +40,10 @@ jobs:
         run: ./eng/build.sh --install
 
       - name: Verify installation
-        run: buildduty --version
+        run: build-duty --version
 
-  install-test-windows:
-    name: Install Test (Windows)
+  build-and-pack-windows:
+    name: Build, Pack, and Install (Windows)
     runs-on: windows-latest
 
     steps:
@@ -94,4 +61,4 @@ jobs:
 
       - name: Verify installation
         shell: pwsh
-        run: buildduty --version
+        run: build-duty --version
