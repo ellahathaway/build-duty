@@ -187,7 +187,30 @@ github:
             state: open
           prs:
             - name: "dotnet-*"
+              authors:               # optional: only include PRs from these authors
+                - app/dotnet-maestro
+                - dotnet-bot
+              labels:                # optional: only include PRs with at least one of these labels
+                - bug
+              excludeLabels:         # optional: skip PRs with any of these labels
+                - backport
+                - "DO NOT MERGE"
 ```
+
+### GitHub PR pattern fields
+
+Each entry under `prs` is a pattern that matches pull requests in a repository.
+All fields except `name` are optional; omitting them means no filtering on that
+dimension.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | regex | Title regex — only PRs whose title matches are included |
+| `state` | `open` \| `closed` \| `all` | PR state filter (default: `open`) |
+| `authors` | list of strings | Allowlist of login names. Use `app/<name>` for GitHub Apps (resolves to `<name>[bot]`). If omitted, all authors are included |
+| `labels` | list of strings | Include only PRs that carry **at least one** of these labels. If omitted, labels are not required |
+| `excludeLabels` | list of strings | Exclude any PR that carries **any** of these labels. If omitted, no PRs are excluded by label |
+| `context` | string | Optional free-text context injected into the AI analysis prompt for signals from this pattern |
 
 ### Release branch auto-discovery
 
