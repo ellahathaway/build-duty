@@ -119,7 +119,7 @@ public class StorageProviderTests : IDisposable
     public async Task GitHubPullRequestSignal_TypedInfo_SurvivesRoundTrip()
     {
         var updatedAt = new DateTimeOffset(2026, 4, 1, 14, 0, 0, TimeSpan.Zero);
-        var info = new GitHubPullRequestInfo(99, "Round-trip test PR", "Closed", updatedAt, false, null, null, null);
+        var info = new GitHubPullRequestInfo(new GitHubIssueInfo(99, "Round-trip test PR", "Closed", updatedAt, null, null), false, null);
 
         var signal = new GitHubPullRequestSignal(info, new Uri("https://github.com/dotnet/sdk/pull/99")) { Id = "sig-rt-pr" };
         await _provider.SaveSignalAsync(signal);
@@ -128,10 +128,10 @@ public class StorageProviderTests : IDisposable
         var loadedPr = Assert.IsType<GitHubPullRequestSignal>(loaded);
 
         Assert.Equal(new Uri("https://github.com/dotnet/sdk/pull/99"), loadedPr.Url);
-        Assert.Equal("Closed", loadedPr.TypedInfo.State);
-        Assert.Equal(updatedAt, loadedPr.TypedInfo.UpdatedAt);
-        Assert.Equal(99, loadedPr.TypedInfo.Number);
-        Assert.Equal("Round-trip test PR", loadedPr.TypedInfo.Title);
+        Assert.Equal("Closed", loadedPr.TypedInfo.IssueInfo.State);
+        Assert.Equal(updatedAt, loadedPr.TypedInfo.IssueInfo.UpdatedAt);
+        Assert.Equal(99, loadedPr.TypedInfo.IssueInfo.Number);
+        Assert.Equal("Round-trip test PR", loadedPr.TypedInfo.IssueInfo.Title);
     }
 
     [Fact]

@@ -28,42 +28,13 @@ public sealed class GitHubRepositoryConfig
     public string Name { get; set; } = string.Empty;
 
     [YamlMember(Alias = "issues")]
-    public GitHubIssueConfig? Issues { get; set; }
+    public List<GitHubItemConfig>? Issues { get; set; }
 
     [YamlMember(Alias = "prs")]
-    public List<GitHubPullRequestPattern>? PullRequests { get; set; }
+    public List<GitHubItemConfig>? PullRequests { get; set; }
 }
 
-public sealed class GitHubIssueConfig
-{
-    [YamlMember(Alias = "labels")]
-    public List<string> Labels { get; set; } = [];
-
-    [YamlMember(Alias = "state")]
-    public ItemStateFilter State { get; set; } = ItemStateFilter.Open;
-
-    [YamlMember(Alias = "context")]
-    public string? Context { get; set; }
-
-    /// <summary>
-    /// Optional list of authors to include. Use <c>app/&lt;name&gt;</c> for GitHub Apps.
-    /// If empty, issues from all authors are included.
-    /// </summary>
-    [YamlMember(Alias = "authors")]
-    public List<string> Authors { get; set; } = [];
-
-    /// <summary>
-    /// Optional list of labels to exclude. Issues with any of these labels are filtered out.
-    /// If empty, no issues are excluded based on labels.
-    /// </summary>
-    [YamlMember(Alias = "excludeLabels")]
-    public List<string> ExcludeLabels { get; set; } = [];
-}
-
-/// <summary>
-/// A PR name pattern to match. Prefix with <c>*</c> for suffix matching.
-/// </summary>
-public sealed class GitHubPullRequestPattern
+public sealed class GitHubItemConfig
 {
     [YamlMember(Alias = "name")]
     public Regex Name { get; set; } = new Regex(".*");
@@ -74,24 +45,12 @@ public sealed class GitHubPullRequestPattern
     [YamlMember(Alias = "context")]
     public string? Context { get; set; }
 
-    /// <summary>
-    /// Optional list of authors to include. Use <c>app/&lt;name&gt;</c> for GitHub Apps.
-    /// If empty, PRs from all authors are included.
-    /// </summary>
     [YamlMember(Alias = "authors")]
     public List<string> Authors { get; set; } = [];
 
-    /// <summary>
-    /// Optional list of labels to include. Only PRs with at least one of these labels are included.
-    /// If empty, PRs with any labels (or none) are included.
-    /// </summary>
     [YamlMember(Alias = "labels")]
     public List<string> Labels { get; set; } = [];
 
-    /// <summary>
-    /// Optional list of labels to exclude. PRs with any of these labels are filtered out.
-    /// If empty, no PRs are excluded based on labels.
-    /// </summary>
     [YamlMember(Alias = "excludeLabels")]
     public List<string> ExcludeLabels { get; set; } = [];
 }

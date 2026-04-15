@@ -12,15 +12,7 @@ public record GitHubIssueInfo(
     string? Body,
     List<string>? Comments);
 
-public record GitHubPullRequestInfo(
-    int Number,
-    string Title,
-    string State,
-    DateTimeOffset? UpdatedAt,
-    bool Merged,
-    string? Body,
-    List<string>? Comments,
-    List<GitHubCheckInfo>? Checks);
+public record GitHubPullRequestInfo(GitHubIssueInfo IssueInfo, bool Merged, List<GitHubCheckInfo>? Checks);
 
 public record GitHubCheckInfo(
     string Name,

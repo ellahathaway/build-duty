@@ -86,8 +86,10 @@ github:
       repositories:
         - name: my-repo
           issues:
-            labels: ["Build Break"]
-            state: open
+            - name: ".*"
+              labels:
+                - "Build Break"
+              state: open
 ```
 
 ### 5. Run the triage pipeline
@@ -183,51 +185,40 @@ github:
       repositories:
         - name: source-build
           issues:
-            labels: ["Build Break"]
-            state: open
-            authors:               # optional: only include issues from these authors
-              - app/dotnet-maestro
-            excludeLabels:         # optional: skip issues with any of these labels
-              - wontfix
-              - duplicate
+            - name: ".*"
+              labels:
+                - "Build Break"
+              state: open
+              authors:
+                - app/dotnet-maestro
+              excludeLabels:
+                - wontfix
+                - duplicate
           prs:
             - name: "dotnet-*"
-              authors:               # optional: only include PRs from these authors
+              authors:
                 - app/dotnet-maestro
                 - dotnet-bot
-              labels:                # optional: only include PRs with at least one of these labels
+              labels:
                 - bug
-              excludeLabels:         # optional: skip PRs with any of these labels
+              excludeLabels:
                 - backport
                 - "DO NOT MERGE"
 ```
 
-### GitHub issue config fields
+### GitHub Issue and PR fields
 
-The `issues` block under a repository configures issue collection. All fields
-are optional except that at least one must be present for issues to be collected.
-
-| Field | Type | Description |
-|---|---|---|
-| `labels` | list of strings | Include only issues that carry **all** of these labels (GitHub API-side filtering). If omitted, issues with any labels (or none) are included |
-| `state` | `open` \| `closed` \| `all` | Issue state filter (default: `open`) |
-| `authors` | list of strings | Allowlist of login names. Use `app/<name>` for GitHub Apps (resolves to `<name>[bot]`). If omitted, all authors are included |
-| `excludeLabels` | list of strings | Exclude any issue that carries **any** of these labels (client-side). If omitted, no issues are excluded by label |
-| `context` | string | Optional free-text context injected into the AI analysis prompt for signals from this config |
-
-### GitHub PR pattern fields
-
-Each entry under `prs` is a pattern that matches pull requests in a repository.
+Each entry under `issues` or `prs` is a pattern that matches issues or pull requests in a repository.
 All fields except `name` are optional; omitting them means no filtering on that
 dimension.
 
 | Field | Type | Description |
 |---|---|---|
-| `name` | regex | Title regex — only PRs whose title matches are included |
-| `state` | `open` \| `closed` \| `all` | PR state filter (default: `open`) |
+| `name` | regex | Title regex — only whose title matches are included |
+| `state` | `open` \| `closed` \| `all` | state filter (default: `open`) |
 | `authors` | list of strings | Allowlist of login names. Use `app/<name>` for GitHub Apps (resolves to `<name>[bot]`). If omitted, all authors are included |
-| `labels` | list of strings | Include only PRs that carry **at least one** of these labels. If omitted, labels are not required |
-| `excludeLabels` | list of strings | Exclude any PR that carries **any** of these labels. If omitted, no PRs are excluded by label |
+| `labels` | list of strings | Include only items that carry **all** of these labels (AND). If omitted, no label filtering is applied |
+| `excludeLabels` | list of strings | Exclude any item that carries **any** of these labels (OR). If omitted, no items are excluded by label |
 | `context` | string | Optional free-text context injected into the AI analysis prompt for signals from this pattern |
 
 ### Release branch auto-discovery
