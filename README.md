@@ -185,6 +185,11 @@ github:
           issues:
             labels: ["Build Break"]
             state: open
+            authors:               # optional: only include issues from these authors
+              - app/dotnet-maestro
+            excludeLabels:         # optional: skip issues with any of these labels
+              - wontfix
+              - duplicate
           prs:
             - name: "dotnet-*"
               authors:               # optional: only include PRs from these authors
@@ -196,6 +201,19 @@ github:
                 - backport
                 - "DO NOT MERGE"
 ```
+
+### GitHub issue config fields
+
+The `issues` block under a repository configures issue collection. All fields
+are optional except that at least one must be present for issues to be collected.
+
+| Field | Type | Description |
+|---|---|---|
+| `labels` | list of strings | Include only issues that carry **all** of these labels (GitHub API-side filtering). If omitted, issues with any labels (or none) are included |
+| `state` | `open` \| `closed` \| `all` | Issue state filter (default: `open`) |
+| `authors` | list of strings | Allowlist of login names. Use `app/<name>` for GitHub Apps (resolves to `<name>[bot]`). If omitted, all authors are included |
+| `excludeLabels` | list of strings | Exclude any issue that carries **any** of these labels (client-side). If omitted, no issues are excluded by label |
+| `context` | string | Optional free-text context injected into the AI analysis prompt for signals from this config |
 
 ### GitHub PR pattern fields
 

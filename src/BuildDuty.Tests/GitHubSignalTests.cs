@@ -11,12 +11,12 @@ public class GitHubSignalTests
 {
     private static readonly User TestUser = new();
 
-    private static Issue CreateIssue(int number, ItemState state, string title = "Test issue", bool isPr = false, DateTimeOffset? updatedAt = null) => new(
+    private static Issue CreateIssue(int number, ItemState state, string title = "Test issue", bool isPr = false, DateTimeOffset? updatedAt = null, User? user = null, IReadOnlyList<Label>? labels = null) => new(
         url: $"https://api.github.com/repos/dotnet/runtime/issues/{number}",
         htmlUrl: $"https://github.com/dotnet/runtime/issues/{number}",
         commentsUrl: "", eventsUrl: "",
         number: number, state: state, title: title, body: "",
-        closedBy: null, user: TestUser, labels: [], assignee: null, assignees: [],
+        closedBy: null, user: user ?? TestUser, labels: labels ?? [], assignee: null, assignees: [],
         milestone: null, comments: 0,
         pullRequest: isPr ? new PullRequest() : null,
         closedAt: null, createdAt: DateTimeOffset.Now, updatedAt: updatedAt,
@@ -46,7 +46,7 @@ public class GitHubSignalTests
     private static GitHubPullRequestInfo ToPrInfo(PullRequest pr) => new(
         pr.Number, pr.Title, pr.State.Value.ToString(), pr.UpdatedAt, pr.Merged, null, null, null);
 
-    private static GitHubConfig CreateIssueConfig(string org = "dotnet", string repo = "runtime", List<string>? labels = null) => new()
+    private static GitHubConfig CreateIssueConfig(string org = "dotnet", string repo = "runtime", List<string>? labels = null, List<string>? authors = null, List<string>? excludeLabels = null) => new()
     {
         Organizations =
         [
@@ -62,6 +62,8 @@ public class GitHubSignalTests
                         {
                             Labels = labels ?? ["bug"],
                             State = ItemStateFilter.Open,
+                            Authors = authors ?? [],
+                            ExcludeLabels = excludeLabels ?? [],
                         }
                     }
                 ]
@@ -885,6 +887,120 @@ public class GitHubSignalTests
         var signal = Assert.Single(signals);
         var prSignal = Assert.IsType<GitHubPullRequestSignal>(signal);
         Assert.Equal(1, prSignal.TypedInfo.Number);
+    }
+
+    [Fact]
+    public void MatchesIssueConfig_NoFilters_AlwaysMatches()
+    {
+        var issue = CreateIssue(1, ItemState.Open);
+        var config = new GitHubIssueConfig();
+
+        Assert.True(GitHubSignalCollector.MatchesIssueConfig(issue, config));
+    }
+
+    [Fact]
+    public void MatchesIssueConfig_AuthorFilter_MatchingAuthor_Matches()
+    {
+        var user = CreateUser("dotnet-bot");
+        var issue = CreateIssue(1, ItemState.Open, user: user);
+        var config = new GitHubIssueConfig { Authors = ["dotnet-bot", "dependabot"] };
+
+        Assert.True(GitHubSignalCollector.MatchesIssueConfig(issue, config));
+    }
+
+    [Fact]
+    public void MatchesIssueConfig_AuthorFilter_NonMatchingAuthor_DoesNotMatch()
+    {
+        var user = CreateUser("some-other-user");
+        var issue = CreateIssue(1, ItemState.Open, user: user);
+        var config = new GitHubIssueConfig { Authors = ["dotnet-bot", "dependabot"] };
+
+        Assert.False(GitHubSignalCollector.MatchesIssueConfig(issue, config));
+    }
+
+    [Fact]
+    public void MatchesIssueConfig_AppAuthorFilter_MatchesBotLogin()
+    {
+        var user = CreateUser("dotnet-maestro[bot]");
+        var issue = CreateIssue(1, ItemState.Open, user: user);
+        var config = new GitHubIssueConfig { Authors = ["app/dotnet-maestro"] };
+
+        Assert.True(GitHubSignalCollector.MatchesIssueConfig(issue, config));
+    }
+
+    [Fact]
+    public void MatchesIssueConfig_ExcludeLabelFilter_ExcludedLabel_DoesNotMatch()
+    {
+        var issue = CreateIssue(1, ItemState.Open, labels: [CreateLabel("wontfix")]);
+        var config = new GitHubIssueConfig { ExcludeLabels = ["wontfix", "duplicate"] };
+
+        Assert.False(GitHubSignalCollector.MatchesIssueConfig(issue, config));
+    }
+
+    [Fact]
+    public void MatchesIssueConfig_ExcludeLabelFilter_NoExcludedLabel_Matches()
+    {
+        var issue = CreateIssue(1, ItemState.Open, labels: [CreateLabel("bug")]);
+        var config = new GitHubIssueConfig { ExcludeLabels = ["wontfix", "duplicate"] };
+
+        Assert.True(GitHubSignalCollector.MatchesIssueConfig(issue, config));
+    }
+
+    [Fact]
+    public async Task CollectAsync_Issues_FilteredByAuthor_OnlyMatchingAuthorCollected()
+    {
+        var authorUser = CreateUser("dotnet-bot");
+        var otherUser = CreateUser("other-user");
+
+        var matchIssue = CreateIssue(1, ItemState.Open, title: "Bug A", user: authorUser);
+        var noMatchIssue = CreateIssue(2, ItemState.Open, title: "Bug B", user: otherUser);
+
+        var client = Substitute.For<IGitHubClient>();
+        client.Issue.GetAllForRepository("dotnet", "runtime", Arg.Any<RepositoryIssueRequest>())
+            .Returns([matchIssue, noMatchIssue]);
+
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns(Array.Empty<WorkItem>());
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
+
+        var collector = new TestableGitHubCollector(CreateIssueConfig(authors: ["dotnet-bot"]), storageProvider, client);
+        await collector.CollectAsync();
+
+        var signals = storageProvider.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
+            .Select(call => (Signal)call.GetArguments()[0]!)
+            .ToList();
+
+        var signal = Assert.Single(signals);
+        var issueSignal = Assert.IsType<GitHubIssueSignal>(signal);
+        Assert.Equal(1, issueSignal.TypedInfo.Number);
+    }
+
+    [Fact]
+    public async Task CollectAsync_Issues_FilteredByExcludeLabel_ExcludedLabelNotCollected()
+    {
+        var matchIssue = CreateIssue(1, ItemState.Open, title: "Bug A", labels: [CreateLabel("bug")]);
+        var excludedIssue = CreateIssue(2, ItemState.Open, title: "Bug B", labels: [CreateLabel("wontfix")]);
+
+        var client = Substitute.For<IGitHubClient>();
+        client.Issue.GetAllForRepository("dotnet", "runtime", Arg.Any<RepositoryIssueRequest>())
+            .Returns([matchIssue, excludedIssue]);
+
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns(Array.Empty<WorkItem>());
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
+
+        var collector = new TestableGitHubCollector(CreateIssueConfig(excludeLabels: ["wontfix"]), storageProvider, client);
+        await collector.CollectAsync();
+
+        var signals = storageProvider.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
+            .Select(call => (Signal)call.GetArguments()[0]!)
+            .ToList();
+
+        var signal = Assert.Single(signals);
+        var issueSignal = Assert.IsType<GitHubIssueSignal>(signal);
+        Assert.Equal(1, issueSignal.TypedInfo.Number);
     }
 }
 

@@ -44,6 +44,20 @@ public sealed class GitHubIssueConfig
 
     [YamlMember(Alias = "context")]
     public string? Context { get; set; }
+
+    /// <summary>
+    /// Optional list of authors to include. Use <c>app/&lt;name&gt;</c> for GitHub Apps.
+    /// If empty, issues from all authors are included.
+    /// </summary>
+    [YamlMember(Alias = "authors")]
+    public List<string> Authors { get; set; } = [];
+
+    /// <summary>
+    /// Optional list of labels to exclude. Issues with any of these labels are filtered out.
+    /// If empty, no issues are excluded based on labels.
+    /// </summary>
+    [YamlMember(Alias = "excludeLabels")]
+    public List<string> ExcludeLabels { get; set; } = [];
 }
 
 /// <summary>

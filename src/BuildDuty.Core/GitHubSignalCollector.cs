@@ -91,6 +91,11 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
                     continue; // GitHub API returns PRs as issues too
                 }
 
+                if (!MatchesIssueConfig(issue, issueConfig))
+                {
+                    continue;
+                }
+
                 seenUrls.Add(new Uri(issue.HtmlUrl));
 
                 var existingSignal = existingSignals.FirstOrDefault(s => s.Url == new Uri(issue.HtmlUrl));
@@ -248,6 +253,21 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
         }
 
         return signals;
+    }
+
+    internal static bool MatchesIssueConfig(Issue issue, GitHubIssueConfig config)
+    {
+        if (config.Authors.Count > 0 && !MatchesAuthor(issue.User?.Login, config.Authors))
+        {
+            return false;
+        }
+
+        if (config.ExcludeLabels.Count > 0 && issue.Labels.Any(l => config.ExcludeLabels.Contains(l.Name, StringComparer.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        return true;
     }
 
     internal static bool MatchesAnyPattern(string title, IEnumerable<Regex> patterns)
