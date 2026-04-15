@@ -23,7 +23,7 @@ public class GitHubSignalTests
         id: number, nodeId: "", locked: false, repository: null,
         reactions: null, stateReason: null, activeLockReason: null);
 
-    private static PullRequest CreatePullRequest(int number, ItemState state, bool merged = false, string title = "Test PR", DateTimeOffset? updatedAt = null) => new(
+    private static PullRequest CreatePullRequest(int number, ItemState state, bool merged = false, string title = "Test PR", DateTimeOffset? updatedAt = null, User? user = null, IReadOnlyList<Label>? labels = null) => new(
         id: number, nodeId: "",
         url: $"https://api.github.com/repos/dotnet/sdk/pulls/{number}",
         htmlUrl: $"https://github.com/dotnet/sdk/pull/{number}",
@@ -31,13 +31,13 @@ public class GitHubSignalTests
         number: number, state: state, title: title, body: "",
         createdAt: DateTimeOffset.Now, updatedAt: updatedAt ?? DateTimeOffset.Now,
         closedAt: null, mergedAt: merged ? DateTimeOffset.Now : null,
-        head: new GitReference("", "", "", "", "abc123", TestUser, null), @base: null, user: TestUser,
+        head: new GitReference("", "", "", "", "abc123", TestUser, null), @base: null, user: user ?? TestUser,
         assignee: null, assignees: [], draft: false,
         mergeable: null, mergeableState: null, mergedBy: null,
         mergeCommitSha: "", comments: 0, commits: 0,
         additions: 0, deletions: 0, changedFiles: 0,
         milestone: null, locked: false, maintainerCanModify: null,
-        requestedReviewers: [], requestedTeams: [], labels: [],
+        requestedReviewers: [], requestedTeams: [], labels: labels ?? [],
         activeLockReason: null);
 
     private static GitHubIssueInfo ToIssueInfo(Issue issue) => new(
@@ -667,6 +667,224 @@ public class GitHubSignalTests
         var prSignal = Assert.IsType<GitHubPullRequestSignal>(signal);
         Assert.Equal(existingSignal.Id, prSignal.Id);
         Assert.True(prSignal.TypedInfo.Merged);
+    }
+
+    private static User CreateUser(string login)
+    {
+        var user = new User();
+        var setter = (typeof(Account).GetProperty("Login") ?? typeof(User).GetProperty("Login"))
+            ?.GetSetMethod(nonPublic: true);
+        setter!.Invoke(user, [login]);
+        return user;
+    }
+
+    private static Label CreateLabel(string name) => new(0, "", name, "", "", false, "");
+
+    [Fact]
+    public void MatchesPullRequestPattern_NoFilters_MatchesOnTitle()
+    {
+        var pr = CreatePullRequest(1, ItemState.Open, title: "Update dependencies");
+        var pattern = new GitHubPullRequestPattern { Name = new Regex("^Update") };
+
+        Assert.True(GitHubSignalCollector.MatchesPullRequestPattern(pr, pattern));
+        Assert.False(GitHubSignalCollector.MatchesPullRequestPattern(
+            CreatePullRequest(2, ItemState.Open, title: "Fix bug"), pattern));
+    }
+
+    [Fact]
+    public void MatchesPullRequestPattern_AuthorFilter_MatchingAuthor_Matches()
+    {
+        var user = CreateUser("dotnet-bot");
+        var pr = CreatePullRequest(1, ItemState.Open, title: "Update deps", user: user);
+        var pattern = new GitHubPullRequestPattern
+        {
+            Name = new Regex(".*"),
+            Authors = ["dotnet-bot", "dependabot"]
+        };
+
+        Assert.True(GitHubSignalCollector.MatchesPullRequestPattern(pr, pattern));
+    }
+
+    [Fact]
+    public void MatchesPullRequestPattern_AuthorFilter_NonMatchingAuthor_DoesNotMatch()
+    {
+        var user = CreateUser("some-other-user");
+        var pr = CreatePullRequest(1, ItemState.Open, title: "Update deps", user: user);
+        var pattern = new GitHubPullRequestPattern
+        {
+            Name = new Regex(".*"),
+            Authors = ["dotnet-bot", "dependabot"]
+        };
+
+        Assert.False(GitHubSignalCollector.MatchesPullRequestPattern(pr, pattern));
+    }
+
+    [Fact]
+    public void MatchesPullRequestPattern_AppAuthorFilter_MatchesBotLogin()
+    {
+        var user = CreateUser("dotnet-maestro[bot]");
+        var pr = CreatePullRequest(1, ItemState.Open, title: "Update deps", user: user);
+        var pattern = new GitHubPullRequestPattern
+        {
+            Name = new Regex(".*"),
+            Authors = ["app/dotnet-maestro"]
+        };
+
+        Assert.True(GitHubSignalCollector.MatchesPullRequestPattern(pr, pattern));
+    }
+
+    [Fact]
+    public void MatchesPullRequestPattern_LabelFilter_MatchingLabel_Matches()
+    {
+        var pr = CreatePullRequest(1, ItemState.Open, title: "Fix crash", labels: [CreateLabel("bug"), CreateLabel("p1")]);
+        var pattern = new GitHubPullRequestPattern
+        {
+            Name = new Regex(".*"),
+            Labels = ["bug"]
+        };
+
+        Assert.True(GitHubSignalCollector.MatchesPullRequestPattern(pr, pattern));
+    }
+
+    [Fact]
+    public void MatchesPullRequestPattern_LabelFilter_NoMatchingLabel_DoesNotMatch()
+    {
+        var pr = CreatePullRequest(1, ItemState.Open, title: "Fix crash", labels: [CreateLabel("enhancement")]);
+        var pattern = new GitHubPullRequestPattern
+        {
+            Name = new Regex(".*"),
+            Labels = ["bug"]
+        };
+
+        Assert.False(GitHubSignalCollector.MatchesPullRequestPattern(pr, pattern));
+    }
+
+    [Fact]
+    public void MatchesPullRequestPattern_ExcludeLabelFilter_ExcludedLabel_DoesNotMatch()
+    {
+        var pr = CreatePullRequest(1, ItemState.Open, title: "Update deps", labels: [CreateLabel("backport")]);
+        var pattern = new GitHubPullRequestPattern
+        {
+            Name = new Regex(".*"),
+            ExcludeLabels = ["backport", "DO NOT MERGE"]
+        };
+
+        Assert.False(GitHubSignalCollector.MatchesPullRequestPattern(pr, pattern));
+    }
+
+    [Fact]
+    public void MatchesPullRequestPattern_ExcludeLabelFilter_NoExcludedLabel_Matches()
+    {
+        var pr = CreatePullRequest(1, ItemState.Open, title: "Update deps", labels: [CreateLabel("bug")]);
+        var pattern = new GitHubPullRequestPattern
+        {
+            Name = new Regex(".*"),
+            ExcludeLabels = ["backport", "DO NOT MERGE"]
+        };
+
+        Assert.True(GitHubSignalCollector.MatchesPullRequestPattern(pr, pattern));
+    }
+
+    [Fact]
+    public async Task CollectAsync_PullRequests_FilteredByAuthor_OnlyMatchingAuthorCollected()
+    {
+        var authorUser = CreateUser("dotnet-bot");
+        var otherUser = CreateUser("other-user");
+
+        var matchPr = CreatePullRequest(1, ItemState.Open, title: "Update deps", user: authorUser);
+        var noMatchPr = CreatePullRequest(2, ItemState.Open, title: "Update deps", user: otherUser);
+
+        var patterns = new List<GitHubPullRequestPattern>
+        {
+            new() { Name = new Regex(".*"), State = ItemStateFilter.Open, Authors = ["dotnet-bot"] }
+        };
+
+        var client = Substitute.For<IGitHubClient>();
+        client.PullRequest.GetAllForRepository("dotnet", "sdk", Arg.Any<PullRequestRequest>())
+            .Returns([matchPr, noMatchPr]);
+        SetupPullRequestMocks(client);
+
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns(Array.Empty<WorkItem>());
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
+
+        var collector = new TestableGitHubCollector(CreatePrConfig(patterns: patterns), storageProvider, client);
+        await collector.CollectAsync();
+
+        var signals = storageProvider.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
+            .Select(call => (Signal)call.GetArguments()[0]!)
+            .ToList();
+
+        var signal = Assert.Single(signals);
+        var prSignal = Assert.IsType<GitHubPullRequestSignal>(signal);
+        Assert.Equal(1, prSignal.TypedInfo.Number);
+    }
+
+    [Fact]
+    public async Task CollectAsync_PullRequests_FilteredByLabel_OnlyMatchingLabelCollected()
+    {
+        var matchPr = CreatePullRequest(1, ItemState.Open, title: "Fix crash", labels: [CreateLabel("bug")]);
+        var noMatchPr = CreatePullRequest(2, ItemState.Open, title: "Add feature", labels: [CreateLabel("enhancement")]);
+
+        var patterns = new List<GitHubPullRequestPattern>
+        {
+            new() { Name = new Regex(".*"), State = ItemStateFilter.Open, Labels = ["bug"] }
+        };
+
+        var client = Substitute.For<IGitHubClient>();
+        client.PullRequest.GetAllForRepository("dotnet", "sdk", Arg.Any<PullRequestRequest>())
+            .Returns([matchPr, noMatchPr]);
+        SetupPullRequestMocks(client);
+
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns(Array.Empty<WorkItem>());
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
+
+        var collector = new TestableGitHubCollector(CreatePrConfig(patterns: patterns), storageProvider, client);
+        await collector.CollectAsync();
+
+        var signals = storageProvider.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
+            .Select(call => (Signal)call.GetArguments()[0]!)
+            .ToList();
+
+        var signal = Assert.Single(signals);
+        var prSignal = Assert.IsType<GitHubPullRequestSignal>(signal);
+        Assert.Equal(1, prSignal.TypedInfo.Number);
+    }
+
+    [Fact]
+    public async Task CollectAsync_PullRequests_FilteredByExcludeLabel_ExcludedLabelNotCollected()
+    {
+        var matchPr = CreatePullRequest(1, ItemState.Open, title: "Update deps", labels: [CreateLabel("bug")]);
+        var excludedPr = CreatePullRequest(2, ItemState.Open, title: "Update deps", labels: [CreateLabel("backport")]);
+
+        var patterns = new List<GitHubPullRequestPattern>
+        {
+            new() { Name = new Regex(".*"), State = ItemStateFilter.Open, ExcludeLabels = ["backport"] }
+        };
+
+        var client = Substitute.For<IGitHubClient>();
+        client.PullRequest.GetAllForRepository("dotnet", "sdk", Arg.Any<PullRequestRequest>())
+            .Returns([matchPr, excludedPr]);
+        SetupPullRequestMocks(client);
+
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns(Array.Empty<WorkItem>());
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
+
+        var collector = new TestableGitHubCollector(CreatePrConfig(patterns: patterns), storageProvider, client);
+        await collector.CollectAsync();
+
+        var signals = storageProvider.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
+            .Select(call => (Signal)call.GetArguments()[0]!)
+            .ToList();
+
+        var signal = Assert.Single(signals);
+        var prSignal = Assert.IsType<GitHubPullRequestSignal>(signal);
+        Assert.Equal(1, prSignal.TypedInfo.Number);
     }
 }
 

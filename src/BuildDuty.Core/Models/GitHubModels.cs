@@ -59,4 +59,25 @@ public sealed class GitHubPullRequestPattern
 
     [YamlMember(Alias = "context")]
     public string? Context { get; set; }
+
+    /// <summary>
+    /// Optional list of authors to include. Use <c>app/&lt;name&gt;</c> for GitHub Apps.
+    /// If empty, PRs from all authors are included.
+    /// </summary>
+    [YamlMember(Alias = "authors")]
+    public List<string> Authors { get; set; } = [];
+
+    /// <summary>
+    /// Optional list of labels to include. Only PRs with at least one of these labels are included.
+    /// If empty, PRs with any labels (or none) are included.
+    /// </summary>
+    [YamlMember(Alias = "labels")]
+    public List<string> Labels { get; set; } = [];
+
+    /// <summary>
+    /// Optional list of labels to exclude. PRs with any of these labels are filtered out.
+    /// If empty, no PRs are excluded based on labels.
+    /// </summary>
+    [YamlMember(Alias = "excludeLabels")]
+    public List<string> ExcludeLabels { get; set; } = [];
 }

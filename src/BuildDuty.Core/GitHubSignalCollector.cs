@@ -177,7 +177,7 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
                     context.Organization, context.RepositoryName,
                     new PullRequestRequest { State = patternGroup.Key });
 
-                var matchingPulls = pulls.Where(pr => MatchesAnyPattern(pr.Title, patternGroup.Select(p => p.Name)));
+                var matchingPulls = pulls.Where(pr => patternGroup.Any(pattern => MatchesPullRequestPattern(pr, pattern)));
 
                 var patternContext = patternGroup.FirstOrDefault()?.Context;
 
@@ -255,6 +255,57 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
         foreach (var pattern in patterns)
         {
             if (pattern.IsMatch(title))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    internal static bool MatchesPullRequestPattern(PullRequest pr, GitHubPullRequestPattern pattern)
+    {
+        if (!pattern.Name.IsMatch(pr.Title))
+        {
+            return false;
+        }
+
+        if (pattern.Authors.Count > 0 && !MatchesAuthor(pr.User?.Login, pattern.Authors))
+        {
+            return false;
+        }
+
+        if (pattern.Labels.Count > 0 && !pr.Labels.Any(l => pattern.Labels.Contains(l.Name, StringComparer.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        if (pattern.ExcludeLabels.Count > 0 && pr.Labels.Any(l => pattern.ExcludeLabels.Contains(l.Name, StringComparer.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool MatchesAuthor(string? login, List<string> authors)
+    {
+        if (login is null)
+        {
+            return false;
+        }
+
+        foreach (var author in authors)
+        {
+            if (author.StartsWith("app/", StringComparison.OrdinalIgnoreCase))
+            {
+                var appName = author.Substring(4);
+                if (string.Equals(login, $"{appName}[bot]", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            else if (string.Equals(login, author, StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }
