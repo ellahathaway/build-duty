@@ -24,7 +24,7 @@ Try to run the build-duty tool in line with your usual build-duty workflow caden
 |---|---|
 | Bug or unexpected behaviour | Open a [GitHub issue](https://github.com/ellahathaway/build-duty/issues/new) with the label **bug** and include the command you ran, any error output, and the relevant section of your `.build-duty.yml` (redact secrets). |
 | Usability friction or missing feature | Open an issue with the label **enhancement** and describe the workflow you were trying to accomplish. |
-| Quick question or discussion | Start a [GitHub Discussion](https://github.com/ellahathaway/build-duty/discussions) so others can contribute and the answer is discoverable later. |
+| Quick question or discussion | Open a [GitHub issue](https://github.com/ellahathaway/build-duty/issues/new) with the label **question** so others can contribute and the answer is discoverable later. |
 
 When filing an issue, please include:
 
