@@ -49,7 +49,7 @@ internal sealed class ReviewCommand : BaseCommand<BaseSettings>
                 new MultiSelectionPrompt<string>()
                     .Title($"[bold]Review[/] -- {unresolvedItems.Count} unresolved work item(s). Select work items (space = toggle, enter = confirm):")
                     .NotRequired()
-                    .HighlightStyle(new Style(Color.Cyan1))
+                    .HighlightStyle(new Style(Color.Teal))
                     .PageSize(20)
                     .AddChoices(itemChoices));
 
@@ -98,7 +98,7 @@ internal sealed class ReviewCommand : BaseCommand<BaseSettings>
         var action = AnsiConsole.Prompt(
             new SelectionPrompt<string>()
                 .Title("[bold]Action:[/]")
-                .HighlightStyle(new Style(Color.Cyan1))
+                .HighlightStyle(new Style(Color.Teal))
                 .AddChoices(actionChoices));
 
         if (action == backLabel)
