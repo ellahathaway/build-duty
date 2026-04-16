@@ -25,6 +25,7 @@ public abstract class Signal
     {
         Id = existing.Id;
         Analyses = existing.Analyses;
+        Context = this.Context ?? existing.Context;
     }
 }
 
