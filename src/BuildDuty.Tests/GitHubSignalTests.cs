@@ -221,16 +221,14 @@ public class GitHubSignalTests
     }
 
     [Fact]
-    public async Task CollectAsync_IssuesThatArePullRequests_CollectedAsPrSignals()
+    public async Task CollectAsync_IssueConfig_OnlyCollectsActualIssues()
     {
         var realIssue = CreateIssue(1, ItemState.Open, "Real issue", labels: [CreateLabel("bug")]);
         var prAsIssue = CreateIssue(2, ItemState.Open, "Actually a PR", isPr: true, labels: [CreateLabel("bug")]);
-        var fullPr = CreatePullRequest(2, ItemState.Open, title: "Actually a PR");
 
         var client = Substitute.For<IGitHubClient>();
         client.Issue.GetAllForRepository("dotnet", "runtime", Arg.Any<RepositoryIssueRequest>())
             .Returns([realIssue, prAsIssue]);
-        client.PullRequest.Get("dotnet", "runtime", 2).Returns(fullPr);
         SetupPullRequestMocks(client);
 
         var storageProvider = Substitute.For<IStorageProvider>();
@@ -245,9 +243,8 @@ public class GitHubSignalTests
             .Select(call => (Signal)call.GetArguments()[0]!)
             .ToList();
 
-        Assert.Equal(2, signals.Count);
-        Assert.Contains(signals, s => s is GitHubIssueSignal);
-        Assert.Contains(signals, s => s is GitHubPullRequestSignal);
+        Assert.Single(signals);
+        Assert.All(signals, s => Assert.IsType<GitHubIssueSignal>(s));
     }
 
     [Fact]
@@ -913,6 +910,70 @@ public class GitHubSignalTests
     }
 
     [Fact]
+    public async Task CollectAsync_MixedConfig_PrConfigDoesNotDoubleCollectIssues()
+    {
+        // Regression test: a broad PR config (Name = ".*") should NOT collect regular issues,
+        // even though the GitHub Issues API returns both issues and PRs in the same response.
+        var realIssue = CreateIssue(1, ItemState.Open, "Bug report", labels: [CreateLabel("bug")]);
+        var prAsIssue = CreateIssue(10, ItemState.Open, title: "Bug fix PR", isPr: true);
+        var fullPr = CreatePullRequest(10, ItemState.Open, title: "Bug fix PR");
+
+        var config = new GitHubConfig
+        {
+            Organizations =
+            [
+                new GitHubOrganizationConfig
+                {
+                    Organization = "dotnet",
+                    Repositories =
+                    [
+                        new GitHubRepositoryConfig
+                        {
+                            Name = "runtime",
+                            Issues = [new GitHubItemConfig { Labels = ["bug"], State = ItemStateFilter.Open }],
+                            // Broad PR config that matches everything — previously would also collect the issue
+                            PullRequests = [new GitHubItemConfig { Name = new Regex(".*"), State = ItemStateFilter.Open }]
+                        }
+                    ]
+                }
+            ]
+        };
+
+        var client = Substitute.For<IGitHubClient>();
+        // The GitHub Issues API returns BOTH the real issue and the PR
+        client.Issue.GetAllForRepository("dotnet", "runtime", Arg.Any<RepositoryIssueRequest>())
+            .Returns([realIssue, prAsIssue]);
+        client.PullRequest.Get("dotnet", "runtime", 10).Returns(fullPr);
+        SetupPullRequestMocks(client);
+
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns(Array.Empty<WorkItem>());
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
+
+        var collector = new TestableGitHubCollector(config, storageProvider, client);
+        await collector.CollectAsync();
+
+        var signals = storageProvider.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
+            .Select(call => (Signal)call.GetArguments()[0]!)
+            .ToList();
+
+        // Should be exactly 2 signals: one issue, one PR — NOT 3 (which would happen if
+        // the PR config also collected the regular issue as a GitHubPullRequestSignal)
+        Assert.Equal(2, signals.Count);
+        Assert.Single(signals.OfType<GitHubIssueSignal>());
+        Assert.Single(signals.OfType<GitHubPullRequestSignal>());
+
+        var issueSignal = signals.OfType<GitHubIssueSignal>().Single();
+        Assert.Equal(1, issueSignal.TypedInfo.Number);
+        Assert.Equal("Bug report", issueSignal.TypedInfo.Title);
+
+        var prSignal = signals.OfType<GitHubPullRequestSignal>().Single();
+        Assert.Equal(10, prSignal.TypedInfo.IssueInfo.Number);
+        Assert.Equal("Bug fix PR", prSignal.TypedInfo.IssueInfo.Title);
+    }
+
+    [Fact]
     public void MatchesItemConfig_NoFilters_AlwaysMatches()
     {
         var issue = CreateIssue(1, ItemState.Open, labels: [CreateLabel("bug"), CreateLabel("priority-1")]);
@@ -924,17 +985,15 @@ public class GitHubSignalTests
     }
 
     [Fact]
-    public async Task CollectAsync_NoLabelFilter_CollectsIssuesAndPrsWithAnyLabels()
+    public async Task CollectAsync_NoLabelFilter_CollectsOnlyIssuesFromIssueConfig()
     {
         var issue1 = CreateIssue(1, ItemState.Open, "Bug with labels", labels: [CreateLabel("bug"), CreateLabel("priority-1")]);
         var issue2 = CreateIssue(2, ItemState.Open, "Feature request", labels: [CreateLabel("enhancement"), CreateLabel("area-build")]);
         var prAsIssue = CreateIssue(3, ItemState.Open, "Update deps", isPr: true, labels: [CreateLabel("dependencies"), CreateLabel("security")]);
-        var fullPr = CreatePullRequest(3, ItemState.Open, title: "Update deps", labels: [CreateLabel("dependencies"), CreateLabel("security")]);
 
         var client = Substitute.For<IGitHubClient>();
         client.Issue.GetAllForRepository("dotnet", "runtime", Arg.Any<RepositoryIssueRequest>())
             .Returns([issue1, issue2, prAsIssue]);
-        client.PullRequest.Get("dotnet", "runtime", 3).Returns(fullPr);
         SetupPullRequestMocks(client);
 
         var storageProvider = Substitute.For<IStorageProvider>();
@@ -949,9 +1008,8 @@ public class GitHubSignalTests
             .Select(call => (Signal)call.GetArguments()[0]!)
             .ToList();
 
-        Assert.Equal(3, signals.Count);
-        Assert.Equal(2, signals.Count(s => s is GitHubIssueSignal));
-        Assert.Equal(1, signals.Count(s => s is GitHubPullRequestSignal));
+        Assert.Equal(2, signals.Count);
+        Assert.All(signals, s => Assert.IsType<GitHubIssueSignal>(s));
     }
 
     [Fact]
