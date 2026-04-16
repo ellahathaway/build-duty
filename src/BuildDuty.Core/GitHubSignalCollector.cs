@@ -103,7 +103,7 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
                 var existingSignal = existingSignals.FirstOrDefault(s => s.Url == itemUrl);
                 if (existingSignal != null)
                 {
-                    var updatedAt = existingSignal is GitHubIssueSignal issueSignal ? issueSignal.TypedInfo.UpdatedAt : 
+                    var updatedAt = existingSignal is GitHubIssueSignal issueSignal ? issueSignal.TypedInfo.UpdatedAt :
                         existingSignal is GitHubPullRequestSignal prSignal ? prSignal.TypedInfo.IssueInfo.UpdatedAt :
                         throw new InvalidOperationException("Unexpected signal type");
 
@@ -143,7 +143,7 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
         {
             try
             {
-                var issueInfo = existing is GitHubIssueSignal issueSignal ? issueSignal.TypedInfo : 
+                var issueInfo = existing is GitHubIssueSignal issueSignal ? issueSignal.TypedInfo :
                     existing is GitHubPullRequestSignal prSignal ? prSignal.TypedInfo.IssueInfo :
                     throw new InvalidOperationException("Unexpected signal type");
 
