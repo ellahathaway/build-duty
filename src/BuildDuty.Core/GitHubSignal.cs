@@ -4,7 +4,10 @@ using System.Text.Json.Serialization;
 
 namespace BuildDuty.Core;
 
-public record GitHubIssueInfo(
+/// <summary>
+/// Shared info for both GitHub issues and pull requests.
+/// </summary>
+public record GitHubItemInfo(
     int Number,
     string Title,
     string State,
@@ -12,7 +15,20 @@ public record GitHubIssueInfo(
     string? Body,
     List<string>? Comments);
 
-public record GitHubPullRequestInfo(GitHubIssueInfo IssueInfo, bool Merged, List<GitHubCheckInfo>? Checks);
+/// <summary>
+/// A cross-referenced or connected PR event from the issue timeline.
+/// </summary>
+public record GitHubTimelineEvent(
+    string Event,
+    string? SourceUrl,
+    string? SourceState);
+
+/// <summary>
+/// Issue-specific info including timeline events for cross-referenced PRs and issues.
+/// </summary>
+public record GitHubIssueInfo(GitHubItemInfo ItemInfo, List<GitHubTimelineEvent>? TimelineEvents = null);
+
+public record GitHubPullRequestInfo(GitHubItemInfo ItemInfo, bool Merged, List<GitHubCheckInfo>? Checks);
 
 public record GitHubCheckInfo(
     string Name,

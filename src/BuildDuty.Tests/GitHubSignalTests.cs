@@ -41,10 +41,10 @@ public class GitHubSignalTests
         activeLockReason: null);
 
     private static GitHubIssueInfo ToIssueInfo(Issue issue) => new(
-        issue.Number, issue.Title, issue.State.Value.ToString(), issue.UpdatedAt, null, null);
+        new GitHubItemInfo(issue.Number, issue.Title, issue.State.Value.ToString(), issue.UpdatedAt, null, null));
 
     private static GitHubPullRequestInfo ToPrInfo(PullRequest pr) => new(
-        new GitHubIssueInfo(pr.Number, pr.Title, pr.State.Value.ToString(), pr.UpdatedAt, null, null), pr.Merged, null);
+        new GitHubItemInfo(pr.Number, pr.Title, pr.State.Value.ToString(), pr.UpdatedAt, null, null), pr.Merged, null);
 
     private static GitHubConfig CreateIssueConfig(string org = "dotnet", string repo = "runtime", List<string>? labels = null, List<string>? authors = null, List<string>? excludeLabels = null) => new()
     {
@@ -217,7 +217,7 @@ public class GitHubSignalTests
 
         var signal = Assert.Single(signals);
         var issueSignal = Assert.IsType<GitHubIssueSignal>(signal);
-        Assert.Equal("Closed", issueSignal.TypedInfo.State);
+        Assert.Equal("Closed", issueSignal.TypedInfo.ItemInfo.State);
     }
 
     [Fact]
@@ -279,7 +279,7 @@ public class GitHubSignalTests
 
         var signal = Assert.Single(signals);
         var prSignal = Assert.IsType<GitHubPullRequestSignal>(signal);
-        Assert.Equal("Update dependencies", prSignal.TypedInfo.IssueInfo.Title);
+        Assert.Equal("Update dependencies", prSignal.TypedInfo.ItemInfo.Title);
     }
 
     [Fact]
@@ -403,7 +403,7 @@ public class GitHubSignalTests
         // Issue was updated (e.g. new comment) even though state is still Open — should be collected
         var signal = Assert.Single(signals);
         var issueSignal = Assert.IsType<GitHubIssueSignal>(signal);
-        Assert.Equal(updatedTime, issueSignal.TypedInfo.UpdatedAt);
+        Assert.Equal(updatedTime, issueSignal.TypedInfo.ItemInfo.UpdatedAt);
     }
 
     [Fact]
@@ -440,7 +440,7 @@ public class GitHubSignalTests
         // PR was updated (e.g. new review comment) even though state is still Open — should be collected
         var signal = Assert.Single(signals);
         var prSignal = Assert.IsType<GitHubPullRequestSignal>(signal);
-        Assert.Equal(updatedTime, prSignal.TypedInfo.IssueInfo.UpdatedAt);
+        Assert.Equal(updatedTime, prSignal.TypedInfo.ItemInfo.UpdatedAt);
     }
 
     [Fact]
@@ -492,7 +492,7 @@ public class GitHubSignalTests
         var signal = Assert.Single(signals);
         var issueSignal = Assert.IsType<GitHubIssueSignal>(signal);
         Assert.Equal(existingSignal.Id, issueSignal.Id);
-        Assert.Equal("Closed", issueSignal.TypedInfo.State);
+        Assert.Equal("Closed", issueSignal.TypedInfo.ItemInfo.State);
     }
 
     [Fact]
@@ -645,7 +645,7 @@ public class GitHubSignalTests
         var signal = Assert.Single(signals);
         var issueSignal = Assert.IsType<GitHubIssueSignal>(signal);
         Assert.Equal(existingSignal.Id, issueSignal.Id);
-        Assert.Equal("Closed", issueSignal.TypedInfo.State);
+        Assert.Equal("Closed", issueSignal.TypedInfo.ItemInfo.State);
     }
 
     [Fact]
@@ -695,6 +695,33 @@ public class GitHubSignalTests
     }
 
     private static Label CreateLabel(string name) => new(0, "", name, "", "", "", false);
+
+    private static TimelineEventInfo CreateCrossRefEvent(Issue sourceIssue)
+    {
+        // Extract org/repo from the issue's API URL (e.g., https://api.github.com/repos/dotnet/sdk/issues/50)
+        var uri = new Uri(sourceIssue.Url);
+        var segments = uri.AbsolutePath.Split('/');
+        // /repos/{org}/{repo}/issues/{number} → segments: "", "repos", org, repo, "issues", number
+        var sourceUrl = $"https://api.github.com/repos/{segments[2]}/{segments[3]}";
+
+        return new(id: 0, nodeId: "", url: "", actor: null!, commitId: "",
+            @event: EventInfoState.Crossreferenced, createdAt: DateTimeOffset.Now,
+            label: null!, assignee: null!, milestone: null!,
+            source: new SourceInfo(null!, 0, sourceIssue, sourceUrl),
+            rename: null!, projectCard: null!);
+    }
+
+    private static void SetupTimelineMock(IGitHubClient client, string org, string repo, long issueNumber, params TimelineEventInfo[] events)
+    {
+        client.Issue.Timeline.GetAllForIssue(org, repo, issueNumber)
+            .Returns(events.ToList());
+    }
+
+    private static void SetupEmptyTimeline(IGitHubClient client)
+    {
+        client.Issue.Timeline.GetAllForIssue(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<long>())
+            .Returns(Array.Empty<TimelineEventInfo>());
+    }
 
     [Fact]
     public void MatchesItemConfig_NoFilters_MatchesOnTitle()
@@ -836,7 +863,7 @@ public class GitHubSignalTests
 
         var signal = Assert.Single(signals);
         var prSignal = Assert.IsType<GitHubPullRequestSignal>(signal);
-        Assert.Equal(1, prSignal.TypedInfo.IssueInfo.Number);
+        Assert.Equal(1, prSignal.TypedInfo.ItemInfo.Number);
     }
 
     [Fact]
@@ -871,7 +898,7 @@ public class GitHubSignalTests
 
         var signal = Assert.Single(signals);
         var prSignal = Assert.IsType<GitHubPullRequestSignal>(signal);
-        Assert.Equal(1, prSignal.TypedInfo.IssueInfo.Number);
+        Assert.Equal(1, prSignal.TypedInfo.ItemInfo.Number);
     }
 
     [Fact]
@@ -906,7 +933,7 @@ public class GitHubSignalTests
 
         var signal = Assert.Single(signals);
         var prSignal = Assert.IsType<GitHubPullRequestSignal>(signal);
-        Assert.Equal(1, prSignal.TypedInfo.IssueInfo.Number);
+        Assert.Equal(1, prSignal.TypedInfo.ItemInfo.Number);
     }
 
     [Fact]
@@ -965,12 +992,12 @@ public class GitHubSignalTests
         Assert.Single(signals.OfType<GitHubPullRequestSignal>());
 
         var issueSignal = signals.OfType<GitHubIssueSignal>().Single();
-        Assert.Equal(1, issueSignal.TypedInfo.Number);
-        Assert.Equal("Bug report", issueSignal.TypedInfo.Title);
+        Assert.Equal(1, issueSignal.TypedInfo.ItemInfo.Number);
+        Assert.Equal("Bug report", issueSignal.TypedInfo.ItemInfo.Title);
 
         var prSignal = signals.OfType<GitHubPullRequestSignal>().Single();
-        Assert.Equal(10, prSignal.TypedInfo.IssueInfo.Number);
-        Assert.Equal("Bug fix PR", prSignal.TypedInfo.IssueInfo.Title);
+        Assert.Equal(10, prSignal.TypedInfo.ItemInfo.Number);
+        Assert.Equal("Bug fix PR", prSignal.TypedInfo.ItemInfo.Title);
     }
 
     [Fact]
@@ -1087,7 +1114,7 @@ public class GitHubSignalTests
 
         var signal = Assert.Single(signals);
         var issueSignal = Assert.IsType<GitHubIssueSignal>(signal);
-        Assert.Equal(1, issueSignal.TypedInfo.Number);
+        Assert.Equal(1, issueSignal.TypedInfo.ItemInfo.Number);
     }
 
     [Fact]
@@ -1114,7 +1141,108 @@ public class GitHubSignalTests
 
         var signal = Assert.Single(signals);
         var issueSignal = Assert.IsType<GitHubIssueSignal>(signal);
-        Assert.Equal(1, issueSignal.TypedInfo.Number);
+        Assert.Equal(1, issueSignal.TypedInfo.ItemInfo.Number);
     }
-}
 
+    #region Timeline event tests
+
+    [Fact]
+    public async Task CollectAsync_IssueWithCrossReferencedPr_IncludesTimelineEvents()
+    {
+        var issue = CreateIssue(1, ItemState.Open, "Bug A", labels: [CreateLabel("bug")]);
+        var linkedPrIssue = CreateIssue(50, ItemState.Open, "Fix bug A", isPr: true, org: "dotnet", repo: "sdk");
+
+        var client = Substitute.For<IGitHubClient>();
+        client.Issue.GetAllForRepository("dotnet", "runtime", Arg.Any<RepositoryIssueRequest>())
+            .Returns([issue]);
+        client.Issue.Comment.GetAllForIssue("dotnet", "runtime", 1)
+            .Returns(Array.Empty<IssueComment>());
+        SetupEmptyTimeline(client);
+        SetupTimelineMock(client, "dotnet", "runtime", 1, CreateCrossRefEvent(linkedPrIssue));
+
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns(Array.Empty<WorkItem>());
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
+
+        var collector = new TestableGitHubCollector(CreateIssueConfig(), storageProvider, client);
+        await collector.CollectAsync();
+
+        var signals = storageProvider.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
+            .Select(call => (Signal)call.GetArguments()[0]!)
+            .ToList();
+
+        var signal = Assert.Single(signals);
+        var issueSignal = Assert.IsType<GitHubIssueSignal>(signal);
+        Assert.NotNull(issueSignal.TypedInfo.TimelineEvents);
+        var evt = Assert.Single(issueSignal.TypedInfo.TimelineEvents);
+        Assert.Equal("cross-referenced", evt.Event);
+        Assert.Equal("https://github.com/dotnet/sdk/pull/50", evt.SourceUrl);
+        Assert.Equal("open", evt.SourceState);
+    }
+
+    [Fact]
+    public async Task CollectAsync_IssueWithCrossReferencedIssue_ExcludesNonPrEvents()
+    {
+        var issue = CreateIssue(1, ItemState.Open, "Bug A", labels: [CreateLabel("bug")]);
+        var crossRefIssue = CreateIssue(2, ItemState.Open, "Related", isPr: false, org: "dotnet", repo: "runtime");
+
+        var client = Substitute.For<IGitHubClient>();
+        client.Issue.GetAllForRepository("dotnet", "runtime", Arg.Any<RepositoryIssueRequest>())
+            .Returns([issue]);
+        client.Issue.Comment.GetAllForIssue("dotnet", "runtime", 1)
+            .Returns(Array.Empty<IssueComment>());
+        SetupEmptyTimeline(client);
+        SetupTimelineMock(client, "dotnet", "runtime", 1, CreateCrossRefEvent(crossRefIssue));
+
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns(Array.Empty<WorkItem>());
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
+
+        var collector = new TestableGitHubCollector(CreateIssueConfig(), storageProvider, client);
+        await collector.CollectAsync();
+
+        var signals = storageProvider.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
+            .Select(call => (Signal)call.GetArguments()[0]!)
+            .ToList();
+
+        var signal = Assert.Single(signals);
+        var issueSignal = Assert.IsType<GitHubIssueSignal>(signal);
+        // Cross-referenced issues (not PRs) should be excluded
+        Assert.NotNull(issueSignal.TypedInfo.TimelineEvents);
+        Assert.Empty(issueSignal.TypedInfo.TimelineEvents);
+    }
+
+    [Fact]
+    public async Task CollectAsync_IssueWithNoTimelineEvents_HasEmptyList()
+    {
+        var issue = CreateIssue(1, ItemState.Open, "Bug A", labels: [CreateLabel("bug")]);
+
+        var client = Substitute.For<IGitHubClient>();
+        client.Issue.GetAllForRepository("dotnet", "runtime", Arg.Any<RepositoryIssueRequest>())
+            .Returns([issue]);
+        client.Issue.Comment.GetAllForIssue("dotnet", "runtime", 1)
+            .Returns(Array.Empty<IssueComment>());
+        SetupEmptyTimeline(client);
+
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns(Array.Empty<WorkItem>());
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
+
+        var collector = new TestableGitHubCollector(CreateIssueConfig(), storageProvider, client);
+        await collector.CollectAsync();
+
+        var signals = storageProvider.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
+            .Select(call => (Signal)call.GetArguments()[0]!)
+            .ToList();
+
+        var signal = Assert.Single(signals);
+        var issueSignal = Assert.IsType<GitHubIssueSignal>(signal);
+        Assert.NotNull(issueSignal.TypedInfo.TimelineEvents);
+        Assert.Empty(issueSignal.TypedInfo.TimelineEvents);
+    }
+
+    #endregion
+}
