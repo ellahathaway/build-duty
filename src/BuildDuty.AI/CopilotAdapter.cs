@@ -102,8 +102,41 @@ public class CopilotAdapter
     public virtual async Task<CopilotSession> CreateSessionAsync(
         bool streaming = false,
         string? agent = null,
-        bool throwAfterRetries = false)
+        bool throwAfterRetries = false,
+        SessionEndHandler? onSessionEnd = null)
     {
+        var hooks = new SessionHooks
+        {
+            OnErrorOccurred = async (input, _) =>
+            {
+                if (input.Recoverable == true)
+                {
+                    return new ErrorOccurredHookOutput
+                    {
+                        ErrorHandling = "retry",
+                        RetryCount = 2,
+                    };
+                }
+
+                if (throwAfterRetries)
+                {
+                    throw new InvalidOperationException(
+                        $"Copilot session error [{input.ErrorContext}]: {input.Error}");
+                }
+
+                return new ErrorOccurredHookOutput
+                {
+                    ErrorHandling = "skip",
+                    UserNotification = $"An error occurred, skipping: {input.Error}",
+                };
+            }
+        };
+
+        if (onSessionEnd is not null)
+        {
+            hooks.OnSessionEnd = onSessionEnd;
+        }
+
         var config = new SessionConfig
         {
             OnPermissionRequest = PermissionHandler.ApproveAll,
@@ -116,32 +149,7 @@ public class CopilotAdapter
             Tools = _tools,
             CustomAgents = CustomAgentConfigs,
             Agent = agent,
-            Hooks = new SessionHooks
-            {
-                OnErrorOccurred = async (input, _) =>
-                {
-                    if (input.Recoverable == true)
-                    {
-                        return new ErrorOccurredHookOutput
-                        {
-                            ErrorHandling = "retry",
-                            RetryCount = 2,
-                        };
-                    }
-
-                    if (throwAfterRetries)
-                    {
-                        throw new InvalidOperationException(
-                            $"Copilot session error [{input.ErrorContext}]: {input.Error}");
-                    }
-
-                    return new ErrorOccurredHookOutput
-                    {
-                        ErrorHandling = "skip",
-                        UserNotification = $"An error occurred, skipping: {input.Error}",
-                    };
-                }
-            },
+            Hooks = hooks,
             McpServers = await BuildGitHubMcpServerAsync(),
         };
 
@@ -194,6 +202,33 @@ public class CopilotAdapter
     public virtual async Task DeleteSessionAsync(CopilotSession session)
     {
         await _client.DeleteSessionAsync(session.SessionId);
+    }
+
+    /// <summary>
+    /// Create a session, run a prompt, then clean up. Wraps the common
+    /// create → run → delete pattern into a single call.
+    /// </summary>
+    public virtual async Task RunSessionAsync(
+        string prompt,
+        string? agent = null,
+        bool streaming = false,
+        bool throwAfterRetries = false,
+        SessionEndHandler? onSessionEnd = null)
+    {
+        await using var session = await CreateSessionAsync(
+            streaming: streaming,
+            agent: agent,
+            throwAfterRetries: throwAfterRetries,
+            onSessionEnd: onSessionEnd);
+
+        try
+        {
+            await RunPromptAsync(session, prompt);
+        }
+        finally
+        {
+            await DeleteSessionAsync(session);
+        }
     }
 
     /// <summary>
