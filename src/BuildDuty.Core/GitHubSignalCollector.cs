@@ -103,8 +103,8 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
                 var existingSignal = existingSignals.FirstOrDefault(s => s.Url == itemUrl);
                 if (existingSignal != null)
                 {
-                    var updatedAt = existingSignal is GitHubIssueSignal issueSignal ? issueSignal.TypedInfo.UpdatedAt :
-                        existingSignal is GitHubPullRequestSignal prSignal ? prSignal.TypedInfo.IssueInfo.UpdatedAt :
+                    var updatedAt = existingSignal is GitHubIssueSignal issueSignal ? issueSignal.TypedInfo.ItemInfo.UpdatedAt :
+                        existingSignal is GitHubPullRequestSignal prSignal ? prSignal.TypedInfo.ItemInfo.UpdatedAt :
                         throw new InvalidOperationException("Unexpected signal type");
 
                     if (updatedAt == item.UpdatedAt)
@@ -143,8 +143,8 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
         {
             try
             {
-                var issueInfo = existing is GitHubIssueSignal issueSignal ? issueSignal.TypedInfo :
-                    existing is GitHubPullRequestSignal prSignal ? prSignal.TypedInfo.IssueInfo :
+                var issueInfo = existing is GitHubIssueSignal issueSignal ? issueSignal.TypedInfo.ItemInfo :
+                    existing is GitHubPullRequestSignal prSignal ? prSignal.TypedInfo.ItemInfo :
                     throw new InvalidOperationException("Unexpected signal type");
 
                 var item = await context.Client.Issue.Get(
@@ -188,16 +188,16 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
     {
         if (existing is GitHubPullRequestSignal prSignal)
         {
-            var prIssueInfo = new GitHubIssueInfo(
-                prSignal.TypedInfo.IssueInfo.Number,
-                prSignal.TypedInfo.IssueInfo.Title,
+            var prItemInfo = new GitHubItemInfo(
+                prSignal.TypedInfo.ItemInfo.Number,
+                prSignal.TypedInfo.ItemInfo.Title,
                 "Inaccessible - likely deleted or access lost",
                 DateTimeOffset.UtcNow,
                 null,
                 null);
 
             return new GitHubPullRequestSignal(
-                new GitHubPullRequestInfo(prIssueInfo, prSignal.TypedInfo.Merged, null), existing.Url);
+                new GitHubPullRequestInfo(prItemInfo, prSignal.TypedInfo.Merged, null), existing.Url);
         }
 
         if (existing is not GitHubIssueSignal)
@@ -208,12 +208,13 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
         var existingIssueInfo = ((GitHubIssueSignal)existing).TypedInfo;
 
         var issueInfo = new GitHubIssueInfo(
-            existingIssueInfo.Number,
-            existingIssueInfo.Title,
-            "Inaccessible - likely deleted or access lost",
-            DateTimeOffset.UtcNow,
-            null,
-            null);
+            new GitHubItemInfo(
+                existingIssueInfo.ItemInfo.Number,
+                existingIssueInfo.ItemInfo.Title,
+                "Inaccessible - likely deleted or access lost",
+                DateTimeOffset.UtcNow,
+                null,
+                null));
 
         return new GitHubIssueSignal(issueInfo, existing.Url);
     }
@@ -287,38 +288,34 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
         var commentsQuery = await context.Client.Issue.Comment.GetAllForIssue(context.Organization, context.RepositoryName, issue.Number);
         var comments = commentsQuery.Select(c => c.Body).ToList();
 
-        List<GitHubLinkedPullRequest>? linkedPrs = null;
+        List<GitHubTimelineEvent>? timelineEvents = null;
         try
         {
             var timeline = await context.Client.Issue.Timeline.GetAllForIssue(
                 context.Organization, context.RepositoryName, issue.Number);
 
-            linkedPrs = timeline
-                .Where(e => e.Event == EventInfoState.Crossreferenced || e.Event == EventInfoState.Connected)
-                .Select(e => e.Source?.Issue)
-                .Where(i => i?.PullRequest is not null && i.HtmlUrl is not null)
-                .DistinctBy(i => i!.HtmlUrl)
-                .Select(i => new GitHubLinkedPullRequest(
-                    i!.HtmlUrl,
-                    i.Number,
-                    ParseRepositoryFromUrl(i.HtmlUrl),
-                    i.State.Value.ToString(),
-                    i.PullRequest.Merged))
+            timelineEvents = timeline
+                .Where(e => (e.Event == EventInfoState.Crossreferenced || e.Event == EventInfoState.Connected)
+                    && e.Source?.Issue?.PullRequest != null)
+                .Select(e => new GitHubTimelineEvent(
+                    Event: e.Event.StringValue,
+                    SourceUrl: e.Source?.Issue?.HtmlUrl?.ToString(),
+                    SourceState: e.Source?.Issue?.State.StringValue))
                 .ToList();
         }
         catch
         {
-            // Timeline may be unavailable — linked PRs will be null
+            // Timeline may be unavailable — events will be null
         }
 
-        return new GitHubIssueInfo(issue.Number, issue.Title, issue.State.Value.ToString(), issue.UpdatedAt, issue.Body, comments, linkedPrs);
+        return new GitHubIssueInfo(new GitHubItemInfo(issue.Number, issue.Title, issue.State.Value.ToString(), issue.UpdatedAt, issue.Body, comments), timelineEvents);
     }
 
-    internal static string ParseRepositoryFromUrl(string htmlUrl)
+    private static async Task<GitHubItemInfo> CreateGitHubItemInfoAsync(RepositoryContext context, Issue issue)
     {
-        // Expected: https://github.com/{org}/{repo}/pull/{number}
-        var segments = new Uri(htmlUrl).AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        return segments.Length >= 2 ? $"{segments[0]}/{segments[1]}" : htmlUrl;
+        var commentsQuery = await context.Client.Issue.Comment.GetAllForIssue(context.Organization, context.RepositoryName, issue.Number);
+        var comments = commentsQuery.Select(c => c.Body).ToList();
+        return new GitHubItemInfo(issue.Number, issue.Title, issue.State.Value.ToString(), issue.UpdatedAt, issue.Body, comments);
     }
 
     private static async Task<GitHubPullRequestInfo> CreateGitHubPullRequestInfoAsync(RepositoryContext context, Issue issue)
@@ -331,8 +328,9 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
             .Select(cr => new GitHubCheckInfo(cr.Name, cr.Status.Value.ToString(), cr.Conclusion?.Value.ToString()))
             .ToList();
 
-        var issueInfo = await CreateGitHubIssueInfoAsync(context, issue);
+        var itemInfo = await CreateGitHubItemInfoAsync(context, issue);
 
-        return new GitHubPullRequestInfo(issueInfo, pr.Merged, checks);
+        return new GitHubPullRequestInfo(itemInfo, pr.Merged, checks);
     }
+
 }

@@ -80,7 +80,7 @@ public class StorageProviderTests : IDisposable
     [Fact]
     public async Task SaveAndGetSignal_RoundTripsInfoJson()
     {
-        var info = new GitHubIssueInfo(1, "Test issue", "Open", null, null, null);
+        var info = new GitHubIssueInfo(new GitHubItemInfo(1, "Test issue", "Open", null, null, null));
         var signal = new GitHubIssueSignal(info, new Uri("https://github.com/dotnet/runtime/issues/1"))
         {
             Id = "sig-1",
@@ -92,15 +92,15 @@ public class StorageProviderTests : IDisposable
         var issueSignal = Assert.IsType<GitHubIssueSignal>(loaded);
 
         Assert.Equal(new Uri("https://github.com/dotnet/runtime/issues/1"), issueSignal.Url);
-        Assert.Equal("Open", issueSignal.TypedInfo.State);
-        Assert.Equal("Test issue", issueSignal.TypedInfo.Title);
+        Assert.Equal("Open", issueSignal.TypedInfo.ItemInfo.State);
+        Assert.Equal("Test issue", issueSignal.TypedInfo.ItemInfo.Title);
     }
 
     [Fact]
     public async Task GitHubIssueSignal_TypedInfo_SurvivesRoundTrip()
     {
         var updatedAt = new DateTimeOffset(2026, 4, 1, 12, 0, 0, TimeSpan.Zero);
-        var info = new GitHubIssueInfo(42, "Round-trip test issue", "Open", updatedAt, null, null);
+        var info = new GitHubIssueInfo(new GitHubItemInfo(42, "Round-trip test issue", "Open", updatedAt, null, null));
 
         var signal = new GitHubIssueSignal(info, new Uri("https://github.com/dotnet/runtime/issues/42")) { Id = "sig-rt-issue" };
         await _provider.SaveSignalAsync(signal);
@@ -109,17 +109,17 @@ public class StorageProviderTests : IDisposable
         var loadedIssue = Assert.IsType<GitHubIssueSignal>(loaded);
 
         Assert.Equal(new Uri("https://github.com/dotnet/runtime/issues/42"), loadedIssue.Url);
-        Assert.Equal("Open", loadedIssue.TypedInfo.State);
-        Assert.Equal(updatedAt, loadedIssue.TypedInfo.UpdatedAt);
-        Assert.Equal(42, loadedIssue.TypedInfo.Number);
-        Assert.Equal("Round-trip test issue", loadedIssue.TypedInfo.Title);
+        Assert.Equal("Open", loadedIssue.TypedInfo.ItemInfo.State);
+        Assert.Equal(updatedAt, loadedIssue.TypedInfo.ItemInfo.UpdatedAt);
+        Assert.Equal(42, loadedIssue.TypedInfo.ItemInfo.Number);
+        Assert.Equal("Round-trip test issue", loadedIssue.TypedInfo.ItemInfo.Title);
     }
 
     [Fact]
     public async Task GitHubPullRequestSignal_TypedInfo_SurvivesRoundTrip()
     {
         var updatedAt = new DateTimeOffset(2026, 4, 1, 14, 0, 0, TimeSpan.Zero);
-        var info = new GitHubPullRequestInfo(new GitHubIssueInfo(99, "Round-trip test PR", "Closed", updatedAt, null, null), false, null);
+        var info = new GitHubPullRequestInfo(new GitHubItemInfo(99, "Round-trip test PR", "Closed", updatedAt, null, null), false, null);
 
         var signal = new GitHubPullRequestSignal(info, new Uri("https://github.com/dotnet/sdk/pull/99")) { Id = "sig-rt-pr" };
         await _provider.SaveSignalAsync(signal);
@@ -128,16 +128,16 @@ public class StorageProviderTests : IDisposable
         var loadedPr = Assert.IsType<GitHubPullRequestSignal>(loaded);
 
         Assert.Equal(new Uri("https://github.com/dotnet/sdk/pull/99"), loadedPr.Url);
-        Assert.Equal("Closed", loadedPr.TypedInfo.IssueInfo.State);
-        Assert.Equal(updatedAt, loadedPr.TypedInfo.IssueInfo.UpdatedAt);
-        Assert.Equal(99, loadedPr.TypedInfo.IssueInfo.Number);
-        Assert.Equal("Round-trip test PR", loadedPr.TypedInfo.IssueInfo.Title);
+        Assert.Equal("Closed", loadedPr.TypedInfo.ItemInfo.State);
+        Assert.Equal(updatedAt, loadedPr.TypedInfo.ItemInfo.UpdatedAt);
+        Assert.Equal(99, loadedPr.TypedInfo.ItemInfo.Number);
+        Assert.Equal("Round-trip test PR", loadedPr.TypedInfo.ItemInfo.Title);
     }
 
     [Fact]
     public async Task Signal_Analyses_PersistAndRoundTrip()
     {
-        var info = new GitHubIssueInfo(1, "Test", "Open", null, null, null);
+        var info = new GitHubIssueInfo(new GitHubItemInfo(1, "Test", "Open", null, null, null));
         var signal = new GitHubIssueSignal(info, new Uri("https://github.com/dotnet/runtime/issues/1")) { Id = "sig-analyses" };
 
         var analysisData = System.Text.Json.JsonSerializer.SerializeToElement(new { issueNumber = 1, errorMessages = new[] { "error CS0246" } });
@@ -154,7 +154,7 @@ public class StorageProviderTests : IDisposable
     [Fact]
     public async Task Signal_Analyses_PreservedAcrossSaves()
     {
-        var info = new GitHubIssueInfo(1, "Test", "Open", null, null, null);
+        var info = new GitHubIssueInfo(new GitHubItemInfo(1, "Test", "Open", null, null, null));
         var signal = new GitHubIssueSignal(info, new Uri("https://github.com/dotnet/runtime/issues/1")) { Id = "sig-preserve" };
 
         var data1 = System.Text.Json.JsonSerializer.SerializeToElement(new { error = "first" });
@@ -163,7 +163,7 @@ public class StorageProviderTests : IDisposable
         await _provider.SaveSignalAsync(signal);
 
         // Simulate collector creating a new signal object with same ID (preserving analyses)
-        var updatedInfo = new GitHubIssueInfo(1, "Test", "Closed", null, null, null);
+        var updatedInfo = new GitHubIssueInfo(new GitHubItemInfo(1, "Test", "Closed", null, null, null));
         var updatedSignal = new GitHubIssueSignal(updatedInfo, new Uri("https://github.com/dotnet/runtime/issues/1"));
         updatedSignal.PreserveFrom(signal);
 
@@ -181,7 +181,7 @@ public class StorageProviderTests : IDisposable
     [Fact]
     public async Task Signal_Analysis_IdIsStableAfterRoundTrip()
     {
-        var info = new GitHubIssueInfo(1, "Test", "Open", null, null, null);
+        var info = new GitHubIssueInfo(new GitHubItemInfo(1, "Test", "Open", null, null, null));
         var signal = new GitHubIssueSignal(info, new Uri("https://github.com/dotnet/runtime/issues/1")) { Id = "sig-stable-id" };
 
         var data = System.Text.Json.JsonSerializer.SerializeToElement(new { err = "test" });
@@ -217,3 +217,4 @@ public class StorageProviderTests : IDisposable
         Assert.Equal(["analysis_ghi"], second.AnalysisIds);
     }
 }
+
