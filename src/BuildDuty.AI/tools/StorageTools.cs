@@ -355,8 +355,8 @@ public class StorageTools
                     [Description("The ID of the triage run")] string triageId,
                     [Description("The ID of the signal")] string signalId,
                     [Description("The ID of the analysis to update")] string analysisId,
-                    [Description("The updated data related to the signal analysis, in JSON format")] JsonElement analysisData,
-                    [Description("The updated string analysis")] string analysis) =>
+                    [Description("The updated data related to the signal analysis, in JSON format. Omit to keep existing data.")] JsonElement? analysisData = null,
+                    [Description("The updated string analysis. Omit to keep existing text.")] string? analysis = null) =>
                 {
                     var signal = await _storageProvider.GetSignalAsync(signalId);
                     var existing = signal.Analyses.FirstOrDefault(a => a.Id == analysisId);
@@ -366,14 +366,22 @@ public class StorageTools
                         return "cannot update - analysis not found on signal";
                     }
 
+                    var updatedSignalAnalysis = new SignalAnalysis(
+                        existing.Id,
+                        analysisData ?? existing.RelevantInfo,
+                        analysis ?? existing.Analysis,
+                        AnalysisStatus.Updated,
+                        existing.ResolutionCriteria,
+                        triageId);
+
                     var index = signal.Analyses.IndexOf(existing);
-                    signal.Analyses[index] = new SignalAnalysis(existing.Id, analysisData, analysis, AnalysisStatus.Updated, existing.ResolutionCriteria, triageId);
+                    signal.Analyses[index] = updatedSignalAnalysis;
                     await _storageProvider.SaveSignalAsync(signal);
                     await UpdateLinkedWorkItemTriageIdAsync(signalId, analysisId, triageId);
                     return "updated";
                 },
                 "update_signal_analysis",
-                "Update an existing analysis on a signal (replaces analysisData and analysis text, preserving the analysis ID). Sets status to Updated."),
+                "Update an existing analysis on a signal. Omit analysisData and analysis to keep existing content while stamping the current triage run. Sets status to Updated."),
         ];
     }
 

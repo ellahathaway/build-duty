@@ -2,8 +2,11 @@ using System.ComponentModel;
 using BuildDuty.AI;
 using BuildDuty.Core;
 using BuildDuty.Core.Models;
+using GitHub.Copilot.SDK;
 using Spectre.Console;
 using Spectre.Console.Cli;
+
+using CommandContext = Spectre.Console.Cli.CommandContext;
 
 namespace BuildDuty.Cli.Commands;
 
@@ -162,20 +165,7 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
                     await semaphore.WaitAsync();
                     try
                     {
-                        string analyzePrompt = $"Triage run: `{triageRun.Id}`. Analyze the following signal: `{signalId}`.";
-                        await using var session = await _copilotAdapter.CreateSessionAsync(
-                            streaming: false,
-                            agent: CopilotAdapter.Agents.AnalyzeSignalTriage,
-                            throwAfterRetries: true);
-
-                        try
-                        {
-                            await _copilotAdapter.RunPromptAsync(session, analyzePrompt);
-                        }
-                        finally
-                        {
-                            await _copilotAdapter.DeleteSessionAsync(session);
-                        }
+                        await AnalyzeSingleSignalAsync(triageRun.Id, signalId);
                     }
                     finally
                     {
@@ -204,6 +194,37 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
         AnsiConsole.MarkupLine($"[green]\u2713[/] Resolved {resolved} analyses");
     }
 
+    /// <summary>
+    /// Analyze a single signal with a post-session validation hook that
+    /// records whether the agent produced at least one analysis.
+    /// </summary>
+    private async Task AnalyzeSingleSignalAsync(
+        string triageRunId, string signalId)
+    {
+        string analyzePrompt = $"Triage run: `{triageRunId}`. Analyze the following signal: `{signalId}`.";
+        await _copilotAdapter.RunSessionAsync(
+            analyzePrompt,
+            agent: CopilotAdapter.Agents.AnalyzeSignalTriage,
+            throwAfterRetries: true,
+            onSessionEnd: async (_, _) => await ValidateAnalyzedSignalAsync());
+
+        async Task<SessionEndHookOutput> ValidateAnalyzedSignalAsync()
+        {
+            var signal = await _storageProvider.GetSignalAsync(signalId);
+            if (signal.Analyses.Count == 0)
+            {
+                Failures.Add(signalId, $"Signal {signalId} has no analyses after agent completed.");
+            }
+
+            if (!signal.Analyses.Any(a => a.LastTriageId == triageRunId))
+            {
+                Failures.Add(signalId, $"Signal {signalId} has no analyses for triage run {triageRunId} after agent completed.");
+            }
+
+            return new SessionEndHookOutput();
+        }
+    }
+
     private async Task UpdateWorkItemsAsync(TriageRun triageRun)
     {
         if (triageRun.Status != TriageRunStatus.AnalyzingSignals && triageRun.Status != TriageRunStatus.UpdatingWorkItems)
@@ -226,18 +247,10 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
                 var progressTask = ctx.AddTask("[bold]Updating work items[/]", autoStart: true, maxValue: 1);
 
                 string prompt = $"/update-workitems Triage ID: {triageRun.Id}.";
-                await using var session = await _copilotAdapter.CreateSessionAsync(
+                await _copilotAdapter.RunSessionAsync(
+                    prompt,
                     agent: CopilotAdapter.Agents.WorkItemTriage,
                     throwAfterRetries: true);
-
-                try
-                {
-                    await _copilotAdapter.RunPromptAsync(session, prompt);
-                }
-                finally
-                {
-                    await _copilotAdapter.DeleteSessionAsync(session);
-                }
 
                 progressTask.Increment(1);
                 progressTask.StopTask();
@@ -274,18 +287,11 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
                 var progressTask = ctx.AddTask("[bold]Creating work items[/]", autoStart: true, maxValue: 1);
 
                 string prompt = $"/create-workitems Triage ID: {triageRun.Id}.";
-                await using var session = await _copilotAdapter.CreateSessionAsync(
+                await _copilotAdapter.RunSessionAsync(
+                    prompt,
                     agent: CopilotAdapter.Agents.WorkItemTriage,
-                    throwAfterRetries: true);
-
-                try
-                {
-                    await _copilotAdapter.RunPromptAsync(session, prompt);
-                }
-                finally
-                {
-                    await _copilotAdapter.DeleteSessionAsync(session);
-                }
+                    throwAfterRetries: true,
+                    onSessionEnd: async (_, _) => await ValidateCreatedWorkItemsAsync());
 
                 progressTask.Increment(1);
                 progressTask.StopTask();
@@ -296,6 +302,42 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
         int workItemsCreated = allWorkItems.Count(wi => !existingIds.Contains(wi.Id));
 
         AnsiConsole.MarkupLine($"[green]\u2713[/] Created {workItemsCreated} new work items.");
+
+        async Task<SessionEndHookOutput> ValidateCreatedWorkItemsAsync()
+        {
+            var signals = await Task.WhenAll(
+                triageRun.SignalIds.Select(id => _storageProvider.GetSignalAsync(id)));
+            var workItems = (await _storageProvider.GetWorkItemsAsync()).ToList();
+
+            var linkedAnalysisIds = workItems
+                .SelectMany(wi => wi.LinkedAnalyses.SelectMany(la => la.AnalysisIds))
+                .ToHashSet();
+            var signalIdsInWorkItems = workItems
+                .SelectMany(wi => wi.LinkedAnalyses.Select(la => la.SignalId))
+                .ToHashSet();
+
+            foreach (var signal in signals)
+            {
+                foreach (var analysis in signal.Analyses)
+                {
+                    if (analysis.Status != AnalysisStatus.Resolved
+                        && analysis.LastTriageId == triageRun.Id
+                        && !linkedAnalysisIds.Contains(analysis.Id))
+                    {
+                        Failures.Add(analysis.Id,
+                            $"Analysis {analysis.Id} on signal {signal.Id} is not linked to any work item.");
+                    }
+                }
+
+                if (signal.Analyses.Any(a => a.Status != AnalysisStatus.Resolved)
+                    && !signalIdsInWorkItems.Contains(signal.Id))
+                {
+                    Failures.Add(signal.Id,
+                        $"Signal {signal.Id} has active analyses but is not represented in any work item.");
+                }
+            }
+            return new SessionEndHookOutput();
+        }
     }
 
     private static async Task RunWithProgressAsync(Func<ProgressContext, Task> action)

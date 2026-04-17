@@ -15,7 +15,7 @@ From `signal.Info`, determine the PR's situation:
 - **CI / checks failing** — required checks failing.
 - **Blocked on review** — approvals missing or changes requested.
 - **Merge blocked by policy** — conflicts, failing checks, or missing sign-offs.
-- **Ready / passing** — checks passing, reviews sufficient.
+- **Ready / passing** — checks passing, reviews sufficient. Create an analysis noting the PR is healthy (e.g., `"PR is passing all checks and ready to merge."`). This ensures the signal is recorded as analyzed even when no action is needed.
 - **Merged / closed** — PR landed or was closed. Resolve any existing active analyses on the signal.
 
 If the info is insufficient, use the GitHub MCP to pull additional information.
