@@ -27,6 +27,7 @@ Use the matching reference based on signal type:
      - It has been **superseded** by a new, more accurate analysis (e.g., initial analysis said "NuGet timeout" but deeper investigation reveals "DNS infrastructure outage causing NuGet timeout" — the old analysis isn't wrong but is now covered by the new one).
      Call `resolve_signal_analysis` with the existing analysis ID and the resolution criteria that were met. Count as `analysesResolved`.
 6. For each new analysis that has **no matching existing analysis** (including resolved ones — a new active failure distinct from a previously resolved one gets a new analysis), call `create_signal_analysis`. Count as `analysesCreated`.
+7. **Every signal must have at least one analysis after this workflow completes.** If your analysis produced no new causes and no existing analyses remain (active or resolved), create an analysis describing the signal's current healthy state via `create_signal_analysis` (e.g., "PR is passing all checks and ready to merge", "Pipeline succeeded with no active failures").
 
 ## Output
 
