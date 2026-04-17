@@ -286,7 +286,39 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
     {
         var commentsQuery = await context.Client.Issue.Comment.GetAllForIssue(context.Organization, context.RepositoryName, issue.Number);
         var comments = commentsQuery.Select(c => c.Body).ToList();
-        return new GitHubIssueInfo(issue.Number, issue.Title, issue.State.Value.ToString(), issue.UpdatedAt, issue.Body, comments);
+
+        List<GitHubLinkedPullRequest>? linkedPrs = null;
+        try
+        {
+            var timeline = await context.Client.Issue.Timeline.GetAllForIssue(
+                context.Organization, context.RepositoryName, issue.Number);
+
+            linkedPrs = timeline
+                .Where(e => e.Event == EventInfoState.Crossreferenced || e.Event == EventInfoState.Connected)
+                .Select(e => e.Source?.Issue)
+                .Where(i => i?.PullRequest is not null && i.HtmlUrl is not null)
+                .DistinctBy(i => i!.HtmlUrl)
+                .Select(i => new GitHubLinkedPullRequest(
+                    i!.HtmlUrl,
+                    i.Number,
+                    ParseRepositoryFromUrl(i.HtmlUrl),
+                    i.State.Value.ToString(),
+                    i.PullRequest.Merged))
+                .ToList();
+        }
+        catch
+        {
+            // Timeline may be unavailable — linked PRs will be null
+        }
+
+        return new GitHubIssueInfo(issue.Number, issue.Title, issue.State.Value.ToString(), issue.UpdatedAt, issue.Body, comments, linkedPrs);
+    }
+
+    internal static string ParseRepositoryFromUrl(string htmlUrl)
+    {
+        // Expected: https://github.com/{org}/{repo}/pull/{number}
+        var segments = new Uri(htmlUrl).AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return segments.Length >= 2 ? $"{segments[0]}/{segments[1]}" : htmlUrl;
     }
 
     private static async Task<GitHubPullRequestInfo> CreateGitHubPullRequestInfoAsync(RepositoryContext context, Issue issue)

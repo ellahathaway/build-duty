@@ -696,6 +696,25 @@ public class GitHubSignalTests
 
     private static Label CreateLabel(string name) => new(0, "", name, "", "", "", false);
 
+    private static TimelineEventInfo CreateCrossRefEvent(Issue sourceIssue) =>
+        new(id: 0, nodeId: "", url: "", actor: null!, commitId: "",
+            @event: EventInfoState.Crossreferenced, createdAt: DateTimeOffset.Now,
+            label: null!, assignee: null!, milestone: null!,
+            source: new SourceInfo(null!, 0, sourceIssue, ""),
+            rename: null!, projectCard: null!);
+
+    private static void SetupTimelineMock(IGitHubClient client, string org, string repo, long issueNumber, params TimelineEventInfo[] events)
+    {
+        client.Issue.Timeline.GetAllForIssue(org, repo, issueNumber)
+            .Returns(events.ToList());
+    }
+
+    private static void SetupEmptyTimeline(IGitHubClient client)
+    {
+        client.Issue.Timeline.GetAllForIssue(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<long>())
+            .Returns(Array.Empty<TimelineEventInfo>());
+    }
+
     [Fact]
     public void MatchesItemConfig_NoFilters_MatchesOnTitle()
     {
@@ -1116,5 +1135,82 @@ public class GitHubSignalTests
         var issueSignal = Assert.IsType<GitHubIssueSignal>(signal);
         Assert.Equal(1, issueSignal.TypedInfo.Number);
     }
-}
 
+    #region Linked PR tests
+
+    [Fact]
+    public async Task CollectAsync_IssueWithLinkedPr_IncludesLinkedPrInfo()
+    {
+        var issue = CreateIssue(1, ItemState.Open, "Bug A", labels: [CreateLabel("bug")]);
+        var linkedPrIssue = CreateIssue(50, ItemState.Open, "Fix bug A", isPr: true, org: "dotnet", repo: "sdk");
+
+        var client = Substitute.For<IGitHubClient>();
+        client.Issue.GetAllForRepository("dotnet", "runtime", Arg.Any<RepositoryIssueRequest>())
+            .Returns([issue]);
+        client.Issue.Comment.GetAllForIssue("dotnet", "runtime", 1)
+            .Returns(Array.Empty<IssueComment>());
+        SetupEmptyTimeline(client);
+        SetupTimelineMock(client, "dotnet", "runtime", 1, CreateCrossRefEvent(linkedPrIssue));
+
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns(Array.Empty<WorkItem>());
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
+
+        var collector = new TestableGitHubCollector(CreateIssueConfig(), storageProvider, client);
+        await collector.CollectAsync();
+
+        var signals = storageProvider.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
+            .Select(call => (Signal)call.GetArguments()[0]!)
+            .ToList();
+
+        var signal = Assert.Single(signals);
+        var issueSignal = Assert.IsType<GitHubIssueSignal>(signal);
+        Assert.NotNull(issueSignal.TypedInfo.LinkedPullRequests);
+        var linkedPr = Assert.Single(issueSignal.TypedInfo.LinkedPullRequests);
+        Assert.Equal("https://github.com/dotnet/sdk/pull/50", linkedPr.Url);
+        Assert.Equal(50, linkedPr.Number);
+        Assert.Equal("dotnet/sdk", linkedPr.Repository);
+    }
+
+    [Fact]
+    public async Task CollectAsync_IssueWithCrossReferencedIssue_NotIncluded()
+    {
+        var issue = CreateIssue(1, ItemState.Open, "Bug A", labels: [CreateLabel("bug")]);
+        // Cross-reference to another issue (not a PR)
+        var crossRefIssue = CreateIssue(2, ItemState.Open, "Related", isPr: false, org: "dotnet", repo: "runtime");
+
+        var client = Substitute.For<IGitHubClient>();
+        client.Issue.GetAllForRepository("dotnet", "runtime", Arg.Any<RepositoryIssueRequest>())
+            .Returns([issue]);
+        client.Issue.Comment.GetAllForIssue("dotnet", "runtime", 1)
+            .Returns(Array.Empty<IssueComment>());
+        SetupEmptyTimeline(client);
+        SetupTimelineMock(client, "dotnet", "runtime", 1, CreateCrossRefEvent(crossRefIssue));
+
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns(Array.Empty<WorkItem>());
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
+
+        var collector = new TestableGitHubCollector(CreateIssueConfig(), storageProvider, client);
+        await collector.CollectAsync();
+
+        var signals = storageProvider.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
+            .Select(call => (Signal)call.GetArguments()[0]!)
+            .ToList();
+
+        var signal = Assert.Single(signals);
+        var issueSignal = Assert.IsType<GitHubIssueSignal>(signal);
+        Assert.Empty(issueSignal.TypedInfo.LinkedPullRequests!);
+    }
+
+    [Fact]
+    public void ParseRepositoryFromUrl_ValidPrUrl_ReturnsOrgRepo()
+    {
+        var result = GitHubSignalCollector.ParseRepositoryFromUrl("https://github.com/dotnet/sdk/pull/100");
+        Assert.Equal("dotnet/sdk", result);
+    }
+
+    #endregion
+}

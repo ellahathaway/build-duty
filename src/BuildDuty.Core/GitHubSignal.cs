@@ -4,13 +4,21 @@ using System.Text.Json.Serialization;
 
 namespace BuildDuty.Core;
 
+public record GitHubLinkedPullRequest(
+    string Url,
+    int Number,
+    string Repository,
+    string State,
+    bool Merged);
+
 public record GitHubIssueInfo(
     int Number,
     string Title,
     string State,
     DateTimeOffset? UpdatedAt,
     string? Body,
-    List<string>? Comments);
+    List<string>? Comments,
+    List<GitHubLinkedPullRequest>? LinkedPullRequests = null);
 
 public record GitHubPullRequestInfo(GitHubIssueInfo IssueInfo, bool Merged, List<GitHubCheckInfo>? Checks);
 
