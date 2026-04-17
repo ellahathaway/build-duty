@@ -1178,7 +1178,7 @@ public class GitHubSignalTests
         var evt = Assert.Single(issueSignal.TypedInfo.TimelineEvents);
         Assert.Equal("cross-referenced", evt.Event);
         Assert.Equal("https://github.com/dotnet/sdk/pull/50", evt.SourceUrl);
-        Assert.Equal("Open", evt.SourceState);
+        Assert.Equal("open", evt.SourceState);
     }
 
     [Fact]
