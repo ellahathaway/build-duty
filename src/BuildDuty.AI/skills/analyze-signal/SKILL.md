@@ -20,7 +20,7 @@ Use the matching reference based on signal type:
 3. Note the signal's context field — it describes what this signal source is and what it depends on.
 4. Analyze the current signal according to the matching reference. Determine the set of analyses you would persist.
 5. Before persisting, **load the signal's existing analyses** (the `analyses` array on the signal). Compare each existing analysis against your new set by matching on root cause:
-   - **Still accurate** — an existing analysis describes the same root cause as one of your new analyses *and* the details are unchanged. **Do nothing** — leave it in place. Do not call `create_signal_analysis`. Count it in neither created nor updated.
+   - **Still accurate** — an existing analysis describes the same root cause as one of your new analyses *and* the details are unchanged. Call `update_signal_analysis` with the existing analysis ID but **omit** `analysisData` and `analysis` to stamp the current triage run without changing content. Count as `analysesUpdated`.
    - **Needs updating** — an existing analysis covers the same root cause but details have changed (e.g., different error text, new evidence, different failing leg). Call `update_signal_analysis` with the existing analysis ID. Count as `analysesUpdated`.
    - **Resolved** — an existing analysis should be resolved when:
      - The root cause it describes is **no longer active** (e.g., pipeline now succeeds, issue closed, PR merged).
