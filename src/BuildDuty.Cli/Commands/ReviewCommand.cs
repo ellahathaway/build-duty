@@ -111,6 +111,7 @@ internal sealed class ReviewCommand : BaseCommand<BaseSettings>
             var reason = AnsiConsole.Ask<string>("[bold]Resolution reason:[/]");
             if (!string.IsNullOrWhiteSpace(reason))
             {
+                var resolvedCount = selectedItems.Count(i => !i.Resolved);
                 foreach (var item in selectedItems.Where(i => !i.Resolved))
                 {
                     item.Resolved = true;
@@ -118,7 +119,7 @@ internal sealed class ReviewCommand : BaseCommand<BaseSettings>
                     item.UpdatedAt = DateTime.UtcNow;
                     await _storageProvider.SaveWorkItemAsync(item);
                 }
-                AnsiConsole.MarkupLine($"[green]{selectedItems.Count(i => !i.Resolved)} work item(s) resolved.[/]");
+                AnsiConsole.MarkupLine($"[green]{resolvedCount} work item(s) resolved.[/]");
             }
             return;
         }
