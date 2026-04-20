@@ -6,12 +6,12 @@ Applies when signal type is a GitHub issue. Issue details are in the signal's in
 
 ## Classify the issue
 
-Check the signal context, is available, for monitoring rationale and correlation hints (related pipelines, PRs, branches).
+Check the signal context, if available, for monitoring rationale and correlation hints (related pipelines, PRs, branches).
 
 From the signal's info, determine:
 
 - **Active problem** — issue is open; describes an unresolved bug/regression/outage/build break.
-- **Resolved / mitigated** — issue is closed or clearly indicates the problem is fixed. Resolve any existing active analyses on the signal.
+- **Resolved / mitigated** — the signal indicates resolution when the issue is closed, or the issue body/comments clearly state the problem is fixed or mitigated (e.g., a fix has been merged, a workaround applied, or the underlying cause was addressed externally). The root causes described by existing analyses are no longer active.
 - **Tracker / meta issue** — aggregates links to other issues/PRs/failures rather than one concrete problem.
 
 If the info is insufficient, use the GitHub MCP to pull additional information.
@@ -20,11 +20,7 @@ Note whether the issue describes **one** root cause or **multiple** independent 
 
 ---
 
-## Create analyses
-
-Persist the signal analysis per distinct root cause.
-
-#### `analysisData` — always include:
+## Analysis data — always include:
 
 | Field | Source |
 |---|---|
@@ -42,20 +38,9 @@ Example — open build break:
 }
 ```
 
-Example — resolved issue:
-```json
-{
-  "relatedLinks": ["https://github.com/dotnet/runtime/pull/12400"]
-}
-```
-Use `resolve_signal_analysis` on existing active analyses when the issue is closed or when a new analysis supersedes them. Resolution criteria examples:
-- `Issue closed via PR #12400.`
-- `Superseded by more specific analysis identifying the OpenSSL 3.5 incompatibility.`
-
-#### `analysis` — concise cause statement
+### Analysis text — concise cause statement
 
 Examples:
 - `Alpine 3.23 ships OpenSSL 3.5 which drops support for legacy algorithms; cryptography tests fail with CryptographicException on Alpine CI legs.`
-- `Issue closed via PR #12400; OpenSSL 3.5 compatibility fix merged.`
 
 For tracker/meta issues with insufficient detail for a concrete cause, describe the tracking scope: `Tracking issue for .NET 10 source-build failures; links 3 pipeline issues and 2 PRs but no single root cause identified.`

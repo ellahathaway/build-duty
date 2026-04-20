@@ -16,7 +16,9 @@ You receive:
 
 ### 1. Collect orphaned analyses
 
-Use `list_analyses_for_triage` (linkedStatus: `unlinked`) to get non-resolved analyses on triage signals that are not linked to any work item. If there are none, return early with zeros.
+- Use `list_analyses_for_triage` (linkedStatus: `unlinked`) to get analyses on triage signals that are not linked to any work item.
+  - Each work item has a `LinkedAnalyses` list — entries of `(SignalId, AnalysisIds[])`. Each analysis ID points to a specific analysis entry on a signal. Analyses have a `Status` (new, updated, or resolved) — resolved analyses stay linked and preserve provenance.
+- After listing the analyses, discard any with `status: Resolved` — resolved analyses do not need work items. If none remain after filtering, return early with zeros.
 
 ### 2. Load each orphaned analysis
 
