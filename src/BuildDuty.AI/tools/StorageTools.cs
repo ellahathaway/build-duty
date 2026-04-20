@@ -331,8 +331,13 @@ public class StorageTools
                     [Description("The ID of the triage run")] string triageId,
                     [Description("The ID of the signal")] string signalId,
                     [Description("The ID of the analysis to resolve")] string analysisId,
-                    [Description("The criteria that were met for resolution (e.g. pipeline succeeded, issue closed via PR #123, fix merged)")] string resolutionCriteria) =>
+                    [Description("The reason for resolving the analysis (e.g. pipeline succeeded, issue closed via PR, fix merged, superseded by a different analysis)")] string resolutionReason) =>
                 {
+                    if (string.IsNullOrWhiteSpace(resolutionReason))
+                    {
+                        return "cannot resolve - resolutionReason is required";
+                    }
+
                     var signal = await _storageProvider.GetSignalAsync(signalId);
                     var existing = signal.Analyses.FirstOrDefault(a => a.Id == analysisId);
 
@@ -342,13 +347,13 @@ public class StorageTools
                     }
 
                     var index = signal.Analyses.IndexOf(existing);
-                    signal.Analyses[index] = existing with { Status = AnalysisStatus.Resolved, ResolutionCriteria = resolutionCriteria, LastTriageId = triageId };
+                    signal.Analyses[index] = existing with { Status = AnalysisStatus.Resolved, ResolutionReason = resolutionReason, LastTriageId = triageId };
                     await _storageProvider.SaveSignalAsync(signal);
                     await UpdateLinkedWorkItemTriageIdAsync(signalId, analysisId, triageId);
                     return "resolved";
                 },
                 "resolve_signal_analysis",
-                "Mark an analysis as resolved. Use when the issue is no longer active (pipeline recovered, issue closed, fix merged) OR when the analysis has been superseded by a more accurate one. The analysis is preserved for provenance. Provide the resolution criteria that were met."),
+                "Mark an analysis as resolved."),
 
             AIFunctionFactory.Create(
                 async (
@@ -371,7 +376,7 @@ public class StorageTools
                         analysisData ?? existing.RelevantInfo,
                         analysis ?? existing.Analysis,
                         AnalysisStatus.Updated,
-                        existing.ResolutionCriteria,
+                        existing.ResolutionReason,
                         triageId);
 
                     var index = signal.Analyses.IndexOf(existing);
@@ -381,7 +386,7 @@ public class StorageTools
                     return "updated";
                 },
                 "update_signal_analysis",
-                "Update an existing analysis on a signal. Omit analysisData and analysis to keep existing content while stamping the current triage run. Sets status to Updated."),
+                "Update an existing analysis on a signal."),
         ];
     }
 

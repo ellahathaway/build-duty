@@ -32,13 +32,19 @@ public abstract class Signal
 public record SignalAnalysis
 {
     [JsonConstructor]
-    public SignalAnalysis(string id, JsonElement relevantInfo, string analysis, AnalysisStatus status = AnalysisStatus.New, string? resolutionCriteria = null, string? lastTriageId = null)
+    public SignalAnalysis(
+        string id,
+        JsonElement relevantInfo,
+        string analysis,
+        AnalysisStatus status = AnalysisStatus.New,
+        string? resolutionReason = null,
+        string? lastTriageId = null)
     {
         Id = id;
         RelevantInfo = relevantInfo;
         Analysis = analysis;
         Status = status;
-        ResolutionCriteria = resolutionCriteria;
+        ResolutionReason = resolutionReason;
         LastTriageId = lastTriageId;
     }
 
@@ -49,7 +55,7 @@ public record SignalAnalysis
     public JsonElement RelevantInfo { get; init; }
     public string Analysis { get; init; }
     public AnalysisStatus Status { get; init; } = AnalysisStatus.New;
-    public string? ResolutionCriteria { get; init; }
+    public string? ResolutionReason { get; init; }
     public string? LastTriageId { get; init; }
 }
 

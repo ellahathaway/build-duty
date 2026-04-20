@@ -21,7 +21,7 @@ If there are no analyses for this triage run, stop — no further action is need
 
 ## Context
 
-Each work item has a `LinkedAnalyses` list — entries of `(SignalId, AnalysisIds[])`. Each analysis ID points to a specific analysis entry on a signal. Analyses have a `Status` (new, updated, or resolved) — resolved analyses stay linked and preserve provenance.
+Each work item has a `LinkedAnalyses` list — entries of `(SignalId, AnalysisIds[])`. Each analysis ID points to a specific analysis entry on a signal. Analyses have a `Status` (new, updated, or resolved) — resolved analyses should stay linked and preserve provenance.
 
 Use [references/incident-grouping.md](./references/incident-grouping.md) for correlation criteria throughout.
 
@@ -33,20 +33,23 @@ For each analysis from the triage run, load it with `get_analysis` and use `get_
 
 If the analysis is linked to one or more work items:
 
-1. For each linked work item, compare the analysis against the work item's `IssueSignature`, `Summary`, and evidence in other linked analyses using the correlation criteria.
-   - **Still correlates** — keep it linked. If the analysis is resolved, do NOT unlink — resolved analyses stay linked for provenance.
-   - **No longer correlates** — unlink it. If the signal has zero remaining linked analysis IDs on that work item, it is fully unlinked.
-
-2. If the analysis was unlinked, attempt to find a better match among unresolved work items (same as the unlinked flow below).
+1. If the analysis is resolved, keep it linked.
+2. If the analysis is not resolved, for each linked work item, compare the analysis against the work item's `IssueSignature`, `Summary`, and evidence in other linked analyses using the correlation criteria.
+   - **Still correlates** — keep it linked.
+   - **No longer correlates** — unlink it.
+3. If the analysis was unlinked, follow the unlinked analysis flow below.
 
 ### Unlinked analyses — find a matching work item
 
 If the analysis is not linked to any work item (either newly created or just unlinked above):
 
+**Skip resolved analyses** — if the analysis has `status: resolved`, it does not need a work item. Do not attempt to link or create a work item for it. Move to the next analysis.
+
+For non-resolved analyses:
+
 1. Compare it against every unresolved work item using the correlation criteria (same-cause grouping, causal chain detection, cross-type correlation). Additionally check:
    - **Evidence cross-references** — load the work item's existing linked analyses (via `get_analysis`) and compare evidence fields: build IDs, pipeline URLs, run IDs, repository names, issue/PR numbers, and error signatures. A shared build ID, pipeline reference, or issue link is strong evidence of the same incident.
    - **Cross-type correlation** — signals of different types (AzDo pipeline, GitHub issue, GitHub PR) frequently describe the same incident from different angles. A GitHub issue that references a failing build URL, or a PR linked to a tracked pipeline, should match the work item tracking that pipeline (and vice versa).
-
 2. Evaluation:
    - **Match found** — link the analysis (signal ID + analysis ID) to that work item. Update metadata if it adds new evidence.
    - **No match** — leave unlinked. The create-workitems step will handle it.

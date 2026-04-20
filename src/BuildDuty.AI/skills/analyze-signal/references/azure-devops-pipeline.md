@@ -15,19 +15,18 @@ Read the build result and monitored statuses in the signal's info:
 
 ## Non-successful pipeline
 
-### 1. Use timeline records
+### Timeline records
 
-Use **only** the timeline records already present in the signal's `Info.TimelineRecords`. Do not fetch additional records from the build timeline — the records in the signal have been pre-filtered to the relevant scope. 
+- Use only the timeline records already present in the signal's `Info.TimelineRecords`.
+- Do not fetch additional records from the build timeline — the records in the signal have been pre-filtered to the relevant scope.
 
-### 2. Review logs
+### Reviewing logs
 
 For each failing record, read its most specific pipeline log. Move upward (task → job → stage) only if insufficient. Investigate each record independently — do not assume shared causes.
 
-### 3. Create analyses
+Each distinct error/warning should be treated as a separate root cause unless multiple records clearly share one.
 
-Persist the signal analysis for each distinct error. Consolidate only when multiple records clearly share one root cause.
-
-#### Analysis Data — always include:
+### Analysis data — always include:
 
 | Field | Source |
 |---|---|
@@ -67,7 +66,7 @@ Example:
 }
 ```
 
-#### Analysis Text — concise cause statement
+### Analysis text — concise cause statement
 
 Examples:
 - `NuGet restore timeout: error NU1301 unable to load service index for https://pkgs.dev.azure.com/`
@@ -79,12 +78,11 @@ If no concrete error is found, use the narrowest failure scope (e.g., "Task X fa
 
 ## Resolved pipeline
 
-Result is no longer in `MonitoredStatuses` (e.g. `Succeeded`, or `PartiallySucceeded` when only `Failed`/`Canceled` are monitored).
+A pipeline signal indicates resolution when the build result is **not in** `MonitoredStatuses`. This means the pipeline has recovered from the previously-tracked failure state.
 
-Resolve any existing active analyses on the signal — the failures they describe are no longer occurring. Use `resolve_signal_analysis` with the resolution criteria that were met.
+Common resolution indicators:
+- Build result changed from `Failed` → `Succeeded`
+- Build result is `PartiallySucceeded` but only `Failed` and `Canceled` are monitored
+- A previously-canceled pipeline now completes normally
 
-#### Analysis Text — resolution criteria
-
-Examples:
-- `Pipeline result changed to Succeeded; no longer in monitored failure states [Failed, Canceled].`
-- `Superseded by analysis covering the actual root cause (DNS outage, not NuGet timeout).`
+When the signal shows resolution, the root causes described by existing analyses are no longer active — the pipeline is passing.

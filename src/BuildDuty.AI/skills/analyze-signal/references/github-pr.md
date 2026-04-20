@@ -2,8 +2,6 @@
 
 Applies when `signal.Type == SignalType.GitHubPullRequest`. PR details are in `signal.Info` (`JsonElement`).
 
-Persist the signal analysis once per distinct cause (e.g., separate failing checks, review blocks).
-
 ---
 
 ## Classify the PR
@@ -15,8 +13,8 @@ From `signal.Info`, determine the PR's situation:
 - **CI / checks failing** — required checks failing.
 - **Blocked on review** — approvals missing or changes requested.
 - **Merge blocked by policy** — conflicts, failing checks, or missing sign-offs.
-- **Ready / passing** — checks passing, reviews sufficient. Create an analysis noting the PR is healthy (e.g., `"PR is passing all checks and ready to merge."`). This ensures the signal is recorded as analyzed even when no action is needed.
-- **Merged / closed** — PR landed or was closed. Resolve any existing active analyses on the signal.
+- **Ready / passing** — checks passing, reviews sufficient.
+- **Merged / closed** — the signal indicates resolution when the PR has been merged or closed. A merged PR means the change has landed and any issues it was tracking (failing checks, review blocks) are no longer active. A closed-without-merge PR may indicate the approach was abandoned — check the signal context and comments for why.
 
 If the info is insufficient, use the GitHub MCP to pull additional information.
 
@@ -24,11 +22,7 @@ Note whether the PR has **one** root cause or **multiple** independent problems 
 
 ---
 
-## Create analyses
-
-Persist the signal analysis per distinct cause.
-
-#### `analysisData` — always include:
+## Analysis data — always include:
 
 | Field | Source |
 |---|---|
@@ -44,20 +38,8 @@ Example — CI failing:
 }
 ```
 
-Example — merged PR:
-```json
-{
-  "relatedLinks": ["https://github.com/dotnet/runtime/issues/12345"]
-}
-```
-
-#### `analysis` — concise cause statement
+### Analysis text — concise cause statement
 
 Examples:
 - `CI failing: sdk-diff test regression after dotnet/dotnet#45231 merged.`
 - `PR blocked on required review from @dotnet/source-build-internal.`
-- `PR merged: fixes Alpine 3.23 OpenSSL SHA-1 issue. Source-build should pass on next unified-build run.`
-
-For merged/closed PRs, use `resolve_signal_analysis` on existing active analyses. Resolution criteria examples:
-- `PR merged; fix should flow to downstream pipelines.`
-- `Superseded by analysis covering the broader CI regression.`
