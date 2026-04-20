@@ -333,6 +333,11 @@ public class StorageTools
                     [Description("The ID of the analysis to resolve")] string analysisId,
                     [Description("The reason for resolving the analysis (e.g. pipeline succeeded, issue closed via PR, fix merged, superseded by a different analysis)")] string resolutionReason) =>
                 {
+                    if (string.IsNullOrWhiteSpace(resolutionReason))
+                    {
+                        return "cannot resolve - resolutionReason is required";
+                    }
+
                     var signal = await _storageProvider.GetSignalAsync(signalId);
                     var existing = signal.Analyses.FirstOrDefault(a => a.Id == analysisId);
 

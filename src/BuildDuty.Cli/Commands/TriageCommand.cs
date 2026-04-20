@@ -221,7 +221,7 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
                 Failures.Add(signalId, $"Signal {signalId} has no analyses for triage run {triageRunId} after agent completed.");
             }
 
-            foreach (var analysis in signal.Analyses.Where(a => a.Status == AnalysisStatus.Resolved && string.IsNullOrWhiteSpace(a.ResolutionReason)))
+            foreach (var analysis in signal.Analyses.Where(a => a.LastTriageId == triageRunId && a.Status == AnalysisStatus.Resolved && string.IsNullOrWhiteSpace(a.ResolutionReason)))
             {
                 Failures.Add(analysis.Id, $"Analysis {analysis.Id} on signal {signalId} is resolved but has no resolution reason.");
             }
