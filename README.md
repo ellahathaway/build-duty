@@ -237,6 +237,11 @@ service automatically discovers active .NET release branches. The resolver:
 All results are cached per pipeline/repo for the lifetime of the process, with
 per-key locking so concurrent callers share a single resolution.
 
+### Example configs
+
+The [`configs/`](configs/) directory contains example `.build-duty.yml` files for
+different build-duty roles on the .NET SDK team.
+
 ## CLI commands
 
 ### `build-duty triage run`
