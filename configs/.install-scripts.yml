@@ -1,0 +1,34 @@
+name: install-scripts
+
+github:
+  organizations:
+    - organization: dotnet
+      repositories:
+        - name: install-scripts
+          prs:
+            - name: ".*Update dependencies.*"
+              context: >
+                Open dependency flow PRs.
+            - name: "^(?!.*Update dependencies).*"
+              context: >
+                Open PRs that are not related to dependency updates.
+          issues:
+            - name: ".*"
+              labels:
+                - untriaged
+              context: >
+                Open untriaged issues.
+
+azureDevOps:
+  organizations:
+    - url: https://dev.azure.com/dnceng
+      projects:
+        - name: internal
+          pipelines:
+            - id: 847
+              name: Install Scripts Official Pipeline
+              age: 20d
+              context: >
+                Builds, tests, and signs the .NET install scripts
+              branches:
+                - main

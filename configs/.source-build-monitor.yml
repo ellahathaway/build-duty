@@ -1,0 +1,133 @@
+name: sourcebuild-monitor
+
+azureDevOps:
+  organizations:
+    - url: https://dev.azure.com/dnceng
+      projects:
+        - name: internal
+          pipelines:
+            - id: 1525
+              name: Source Build Outer Loop
+              age: 20d
+              context: >
+                VMR source-only build outer loop validation. Builds the .NET SDK
+                from source for mono distros.
+              release: &all-phases
+                repository: dotnet-dotnet
+                supportPhases: [active, maintenance, preview, go-live, rc]
+            - id: 1330
+              name: Source Build Unified Build
+              age: 20d
+              context: >
+                VMR build pipeline. Builds the source-build and Microsoft .NET SDK.
+              timelineFilters:
+                - type: Stage
+                  names:
+                    - "Source*"
+                - type: Job
+                  names:
+                    - "Validate Signing*"
+              release:
+                <<: *all-phases
+                minVersion: 10
+            - id: 1219
+              name: Source Build Pre-10.0
+              age: 20d
+              context: >
+                Builds the VMR from source for .NET 8 and 9.
+              release: &servicing-only
+                repository: dotnet-dotnet
+                supportPhases: [active, maintenance]
+            - id: 1301
+              name: Source Build License Scan
+              age: 20d
+              context: >
+                Weekly license compliance scan of all VMR repos. Verifies that
+                the source contains only approved licenses. Failures
+                require updating license scan baselines or exclusions.
+              release: *all-phases
+            - id: 1231
+              name: Source Build SDK Diff
+              age: 20d
+              context: >
+                Compares Microsoft-built SDK against source-built SDK to detect
+                differences. Depends on artifacts from dotnet-unified-build (10+)
+                and dotnet-source-build-pre10.0 (8/9).
+              release: *all-phases
+            - id: 1380
+              name: VMR Sync SDK (internal)
+              age: 20d
+              context: >
+                Syncs SDK repo changes into the VMR on internal
+                branches for .NET 9 servicing. Feeds into the Source Build
+                Pre-10.0 pipeline. If this fails, the VMR will be out of sync
+                and the pre-10.0 build may build stale code.
+              release: *all-phases
+            - id: 1379
+              name: VMR Sync SDK (public)
+              age: 20d
+              context: >
+                Syncs SDK repo changes into the VMR on public
+                branches for .NET 9 servicing. Feeds into the Source Build
+                Pre-10.0 pipeline. Public counterpart to the internal VMR Sync
+                SDK pipeline.
+              release: *all-phases
+            - id: 1228
+              name: VMR Sync Installer (internal)
+              age: 20d
+              context: >
+                Syncs installer repo changes into the VMR on internal branches for
+                .NET 8. Feeds into the Source Build Pre-10.0 pipeline. Only
+                relevant for .NET 8 where installer is the root repo of the VMR.
+              release: *servicing-only
+            - id: 1226
+              name: VMR Sync Installer (public)
+              age: 20d
+              context: >
+                Syncs installer repo changes into the VMR on public branches for
+                .NET 8. Feeds into the Source Build Pre-10.0 pipeline.
+                Public counterpart to the internal VMR Sync Installer pipeline.
+              release: *servicing-only
+
+github:
+  organizations:
+    - organization: dotnet
+      repositories:
+        - name: source-build
+          issues:
+            - name: ".*"
+              labels:
+                - ops-monitor
+              state: Open
+              context: >
+                Issues in dotnet/source-build with the ops-monitor label track
+                active source-build operational problems. These often correspond
+                to pipeline failures in the dnceng/internal AzDo pipelines.
+                Issue references to pipelines or build numbers should be attempted
+                to be correlated with matching pipeline signals.
+        - name: dotnet
+          prs:
+            - name: Update Source-Build License Scan Baselines and Exclusions
+              context: >
+                PRs that update license scan baselines/exclusions in the VMR.
+                These fix failures in the Source Build License Scan pipeline.
+            - name: Update Source-Build SDK Diff Tests Baselines and Exclusions
+              context: >
+                PRs that update SDK diff test baselines/exclusions in the VMR.
+                These fix failures in the Source Build SDK Diff pipeline.
+            - name: ".*Source code updates from dotnet/source-build-assets"
+              context: >
+                Automated dependency update PRs in dotnet/dotnet that are triggered by source-build-assets updates.
+        - name: source-build-assets
+          prs:
+            - name: ".*Source code updates"
+              context: >
+                Automated flow PRs that update source-built assets source code.
+            - name: ".*Update dependencies"
+              context: >
+                Automated dependency update PRs in source-build-assets.
+        - name: source-build-externals
+          prs:
+            - name: ".*Update dependencies"
+              context: >
+                Automated dependency update PRs in source-build-externals.
