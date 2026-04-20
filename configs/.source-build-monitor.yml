@@ -23,10 +23,10 @@ azureDevOps:
               timelineFilters:
                 - type: Stage
                   names:
-                    - "Source*"
+                    - "^Source.*"
                 - type: Job
                   names:
-                    - "Validate Signing*"
+                    - "^Validate Signing.*"
               release:
                 <<: *all-phases
                 minVersion: 10
