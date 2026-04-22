@@ -60,14 +60,14 @@ public class CopilotAdapter
             Name = Agents.Signal,
             Description = "Works with signals from a build-duty triage run. Analyzes signals and creates signal analyses.",
             Tools = [ "get_signal", "create_signal_analysis", "update_signal_analysis", "resolve_signal_analysis", "get_json_value", "get_signal_analyses", "list_analyses_for_triage", "get_analysis", "list_work_items_for_analysis" ],
-            Prompt = "You can get signals, read signals, edit signals, create/update/resolve signal analyses, and extract JSON values from signals.",
+            Prompt = "You can list signals, read signal/analysis details, edit signals/analyses, create/update/resolve signal analyses, and extract JSON values from signals.",
         },
         new CustomAgentConfig
         {
             Name = Agents.WorkItem,
             Description = "Works with work items from a build-duty triage run.",
-            Tools = [ "list_work_items", "list_work_items_for_triage", "get_work_item", "create_work_item", "update_work_item", "resolve_work_item", "link_analysis_to_work_item", "unlink_analysis_from_work_item", "get_json_value" ],
-            Prompt = "You can get work items, read work items, edit work items, adjust linked signals/analyses for work items, and extract JSON values from work items.",
+            Tools = [ "list_work_items", "list_work_items_for_triage", "get_work_item", "create_work_item", "update_work_item_metadata", "resolve_work_item", "link_analysis_to_work_item", "unlink_analysis_from_work_item", "get_json_value" ],
+            Prompt = "You can list work items, read work item details, edit/update work items, adjust linked signals/analyses for work items, and extract JSON values from work items.",
         }
     ];
 

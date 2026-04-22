@@ -30,13 +30,13 @@ public class StorageTools
                             "all" => true,
                             _ => throw new ArgumentException($"Invalid state filter: {state}. Must be 'unresolved', 'resolved', or 'all'."),
                         })
-                        .Select(wi => new { wi.Id, wi.Resolved })
+                        .Select(wi => wi.Id)
                         .ToList();
 
                     return workItems;
                 },
                 "list_work_items",
-                "List all work items. Filter by state: 'unresolved', 'resolved', or 'all'."),
+                "List all work item IDs. Filter by state: 'unresolved', 'resolved', or 'all'."),
 
             AIFunctionFactory.Create(
                 async (
@@ -44,50 +44,50 @@ public class StorageTools
                 {
                     var workItems = (await _storageProvider.GetWorkItemsAsync())
                         .Where(wi => wi.LastTriageId == triageRunId)
-                        .Select(wi => new { wi.Id, wi.Resolved })
+                        .Select(wi => wi.Id)
                         .ToList();
 
                     return workItems;
                 },
                 "list_work_items_for_triage",
-                "Get work items whose last triage ID matches the specified triage run."),
+                "Get work item IDs whose last triage ID matches the specified triage run."),
 
             AIFunctionFactory.Create(
                 async (
-                    [Description("The ID of the triage run")] string triageRunId,
-                    [Description("Filter by linked status: 'linked', 'unlinked', or 'all'. Defaults to all")] string linkedStatus = "all") =>
+                    [Description("The ID of the triage run")] string triageRunId) =>
                 {
+                    List<object> analyses = new List<object>();
                     var triageRun = await _storageProvider.GetTriageRunAsync(triageRunId);
-                    var workItems = await _storageProvider.GetWorkItemsAsync();
-
-                    var result = new List<object>();
                     foreach (var signalId in triageRun.SignalIds)
                     {
                         var signal = await _storageProvider.GetSignalAsync(signalId);
-                        var changed = signal.Analyses
-                            .Where(a => a.LastTriageId == triageRunId)
-                            .Where(a => linkedStatus switch
-                            {
-                                "linked" => workItems
-                                    .Any(wi => wi.LinkedAnalyses.Any(la => la.SignalId == signalId && la.AnalysisIds.Contains(a.Id))),
-                                "unlinked" => !workItems
-                                    .Any(wi => wi.LinkedAnalyses.Any(la => la.SignalId == signalId && la.AnalysisIds.Contains(a.Id))),
-                                "all" => true,
-                                _ => throw new ArgumentException($"Invalid linkedStatus filter: {linkedStatus}. Must be 'linked', 'unlinked', or 'all'."),
-                            })
-                            .Select(a => new { a.Id, a.Status })
-                            .ToList();
-
-                        if (changed.Count > 0)
+                        foreach (var analysis in signal.Analyses)
                         {
-                            result.Add(new { SignalId = signalId, Analyses = changed });
+                            if (analysis.LastTriageId == triageRunId)
+                            {
+                                analyses.Add(new { SignalId = signalId, AnalysisId = analysis.Id });
+                            }
+
                         }
                     }
-
-                    return result;
+                    return analyses;
                 },
                 "list_analyses_for_triage",
-                "List analyses that were created, updated, or resolved during the specified triage run. Returns entries of { signalId, analyses[] } where each analysis has id and status. Filter on linked, unlinked, or all analyses"),
+                "List all of the analyses that were touched during the specified triage run. Returns a list of objects with `SignalId` and `AnalysisId` properties."
+            ),
+
+            AIFunctionFactory.Create(
+                async(
+                    [Description("The ID of the signal")] string signalId,
+                    [Description("The ID of the analysis")] string analysisId) =>
+                {
+                    var signal = await _storageProvider.GetSignalAsync(signalId);
+                    var analysis = signal?.Analyses.FirstOrDefault(a => a.Id == analysisId);
+                    return analysis;
+                },
+                "get_analysis",
+                "Get a specific analysis by signal ID and analysis ID"
+            ),
 
             AIFunctionFactory.Create(
                 async (
@@ -97,26 +97,11 @@ public class StorageTools
                     var workItems = await _storageProvider.GetWorkItemsAsync();
                     return workItems
                         .Where(wi => wi.LinkedAnalyses.Any(la => la.SignalId == signalId && la.AnalysisIds.Contains(analysisId)))
-                        .Select(wi => new { wi.Id, wi.Resolved })
+                        .Select(wi => wi.Id)
                         .ToList();
                 },
                 "list_work_items_for_analysis",
-                "List work items linked to a specific analysis. Returns a list of { id, resolved }."),
-
-            // Backward-compatible alias used by existing skills and prompts.
-            AIFunctionFactory.Create(
-                async (
-                    [Description("The ID of the signal")] string signalId,
-                    [Description("The ID of the analysis")] string analysisId) =>
-                {
-                    var workItems = await _storageProvider.GetWorkItemsAsync();
-                    return workItems
-                        .Where(wi => wi.LinkedAnalyses.Any(la => la.SignalId == signalId && la.AnalysisIds.Contains(analysisId)))
-                        .Select(wi => new { wi.Id, wi.Resolved })
-                        .ToList();
-                },
-                "get_work_items_for_analysis",
-                "Get work items linked to a specific analysis. Returns a list of { id, resolved }."),
+                "List the ids of work items linked to a specific signal analysis."),
 
             AIFunctionFactory.Create(
                 async (
@@ -148,30 +133,15 @@ public class StorageTools
 
             AIFunctionFactory.Create(
                 async (
-                    [Description("The ID of the signal")] string signalId,
-                    [Description("The ID of the analysis")] string analysisId) =>
-                {
-                    var signal = await _storageProvider.GetSignalAsync(signalId);
-                    return signal.Analyses.FirstOrDefault(a => a.Id == analysisId)
-                        ?? throw new InvalidOperationException($"Analysis '{analysisId}' not found on signal '{signalId}'.");
-                },
-                "get_analysis",
-                "Get a specific analysis entry from a signal."),
-
-            AIFunctionFactory.Create(
-                async (
-                    [Description("The path to the JSON file")] string filePath,
+                    [Description("The JSON content")] JsonElement json,
                     [Description("The dot path to the value")] string path) =>
                 {
                     try
                     {
-                        var json = await File.ReadAllTextAsync(filePath);
-                        var root = JsonSerializer.Deserialize<JsonElement>(json);
-
-                        var found = TryGetByPath(root, path, out var value);
+                        var found = TryGetByPath(json, path, out var value);
                         return JsonSerializer.SerializeToElement(new
                         {
-                            FilePath = filePath,
+                            Json = json,
                             Path = path,
                             Found = found,
                             Value = found ? value : JsonSerializer.SerializeToElement<object?>(null),
@@ -182,16 +152,16 @@ public class StorageTools
                     {
                         return JsonSerializer.SerializeToElement(new
                         {
-                            FilePath = filePath,
+                            Json = json,
                             Path = path,
                             Found = false,
                             Value = JsonSerializer.SerializeToElement<object?>(null),
-                            Error = $"Failed to read JSON value from '{filePath}': {ex.Message}",
+                            Error = $"Failed to read JSON value from '{path}': {ex.Message}",
                         });
                     }
                 },
                 "get_json_value",
-                "Get a value from a JSON file by dot path (supports object properties and array indexes like Records.0.Id)."),
+                "Get a value from a JSON by dot path (supports object properties and array indexes like Records.0.Id)."),
 
             AIFunctionFactory.Create(
                 async (
@@ -262,15 +232,23 @@ public class StorageTools
                         return "cannot unlink - analysis not found in work item";
                     }
 
+                    var signal = await _storageProvider.GetSignalAsync(signalId);
+                    var analysis = signal.Analyses.FirstOrDefault(a => a.Id == analysisId);
+                    if (analysis is null)
+                    {
+                        return "cannot unlink - analysis not found";
+                    }
+
+                    if (analysis.Status == AnalysisStatus.Resolved)
+                    {
+                        return "cannot unlink - analysis is resolved";
+                    }
+
                     var remaining = existing.AnalysisIds.Except(new[] { analysisId }, StringComparer.Ordinal).ToList();
                     workItem.LinkedAnalyses.Remove(existing);
                     if (remaining.Count > 0)
                     {
                         workItem.LinkedAnalyses.Add(new LinkedAnalysis(signalId, remaining));
-                    }
-                    else
-                    {
-                        // No analyses remain linked for this signal, so it's fully unlinked from the work item.
                     }
 
                     workItem.LastTriageId = triageId;
@@ -286,10 +264,7 @@ public class StorageTools
                     [Description("The ID of the triage run")] string triageId,
                     [Description("The ID of the work item")] string workItemId,
                     [Description("The summary of the work item")] string? summary,
-                    [Description("The issue signature of the work item")] string? issueSignature,
-                    [Description("The correlation rationale of the work item")] string? correlationRationale,
-                    [Description("The resolution criteria of the work item")] string? resolutionCriteria,
-                    [Description("The suggested next action for the work item")] string? suggestedNextAction) =>
+                    [Description("The issue signature of the work item")] string? issueSignature) =>
                 {
                     var workItem = await _storageProvider.GetWorkItemAsync(workItemId);
 
@@ -308,8 +283,8 @@ public class StorageTools
                     await _storageProvider.SaveWorkItemAsync(workItem);
                     return "updated";
                 },
-                "update_work_item",
-                "Update metadata on an existing work item (summary/signature/rationale/resolution criteria/suggested next action)."),
+                "update_work_item_metadata",
+                "Update the metadata (summary and issue signature) on an existing work item."),
 
             AIFunctionFactory.Create(
                 async (
@@ -374,7 +349,6 @@ public class StorageTools
                     var index = signal.Analyses.IndexOf(existing);
                     signal.Analyses[index] = existing with { Status = AnalysisStatus.Resolved, ResolutionReason = resolutionReason, LastTriageId = triageId };
                     await _storageProvider.SaveSignalAsync(signal);
-                    await UpdateLinkedWorkItemTriageIdAsync(signalId, analysisId, triageId);
                     return "resolved";
                 },
                 "resolve_signal_analysis",
@@ -385,8 +359,8 @@ public class StorageTools
                     [Description("The ID of the triage run")] string triageId,
                     [Description("The ID of the signal")] string signalId,
                     [Description("The ID of the analysis to update")] string analysisId,
-                    [Description("The updated data related to the signal analysis, in JSON format. Omit to keep existing data.")] JsonElement? analysisData = null,
-                    [Description("The updated string analysis. Omit to keep existing text.")] string? analysis = null) =>
+                    [Description("The updated data related to the signal analysis, in JSON format")] JsonElement analysisData,
+                    [Description("The updated string analysis")] string analysis) =>
                 {
                     var signal = await _storageProvider.GetSignalAsync(signalId);
                     var existing = signal.Analyses.FirstOrDefault(a => a.Id == analysisId);
@@ -398,8 +372,8 @@ public class StorageTools
 
                     var updatedSignalAnalysis = new SignalAnalysis(
                         existing.Id,
-                        analysisData ?? existing.RelevantInfo,
-                        analysis ?? existing.Analysis,
+                        analysisData,
+                        analysis,
                         AnalysisStatus.Updated,
                         existing.ResolutionReason,
                         triageId);
@@ -407,26 +381,11 @@ public class StorageTools
                     var index = signal.Analyses.IndexOf(existing);
                     signal.Analyses[index] = updatedSignalAnalysis;
                     await _storageProvider.SaveSignalAsync(signal);
-                    await UpdateLinkedWorkItemTriageIdAsync(signalId, analysisId, triageId);
                     return "updated";
                 },
                 "update_signal_analysis",
                 "Update an existing analysis on a signal."),
         ];
-    }
-
-    private async Task UpdateLinkedWorkItemTriageIdAsync(string signalId, string analysisId, string triageId)
-    {
-        var workItems = await _storageProvider.GetWorkItemsAsync();
-        foreach (var wi in workItems)
-        {
-            if (wi.LinkedAnalyses.Any(la => la.SignalId == signalId && la.AnalysisIds.Contains(analysisId)))
-            {
-                wi.LastTriageId = triageId;
-                wi.UpdatedAt = DateTime.UtcNow;
-                await _storageProvider.SaveWorkItemAsync(wi);
-            }
-        }
     }
 
     private static bool TryGetByPath(JsonElement source, string path, out JsonElement value)

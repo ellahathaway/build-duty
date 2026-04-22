@@ -195,30 +195,74 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
     }
 
     /// <summary>
-    /// Analyze a single signal with a post-session validation hook that
-    /// records whether the agent produced at least one analysis.
+    /// Analyze a single signal. Signals with a resolved collection reason are handled
+    /// deterministically — all unresolved analyses are resolved with a canned reason and
+    /// the AI agent is not invoked.
     /// </summary>
     private async Task AnalyzeSingleSignalAsync(
         string triageRunId, string signalId)
     {
+        var signal = await _storageProvider.GetSignalAsync(signalId);
+
+        if (signal.IsResolvedCollectionReason)
+        {
+            await ResolveSignalAnalysesAsync(triageRunId, signal);
+            return;
+        }
+
         string analyzePrompt = $"Triage run: `{triageRunId}`. Analyze the following signal: `{signalId}`.";
         await _copilotAdapter.RunSessionAsync(analyzePrompt, throwAfterRetries: true);
 
-        var signal = await _storageProvider.GetSignalAsync(signalId);
+        // Reload the signal from storage to get the latest analyses
+        signal = await _storageProvider.GetSignalAsync(signalId);
         if (signal.Analyses.Count == 0)
         {
             Failures.Add(signalId, $"Signal {signalId} has no analyses after agent completed.");
+            return;
         }
 
         if (!signal.Analyses.Any(a => a.LastTriageId == triageRunId))
         {
             Failures.Add(signalId, $"Signal {signalId} has no analyses for triage run {triageRunId} after agent completed.");
+            return;
         }
 
         foreach (var analysis in signal.Analyses.Where(a => a.LastTriageId == triageRunId && a.Status == AnalysisStatus.Resolved && string.IsNullOrWhiteSpace(a.ResolutionReason)))
         {
             Failures.Add(analysis.Id, $"Analysis {analysis.Id} on signal {signalId} is resolved but has no resolution reason.");
         }
+    }
+
+    /// <summary>
+    /// Deterministically resolve all unresolved analyses for a signal that has a resolved
+    /// collection reason (Resolved, NotFound, OutOfScope).
+    /// </summary>
+    private async Task ResolveSignalAnalysesAsync(string triageRunId, Signal signal)
+    {
+        string resolutionReason = signal.CollectionReason switch
+        {
+            SignalCollectionReason.Resolved => "Signal resolved — the monitored condition is no longer active.",
+            SignalCollectionReason.NotFound => "Signal not found — the resource may have been deleted or aged out.",
+            SignalCollectionReason.OutOfScope => "Signal is out of scope — monitoring configuration no longer includes this resource.",
+            _ => throw new InvalidOperationException($"Unexpected resolved collection reason: {signal.CollectionReason}")
+        };
+
+        var unresolvedAnalyses = signal.Analyses
+            .Where(a => a.Status != AnalysisStatus.Resolved)
+            .ToList();
+
+        foreach (var analysis in unresolvedAnalyses)
+        {
+            var index = signal.Analyses.IndexOf(analysis);
+            signal.Analyses[index] = analysis with
+            {
+                Status = AnalysisStatus.Resolved,
+                ResolutionReason = resolutionReason,
+                LastTriageId = triageRunId
+            };
+        }
+
+        await _storageProvider.SaveSignalAsync(signal);
     }
 
     private async Task UpdateWorkItemsAsync(TriageRun triageRun)
@@ -233,11 +277,6 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
 
         AnsiConsole.MarkupLine("\n[bold]Updating work items...[/]");
 
-        // Snapshot resolved state before AI runs
-        var workItemsBefore = await _storageProvider.GetWorkItemsAsync();
-        var resolvedBefore = new HashSet<string>(
-            workItemsBefore.Where(wi => wi.Resolved).Select(wi => wi.Id));
-
         await RunWithProgressAsync(async ctx =>
             {
                 var progressTask = ctx.AddTask("[bold]Updating work items[/]", autoStart: true, maxValue: 1);
@@ -249,14 +288,64 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
                 progressTask.StopTask();
             });
 
-        // Count results from storage — work items touched by this triage run
-        var workItemsAfter = await _storageProvider.GetWorkItemsAsync();
-        var touched = workItemsAfter.Where(wi => wi.LastTriageId == triageRun.Id).ToList();
-        int workItemsResolved = touched.Count(wi => wi.Resolved && !resolvedBefore.Contains(wi.Id));
-        int workItemsUpdated = touched.Count - workItemsResolved;
+        var workItems = await _storageProvider.GetWorkItemsAsync();
+        int updatedCount = workItems.Count(wi => wi.LastTriageId == triageRun.Id);
+        int resolvedCount = await ResolveWorkItemsAsync(triageRun.Id, workItems);
 
-        AnsiConsole.MarkupLine($"[green]\u2713[/] Updated {workItemsUpdated} existing work items");
-        AnsiConsole.MarkupLine($"[green]\u2713[/] Resolved {workItemsResolved} existing work items");
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Updated {updatedCount} existing work items");
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Resolved {resolvedCount} existing work items");
+    }
+
+    /// <summary>
+    /// Resolve work items whose linked analyses are all resolved (or have no linked analyses).
+    /// Returns the number of work items resolved.
+    /// </summary>
+    private async Task<int> ResolveWorkItemsAsync(string triageRunId, ICollection<WorkItem> workItems)
+    {
+        var signalCache = new Dictionary<string, Signal>();
+        int resolvedCount = 0;
+
+        foreach (var workItem in workItems.Where(wi => !wi.Resolved))
+        {
+            if (await AllLinkedAnalysesResolvedAsync(workItem, signalCache))
+            {
+                workItem.Resolved = true;
+                workItem.LastTriageId = triageRunId;
+                await _storageProvider.SaveWorkItemAsync(workItem);
+                resolvedCount++;
+            }
+        }
+
+        return resolvedCount;
+    }
+
+    private async Task<bool> AllLinkedAnalysesResolvedAsync(WorkItem workItem, Dictionary<string, Signal> signalCache)
+    {
+        if (workItem.LinkedAnalyses.Count == 0 ||
+            workItem.LinkedAnalyses.All(la => la.AnalysisIds.Count == 0))
+        {
+            return true;
+        }
+
+        foreach (var link in workItem.LinkedAnalyses)
+        {
+            if (!signalCache.TryGetValue(link.SignalId, out var signal))
+            {
+                signal = await _storageProvider.GetSignalAsync(link.SignalId);
+                signalCache[link.SignalId] = signal;
+            }
+
+            foreach (var analysisId in link.AnalysisIds)
+            {
+                var analysis = signal.Analyses.FirstOrDefault(a => a.Id == analysisId);
+                if (analysis is null || analysis.Status != AnalysisStatus.Resolved)
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     private async Task CreateWorkItemsAsync(TriageRun triageRun)
