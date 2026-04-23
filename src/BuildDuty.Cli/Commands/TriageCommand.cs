@@ -202,31 +202,22 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
         string triageRunId, string signalId)
     {
         string analyzePrompt = $"Triage run: `{triageRunId}`. Analyze the following signal: `{signalId}`.";
-        await _copilotAdapter.RunSessionAsync(
-            analyzePrompt,
-            agent: CopilotAdapter.Agents.AnalyzeSignalTriage,
-            throwAfterRetries: true,
-            onSessionEnd: async (_, _) => await ValidateAnalyzedSignalAsync());
+        await _copilotAdapter.RunSessionAsync(analyzePrompt, throwAfterRetries: true);
 
-        async Task<SessionEndHookOutput> ValidateAnalyzedSignalAsync()
+        var signal = await _storageProvider.GetSignalAsync(signalId);
+        if (signal.Analyses.Count == 0)
         {
-            var signal = await _storageProvider.GetSignalAsync(signalId);
-            if (signal.Analyses.Count == 0)
-            {
-                Failures.Add(signalId, $"Signal {signalId} has no analyses after agent completed.");
-            }
+            Failures.Add(signalId, $"Signal {signalId} has no analyses after agent completed.");
+        }
 
-            if (!signal.Analyses.Any(a => a.LastTriageId == triageRunId))
-            {
-                Failures.Add(signalId, $"Signal {signalId} has no analyses for triage run {triageRunId} after agent completed.");
-            }
+        if (!signal.Analyses.Any(a => a.LastTriageId == triageRunId))
+        {
+            Failures.Add(signalId, $"Signal {signalId} has no analyses for triage run {triageRunId} after agent completed.");
+        }
 
-            foreach (var analysis in signal.Analyses.Where(a => a.LastTriageId == triageRunId && a.Status == AnalysisStatus.Resolved && string.IsNullOrWhiteSpace(a.ResolutionReason)))
-            {
-                Failures.Add(analysis.Id, $"Analysis {analysis.Id} on signal {signalId} is resolved but has no resolution reason.");
-            }
-
-            return new SessionEndHookOutput();
+        foreach (var analysis in signal.Analyses.Where(a => a.LastTriageId == triageRunId && a.Status == AnalysisStatus.Resolved && string.IsNullOrWhiteSpace(a.ResolutionReason)))
+        {
+            Failures.Add(analysis.Id, $"Analysis {analysis.Id} on signal {signalId} is resolved but has no resolution reason.");
         }
     }
 
@@ -252,10 +243,7 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
                 var progressTask = ctx.AddTask("[bold]Updating work items[/]", autoStart: true, maxValue: 1);
 
                 string prompt = $"/update-workitems Triage ID: {triageRun.Id}.";
-                await _copilotAdapter.RunSessionAsync(
-                    prompt,
-                    agent: CopilotAdapter.Agents.WorkItemTriage,
-                    throwAfterRetries: true);
+                await _copilotAdapter.RunSessionAsync(prompt, throwAfterRetries: true);
 
                 progressTask.Increment(1);
                 progressTask.StopTask();
@@ -292,11 +280,9 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
                 var progressTask = ctx.AddTask("[bold]Creating work items[/]", autoStart: true, maxValue: 1);
 
                 string prompt = $"/create-workitems Triage ID: {triageRun.Id}.";
-                await _copilotAdapter.RunSessionAsync(
-                    prompt,
-                    agent: CopilotAdapter.Agents.WorkItemTriage,
-                    throwAfterRetries: true,
-                    onSessionEnd: async (_, _) => await ValidateCreatedWorkItemsAsync());
+                await _copilotAdapter.RunSessionAsync(prompt, throwAfterRetries: true);
+
+                await ValidateCreatedWorkItemsAsync();
 
                 progressTask.Increment(1);
                 progressTask.StopTask();
@@ -308,7 +294,7 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
 
         AnsiConsole.MarkupLine($"[green]\u2713[/] Created {workItemsCreated} new work items.");
 
-        async Task<SessionEndHookOutput> ValidateCreatedWorkItemsAsync()
+        async Task ValidateCreatedWorkItemsAsync()
         {
             var signals = await Task.WhenAll(
                 triageRun.SignalIds.Select(id => _storageProvider.GetSignalAsync(id)));
@@ -341,7 +327,6 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
                         $"Signal {signal.Id} has active analyses but is not represented in any work item.");
                 }
             }
-            return new SessionEndHookOutput();
         }
     }
 

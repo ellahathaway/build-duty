@@ -100,6 +100,21 @@ public class StorageTools
                         .Select(wi => new { wi.Id, wi.Resolved })
                         .ToList();
                 },
+                "list_work_items_for_analysis",
+                "List work items linked to a specific analysis. Returns a list of { id, resolved }."),
+
+            // Backward-compatible alias used by existing skills and prompts.
+            AIFunctionFactory.Create(
+                async (
+                    [Description("The ID of the signal")] string signalId,
+                    [Description("The ID of the analysis")] string analysisId) =>
+                {
+                    var workItems = await _storageProvider.GetWorkItemsAsync();
+                    return workItems
+                        .Where(wi => wi.LinkedAnalyses.Any(la => la.SignalId == signalId && la.AnalysisIds.Contains(analysisId)))
+                        .Select(wi => new { wi.Id, wi.Resolved })
+                        .ToList();
+                },
                 "get_work_items_for_analysis",
                 "Get work items linked to a specific analysis. Returns a list of { id, resolved }."),
 
@@ -111,6 +126,16 @@ public class StorageTools
                 },
                 "get_signal",
                 "Get a signal by ID."),
+
+            AIFunctionFactory.Create(
+                async (
+                    [Description("The ID of the signal")] string signalId) =>
+                {
+                    var signal = await _storageProvider.GetSignalAsync(signalId);
+                    return signal.Analyses;
+                },
+                "get_signal_analyses",
+                "Get all analyses for a signal by ID."),
 
             AIFunctionFactory.Create(
                 async (
