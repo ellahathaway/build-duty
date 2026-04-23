@@ -25,6 +25,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+echo "==> Clean"
+find "$REPO_ROOT/src" -type d \( -name bin -o -name obj \) -exec rm -rf {} +
+
 echo "==> Restore"
 dotnet restore "$SOLUTION"
 
