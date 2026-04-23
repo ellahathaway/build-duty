@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using BuildDuty.Core.Models;
 using Octokit;
@@ -6,6 +7,9 @@ namespace BuildDuty.Core;
 
 public class GitHubSignalCollector : SignalCollector<GitHubConfig>
 {
+    private readonly HashSet<string> _validExistingSignals = new();
+    private readonly object _validExistingSignalsLock = new();
+
     protected record RepositoryContext(string Organization, string RepositoryName, IGitHubClient Client);
 
     public GitHubSignalCollector(
@@ -18,50 +22,54 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
 
     protected override async Task<List<Signal>> CollectCoreAsync()
     {
-        var signals = await StorageProvider.GetAllSignalsAsync();
-        var issueSignals = signals.OfType<GitHubIssueSignal>();
-        var prSignals = signals.OfType<GitHubPullRequestSignal>();
-
-        // Group all configs and existing signals by org/repo so we collect
-        // once per repo and only gather missed signals a single time.
-        var repoGroups = Config.Organizations
-            .SelectMany(org => org.Repositories.Select(repo => (Org: org.Organization, Repo: repo)))
-            .GroupBy(x => (x.Org, x.Repo.Name))
-            .Select(g =>
-            {
-                var org = g.Key.Org;
-                var repoName = g.Key.Name;
-                var issueConfigs = g.SelectMany(x => x.Repo.Issues ?? []).ToList();
-                var prConfigs = g.SelectMany(x => x.Repo.PullRequests ?? []).ToList();
-                var repoPrefix = $"https://github.com/{org}/{repoName}/";
-                var issueSignalsForRepo = issueSignals
-                    .Where(s => s.Url.ToString().StartsWith(repoPrefix, StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-                var prSignalsForRepo = prSignals
-                    .Where(s => s.Url.ToString().StartsWith(repoPrefix, StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-                return (Org: org, RepoName: repoName, IssueConfigs: issueConfigs, PrConfigs: prConfigs, IssueSignals: issueSignalsForRepo, PrSignals: prSignalsForRepo);
-            });
+        var signals = (await StorageProvider.GetUnresolvedSignalsAsync())
+            .Where(s => s is GitHubSignal);
 
         var collectedSignals = new List<Signal>();
 
-        var repoTasks = repoGroups.Select(async group =>
-        {
-            var (org, repoName, issueConfigs, prConfigs, issueSignalsForRepo, prSignalsForRepo) = group;
-            var context = await CreateRepositoryContextAsync(org, repoName);
+        // Collect across all repositories in parallel
+        var repoTasks = Config.Organizations.SelectMany(org =>
+            org.Repositories.Select(repo => CollectRepositoryAsync(org.Organization, repo, signals)));
 
-            var issueSignals = await CollectSignalsAsync(context, issueConfigs, issueSignalsForRepo, isPullRequest: false);
-            var prSignals = await CollectSignalsAsync(context, prConfigs, prSignalsForRepo, isPullRequest: true);
-            return issueSignals.Concat(prSignals).ToList();
-        });
-
-        var results = await Task.WhenAll(repoTasks);
-        foreach (var newSignals in results)
+        foreach (var repoSignals in await Task.WhenAll(repoTasks))
         {
-            collectedSignals.AddRange(newSignals);
+            collectedSignals.AddRange(repoSignals);
+        }
+
+        // Any existing signal not visited during collection is out of scope
+        foreach (var signal in signals)
+        {
+            if (!_validExistingSignals.Contains(signal.Id))
+            {
+                var existing = signals.First(s => s.Id == signal.Id);
+                existing.AsOutOfScope();
+
+                collectedSignals.Add(existing);
+            }
         }
 
         return collectedSignals;
+    }
+
+    private async Task<List<GitHubSignal>> CollectRepositoryAsync(
+        string organization, GitHubRepositoryConfig repo, IEnumerable<Signal> signals)
+    {
+        var context = await CreateRepositoryContextAsync(organization, repo.Name);
+        string repoPrefix = $"https://github.com/{organization}/{repo.Name}/";
+
+        var issueSignalsTask = CollectSignalsAsync(
+            context,
+            repo.Issues ?? Enumerable.Empty<GitHubItemConfig>(),
+            signals.OfType<GitHubIssueSignal>().Where(s => s.Url.ToString().StartsWith(repoPrefix, StringComparison.OrdinalIgnoreCase)),
+            isPullRequest: false);
+        var prSignalsTask = CollectSignalsAsync(
+            context,
+            repo.PullRequests ?? Enumerable.Empty<GitHubItemConfig>(),
+            signals.OfType<GitHubPullRequestSignal>().Where(s => s.Url.ToString().StartsWith(repoPrefix, StringComparison.OrdinalIgnoreCase)),
+            isPullRequest: true);
+
+        var results = await Task.WhenAll(issueSignalsTask, prSignalsTask);
+        return results.SelectMany(r => r).ToList();
     }
 
     protected virtual async Task<RepositoryContext> CreateRepositoryContextAsync(string organization, string repository)
@@ -70,21 +78,18 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
         return new RepositoryContext(organization, repository, client);
     }
 
-    private static async Task<List<Signal>> CollectSignalsAsync(
+    private async Task<List<GitHubSignal>> CollectSignalsAsync(
         RepositoryContext context,
         IEnumerable<GitHubItemConfig> itemConfigs,
-        IEnumerable<Signal> existingSignals,
+        IEnumerable<GitHubSignal> existingSignals,
         bool isPullRequest)
     {
-        var signals = new List<Signal>();
+        var signals = new List<GitHubSignal>();
         var seenUrls = new HashSet<Uri>();
 
         foreach (var itemConfig in itemConfigs)
         {
-            var request = new RepositoryIssueRequest
-            {
-                State = itemConfig.State
-            };
+            var request = new RepositoryIssueRequest { State = ItemStateFilter.Open };
 
             foreach (var label in itemConfig.Labels)
             {
@@ -100,123 +105,150 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
                 var itemUrl = new Uri(item.HtmlUrl);
                 seenUrls.Add(itemUrl);
 
-                var existingSignal = existingSignals.FirstOrDefault(s => s.Url == itemUrl);
-                if (existingSignal != null)
+                var existing = existingSignals.FirstOrDefault(s => s.Url == itemUrl);
+                if (existing != null)
                 {
-                    var updatedAt = existingSignal is GitHubIssueSignal issueSignal ? issueSignal.TypedInfo.ItemInfo.UpdatedAt :
-                        existingSignal is GitHubPullRequestSignal prSignal ? prSignal.TypedInfo.ItemInfo.UpdatedAt :
-                        throw new InvalidOperationException("Unexpected signal type");
+                    lock (_validExistingSignals)
+                    {
+                        _validExistingSignals.Add(existing.Id);
+                    }
 
-                    if (updatedAt == item.UpdatedAt)
+                    if (existing.ItemInfo.UpdatedAt == item.UpdatedAt)
                     {
                         continue;
                     }
-                }
 
-                var signal = await CreateSignalAsync(context, item, new Uri(item.HtmlUrl), isPullRequest);
-                signal.Context = itemConfig.Context;
-                if (existingSignal is not null)
-                {
-                    signal.PreserveFrom(existingSignal);
+                    var (comments, timelineEvents, extras) = await FetchItemDetailsAsync(context, item, isPullRequest);
+
+                    existing.AsUpdated(item, comments, timelineEvents, extras, itemUrl);
+                    signals.Add(existing);
                 }
-                signals.Add(signal);
+                else
+                {
+                    var (comments, timelineEvents, extras) = await FetchItemDetailsAsync(context, item, isPullRequest);
+                    var signal = GitHubSignal.Create(item, comments, timelineEvents, extras, itemUrl, itemConfig.Context);
+                    signals.Add(signal);
+                }
             }
         }
 
-        signals.AddRange(await RefetchMissedSignalsAsync(context, existingSignals, seenUrls, isPullRequest));
+        // Re-fetch existing signals not returned by queries — may have changed state or become inaccessible
+        var staleTasks = existingSignals
+            .Where(s => !seenUrls.Contains(s.Url))
+            .Select(existing => RefreshExistingSignalAsync(context, existing));
+
+        foreach (var result in await Task.WhenAll(staleTasks))
+        {
+            if (result is not null)
+            {
+                signals.Add(result);
+            }
+        }
+
         return signals;
     }
 
     /// <summary>
-    /// Re-fetches existing signals that weren't returned by the config-based queries.
-    /// These may have changed state (e.g. closed) or become inaccessible (deleted/permissions).
+    /// Fetch comments, timeline events, and extras for a GitHub item in parallel.
     /// </summary>
-    private static async Task<List<Signal>> RefetchMissedSignalsAsync(
-        RepositoryContext context,
-        IEnumerable<Signal> existingSignals,
-        HashSet<Uri> seenUrls,
-        bool isPullRequest)
+    private static async Task<(List<string>? Comments, List<GitHubTimelineEvent>? TimelineEvents, JsonElement? Extras)>
+        FetchItemDetailsAsync(RepositoryContext context, Issue item, bool isPullRequest)
     {
-        var signals = new List<Signal>();
+        var commentsTask = GetCommentsAsync(context, item);
+        var timelineTask = GetTimelineEventsAsync(context, item);
+        var extrasTask = FetchExtrasAsync(context, item, isPullRequest);
 
-        foreach (var existing in existingSignals.Where(s => !seenUrls.Contains(s.Url)))
-        {
-            try
-            {
-                var issueInfo = existing is GitHubIssueSignal issueSignal ? issueSignal.TypedInfo.ItemInfo :
-                    existing is GitHubPullRequestSignal prSignal ? prSignal.TypedInfo.ItemInfo :
-                    throw new InvalidOperationException("Unexpected signal type");
+        await Task.WhenAll(commentsTask, timelineTask, extrasTask);
 
-                var item = await context.Client.Issue.Get(
-                    context.Organization,
-                    context.RepositoryName,
-                    issueInfo.Number);
-
-                if (issueInfo.UpdatedAt == item.UpdatedAt)
-                {
-                    continue;
-                }
-
-                var signal = await CreateSignalAsync(context, item, new Uri(item.HtmlUrl), isPullRequest);
-                signal.PreserveFrom(existing);
-                signals.Add(signal);
-            }
-            catch
-            {
-                var signal = CreateInaccessibleSignal(existing);
-                signal.PreserveFrom(existing);
-                signals.Add(signal);
-            }
-        }
-
-        return signals;
+        return (await commentsTask, await timelineTask, await extrasTask);
     }
 
-    private static async Task<Signal> CreateSignalAsync(RepositoryContext context, Issue item, Uri url, bool isPullRequest)
+    /// <summary>
+    /// Re-check a single existing signal that wasn't returned by the query.
+    /// Returns the updated signal, or null if unchanged.
+    /// </summary>
+    private async Task<GitHubSignal?> RefreshExistingSignalAsync(RepositoryContext context, GitHubSignal existing)
+    {
+        lock (_validExistingSignals)
+        {
+            _validExistingSignals.Add(existing.Id);
+        }
+
+        try
+        {
+            var item = await context.Client.Issue.Get(
+                context.Organization, context.RepositoryName, existing.ItemInfo.Number);
+
+            if (existing.ItemInfo.UpdatedAt == item.UpdatedAt)
+            {
+                return null;
+            }
+
+            var itemUrl = new Uri(item.HtmlUrl);
+            var (comments, timelineEvents, extras) = await FetchItemDetailsAsync(context, item, existing is GitHubPullRequestSignal);
+
+            if (item.State.Value == ItemState.Closed)
+            {
+                existing.AsResolved(item, comments, timelineEvents, extras, itemUrl);
+            }
+            else
+            {
+                existing.AsUpdated(item, comments, timelineEvents, extras, itemUrl);
+            }
+
+            return existing;
+        }
+        catch
+        {
+            existing.AsNotFound(existing.Context);
+            return existing;
+        }
+    }
+
+    private static async Task<List<GitHubTimelineEvent>?> GetTimelineEventsAsync(RepositoryContext context, Issue issue)
+    {
+        try
+        {
+            var timeline = await context.Client.Issue.Timeline.GetAllForIssue(
+                context.Organization, context.RepositoryName, issue.Number);
+
+            return timeline
+                .Where(e => (e.Event == EventInfoState.Crossreferenced || e.Event == EventInfoState.Connected)
+                    && e.Source?.Issue?.PullRequest != null)
+                .Select(e => new GitHubTimelineEvent(
+                    Event: e.Event.StringValue,
+                    SourceUrl: e.Source?.Issue?.HtmlUrl?.ToString(),
+                    SourceState: e.Source?.Issue?.State.StringValue))
+                .ToList();
+        }
+        catch
+        {
+            // Timeline may be unavailable — events will be null
+            return null;
+        }
+    }
+
+    private static async Task<List<string>?> GetCommentsAsync(RepositoryContext context, Issue issue)
+        => (await context.Client.Issue.Comment.GetAllForIssue(
+            context.Organization, context.RepositoryName, issue.Number))
+            .Select(c => c.Body).ToList();
+
+    private static async Task<JsonElement?> FetchExtrasAsync(RepositoryContext context, Issue issue, bool isPullRequest)
     {
         if (isPullRequest)
         {
-            var prInfo = await CreateGitHubPullRequestInfoAsync(context, item);
-            return new GitHubPullRequestSignal(prInfo, url);
+            var pr = await context.Client.PullRequest.Get(context.Organization, context.RepositoryName, issue.Number);
+            var checkRuns = await context.Client.Check.Run.GetAllForReference(
+                context.Organization, context.RepositoryName, pr.Head.Sha);
+
+            var checks = checkRuns.CheckRuns
+                .Select(cr => new GitHubCheckInfo(cr.Name, cr.Status.Value.ToString(), cr.Conclusion?.Value.ToString()))
+                .ToList();
+
+            return JsonSerializer.SerializeToElement(new { Merged = pr.Merged, Checks = checks });
         }
 
-        var issueInfo = await CreateGitHubIssueInfoAsync(context, item);
-        return new GitHubIssueSignal(issueInfo, url);
-    }
-
-    private static Signal CreateInaccessibleSignal(Signal existing)
-    {
-        if (existing is GitHubPullRequestSignal prSignal)
-        {
-            var prItemInfo = new GitHubItemInfo(
-                prSignal.TypedInfo.ItemInfo.Number,
-                prSignal.TypedInfo.ItemInfo.Title,
-                "Inaccessible - likely deleted or access lost",
-                DateTimeOffset.UtcNow,
-                null,
-                null);
-
-            return new GitHubPullRequestSignal(
-                new GitHubPullRequestInfo(prItemInfo, prSignal.TypedInfo.Merged, null), existing.Url);
-        }
-
-        if (existing is not GitHubIssueSignal)
-        {
-            throw new InvalidOperationException("Unexpected signal type");
-        }
-
-        var existingIssueInfo = ((GitHubIssueSignal)existing).TypedInfo;
-
-        var issueInfo = new GitHubIssueInfo(
-            new GitHubItemInfo(
-                existingIssueInfo.ItemInfo.Number,
-                existingIssueInfo.ItemInfo.Title,
-                "Inaccessible - likely deleted or access lost",
-                DateTimeOffset.UtcNow,
-                null,
-                null));
-
-        return new GitHubIssueSignal(issueInfo, existing.Url);
+        return null;
     }
 
     internal static bool MatchesItemConfig(Issue item, GitHubItemConfig config)
@@ -282,55 +314,4 @@ public class GitHubSignalCollector : SignalCollector<GitHubConfig>
 
         return false;
     }
-
-    private static async Task<GitHubIssueInfo> CreateGitHubIssueInfoAsync(RepositoryContext context, Issue issue)
-    {
-        var commentsQuery = await context.Client.Issue.Comment.GetAllForIssue(context.Organization, context.RepositoryName, issue.Number);
-        var comments = commentsQuery.Select(c => c.Body).ToList();
-
-        List<GitHubTimelineEvent>? timelineEvents = null;
-        try
-        {
-            var timeline = await context.Client.Issue.Timeline.GetAllForIssue(
-                context.Organization, context.RepositoryName, issue.Number);
-
-            timelineEvents = timeline
-                .Where(e => (e.Event == EventInfoState.Crossreferenced || e.Event == EventInfoState.Connected)
-                    && e.Source?.Issue?.PullRequest != null)
-                .Select(e => new GitHubTimelineEvent(
-                    Event: e.Event.StringValue,
-                    SourceUrl: e.Source?.Issue?.HtmlUrl?.ToString(),
-                    SourceState: e.Source?.Issue?.State.StringValue))
-                .ToList();
-        }
-        catch
-        {
-            // Timeline may be unavailable — events will be null
-        }
-
-        return new GitHubIssueInfo(new GitHubItemInfo(issue.Number, issue.Title, issue.State.Value.ToString(), issue.UpdatedAt, issue.Body, comments), timelineEvents);
-    }
-
-    private static async Task<GitHubItemInfo> CreateGitHubItemInfoAsync(RepositoryContext context, Issue issue)
-    {
-        var commentsQuery = await context.Client.Issue.Comment.GetAllForIssue(context.Organization, context.RepositoryName, issue.Number);
-        var comments = commentsQuery.Select(c => c.Body).ToList();
-        return new GitHubItemInfo(issue.Number, issue.Title, issue.State.Value.ToString(), issue.UpdatedAt, issue.Body, comments);
-    }
-
-    private static async Task<GitHubPullRequestInfo> CreateGitHubPullRequestInfoAsync(RepositoryContext context, Issue issue)
-    {
-        var pr = await context.Client.PullRequest.Get(context.Organization, context.RepositoryName, issue.Number);
-        var checkRuns = await context.Client.Check.Run.GetAllForReference(
-            context.Organization, context.RepositoryName, pr.Head.Sha);
-
-        var checks = checkRuns.CheckRuns
-            .Select(cr => new GitHubCheckInfo(cr.Name, cr.Status.Value.ToString(), cr.Conclusion?.Value.ToString()))
-            .ToList();
-
-        var itemInfo = await CreateGitHubItemInfoAsync(context, issue);
-
-        return new GitHubPullRequestInfo(itemInfo, pr.Merged, checks);
-    }
-
 }

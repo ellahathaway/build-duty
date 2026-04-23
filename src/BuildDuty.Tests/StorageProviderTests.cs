@@ -165,7 +165,9 @@ public class StorageProviderTests : IDisposable
         // Simulate collector creating a new signal object with same ID (preserving analyses)
         var updatedInfo = new GitHubIssueInfo(new GitHubItemInfo(1, "Test", "Closed", null, null, null));
         var updatedSignal = new GitHubIssueSignal(updatedInfo, new Uri("https://github.com/dotnet/runtime/issues/1"));
-        updatedSignal.PreserveFrom(signal);
+        updatedSignal.Id = signal.Id;
+        updatedSignal.Analyses = signal.Analyses;
+        updatedSignal.Context ??= signal.Context;
 
         var data2 = System.Text.Json.JsonSerializer.SerializeToElement(new { error = "second" });
         updatedSignal.Analyses.Add(new SignalAnalysis(data2, "Second analysis"));

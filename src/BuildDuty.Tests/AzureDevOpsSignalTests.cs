@@ -47,11 +47,9 @@ public class AzureDevOpsPipelineSignalTests
         record.Log?.Id);
 
     private static AzureDevOpsPipelineInfo ToPipelineInfo(
-        string orgUrl, Build build, List<AzureDevOpsTimelineRecordInfo> records,
-        List<BuildResult>? monitoredStatuses = null) =>
-        new(orgUrl, build.Project?.Id ?? Guid.Empty,
-            AzureDevOpsSignalCollector.ToBuildInfo(build), records,
-            monitoredStatuses ?? [BuildResult.Failed, BuildResult.PartiallySucceeded, BuildResult.Canceled]);
+        string orgUrl, Build build, List<AzureDevOpsTimelineRecordInfo> records) =>
+        new(orgUrl, build.Project?.Name ?? "TestProject", build.Definition?.Id ?? 0,
+            new AzureDevOpsBuildInfo(build.Id, build.Result, build.Definition?.Id ?? 0, build.SourceBranch, build.FinishTime), records);
 
     private static AzureDevOpsConfig CreateConfig(int pipelineId, List<string> branches, List<BuildResult>? status = null) => new()
     {
@@ -98,30 +96,9 @@ public class AzureDevOpsPipelineSignalTests
             _buildClient = buildClient;
         }
 
-        protected override async Task<List<Signal>> CollectCoreAsync()
+        protected override Task<OrganizationProjectContext> CreateOrganizationProjectContextAsync(string organizationUrl, string projectName)
         {
-            var pipelineSignals = (await StorageProvider.GetAllSignalsAsync())
-                .Where(s => s.Type == SignalType.AzureDevOpsPipeline)
-                .OfType<AzureDevOpsPipelineSignal>();
-
-            var collectedSignals = new List<Signal>();
-            foreach (var organization in Config.Organizations)
-            {
-                foreach (var project in organization.Projects)
-                {
-                    var context = new OrganizationProjectContext(
-                        organization.Url,
-                        project.Name,
-                        null!,
-                        _buildClient
-                    );
-
-                    var projectSignals = await CollectPipelineSignalsAsync(context, project.Pipelines, pipelineSignals);
-                    collectedSignals.AddRange(projectSignals);
-                }
-            }
-
-            return collectedSignals;
+            return Task.FromResult(new OrganizationProjectContext(organizationUrl, projectName, null!, _buildClient));
         }
 
         private static IGeneralTokenProvider CreateMockTokenProvider()
@@ -196,8 +173,8 @@ public class AzureDevOpsPipelineSignalTests
 
         var signal = Assert.Single(signals);
         var pipelineSignal = Assert.IsType<AzureDevOpsPipelineSignal>(signal);
-        Assert.Equal(100, pipelineSignal.TypedInfo.Build.Id);
-        Assert.Equal(BuildResult.Failed, pipelineSignal.TypedInfo.Build.Result);
+        Assert.Equal(100, pipelineSignal.TypedInfo.Build!.Id);
+        Assert.Equal(BuildResult.Failed, pipelineSignal.TypedInfo.Build!.Result);
     }
 
     [Fact]
@@ -283,7 +260,7 @@ public class AzureDevOpsPipelineSignalTests
 
         var signal = Assert.Single(signals);
         var pipelineSignal = Assert.IsType<AzureDevOpsPipelineSignal>(signal);
-        Assert.Equal(BuildResult.Failed, pipelineSignal.TypedInfo.Build.Result);
+        Assert.Equal(BuildResult.Failed, pipelineSignal.TypedInfo.Build!.Result);
     }
 
     [Fact]
@@ -459,7 +436,7 @@ public class AzureDevOpsPipelineSignalTests
             .ToList();
 
         Assert.Equal(2, signals.Count);
-        var ids = signals.Cast<AzureDevOpsPipelineSignal>().Select(s => s.TypedInfo.Build.Id).OrderBy(x => x).ToList();
+        var ids = signals.Cast<AzureDevOpsPipelineSignal>().Select(s => s.TypedInfo.Build!.Id).OrderBy(x => x).ToList();
         Assert.Equal([100, 200], ids);
     }
 
@@ -492,9 +469,9 @@ public class AzureDevOpsPipelineSignalTests
         var signal = Assert.Single(signals);
         var pipelineSignal = Assert.IsType<AzureDevOpsPipelineSignal>(signal);
         Assert.Equal(existingSignal.Id, pipelineSignal.Id);
-        Assert.Equal(BuildResult.Succeeded, pipelineSignal.TypedInfo.Build.Result);
-        Assert.Equal(101, pipelineSignal.TypedInfo.Build.Id);
-        Assert.Empty(pipelineSignal.TypedInfo.TimelineRecords);
+        Assert.Equal(BuildResult.Succeeded, pipelineSignal.TypedInfo.Build!.Result);
+        Assert.Equal(101, pipelineSignal.TypedInfo.Build!.Id);
+        Assert.Empty(pipelineSignal.TypedInfo.TimelineRecords!);
     }
 
     [Fact]
@@ -549,7 +526,7 @@ public class AzureDevOpsPipelineSignalTests
         var signal = Assert.Single(signals);
         var pipelineSignal = Assert.IsType<AzureDevOpsPipelineSignal>(signal);
         Assert.Equal(existingSignal.Id, pipelineSignal.Id);
-        Assert.Equal(101, pipelineSignal.TypedInfo.Build.Id);
+        Assert.Equal(101, pipelineSignal.TypedInfo.Build!.Id);
     }
 
     [Fact]
@@ -591,9 +568,416 @@ public class AzureDevOpsPipelineSignalTests
         var pipelineSignal = Assert.IsType<AzureDevOpsPipelineSignal>(signal);
 
         // The collected signal should have the newer-queued build, not the rerun
-        Assert.Equal(200, pipelineSignal.TypedInfo.Build.Id);
+        Assert.Equal(200, pipelineSignal.TypedInfo.Build!.Id);
         // Signal identity should be preserved from the existing signal
         Assert.Equal(existingSignal.Id, pipelineSignal.Id);
+    }
+
+    /// <summary>
+    /// Helper to create an existing signal, link it to a work item, and set up storage mocks.
+    /// Returns the existing signal and configured storage provider.
+    /// </summary>
+    private static (AzureDevOpsPipelineSignal Signal, IStorageProvider Storage) CreateExistingSignalWithWorkItem(
+        string orgUrl = "https://dev.azure.com/testorg",
+        string sourceBranch = "refs/heads/main",
+        int definitionId = 1,
+        BuildResult result = BuildResult.Failed)
+    {
+        var build = CreateBuild(100, result, definitionId: definitionId, sourceBranch: sourceBranch, finishTime: new DateTime(2026, 4, 1));
+        var record = CreateTimelineRecord(result: TaskResult.Failed);
+        var signal = new AzureDevOpsPipelineSignal(
+            ToPipelineInfo(orgUrl, build, [ToInfoRecord(record)]),
+            new Uri(orgUrl));
+
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns([new WorkItem { Id = "wi-1", LinkedAnalyses = [new LinkedAnalysis(signal.Id, [])] }]);
+        storageProvider.GetSignalAsync(signal.Id).Returns(signal);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
+
+        return (signal, storageProvider);
+    }
+
+    private static List<AzureDevOpsPipelineSignal> GetSavedPipelineSignals(IStorageProvider storageProvider) =>
+        storageProvider.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
+            .Select(call => call.GetArguments()[0])
+            .OfType<AzureDevOpsPipelineSignal>()
+            .ToList();
+
+    private static void AssertResolvedSignal(AzureDevOpsPipelineSignal signal, string expectedId)
+    {
+        Assert.Equal(expectedId, signal.Id);
+        Assert.Empty(signal.TypedInfo.TimelineRecords!);
+        Assert.Equal(SignalCollectionReason.Resolved, signal.CollectionReason);
+    }
+
+    private static void AssertOutOfScopeSignal(AzureDevOpsPipelineSignal signal, string expectedId)
+    {
+        Assert.Equal(expectedId, signal.Id);
+        Assert.Equal(SignalCollectionReason.OutOfScope, signal.CollectionReason);
+    }
+
+    [Fact]
+    public async Task CollectAsync_OrgRemovedFromConfig_ExistingSignal_MarkedOutOfScope()
+    {
+        var (existingSignal, storageProvider) = CreateExistingSignalWithWorkItem(orgUrl: "https://dev.azure.com/removedorg");
+        var buildClient = CreateMockBuildClient(null);
+
+        // Config has a different org than the existing signal
+        var config = CreateConfig(1, ["refs/heads/main"]);
+        var collector = new TestableAzureDevOpsCollector(config, storageProvider, buildClient);
+
+        await collector.CollectAsync();
+
+        var saved = GetSavedPipelineSignals(storageProvider);
+        var signal = Assert.Single(saved);
+        AssertOutOfScopeSignal(signal, existingSignal.Id);
+    }
+
+    [Fact]
+    public async Task CollectAsync_ProjectRemovedFromConfig_ExistingSignal_MarkedOutOfScope()
+    {
+        // Existing signal has project "TestProject" but we'll create a config with a different project name
+        var build = CreateBuild(100, BuildResult.Failed, finishTime: new DateTime(2026, 4, 1));
+        var record = CreateTimelineRecord(result: TaskResult.Failed);
+        var existingSignal = new AzureDevOpsPipelineSignal(
+            ToPipelineInfo("https://dev.azure.com/testorg", build, [ToInfoRecord(record)]),
+            new Uri("https://dev.azure.com/testorg"));
+
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns([new WorkItem { Id = "wi-1", LinkedAnalyses = [new LinkedAnalysis(existingSignal.Id, [])] }]);
+        storageProvider.GetSignalAsync(existingSignal.Id).Returns(existingSignal);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
+
+        var buildClient = CreateMockBuildClient(null);
+
+        // Config has project "OtherProject" — existing signal's "TestProject" no longer matches
+        var config = new AzureDevOpsConfig
+        {
+            Organizations =
+            [
+                new AzureDevOpsOrganizationConfig
+                {
+                    Url = "https://dev.azure.com/testorg",
+                    Projects =
+                    [
+                        new AzureDevOpsProjectConfig
+                        {
+                            Name = "OtherProject",
+                            Pipelines =
+                            [
+                                new AzureDevOpsPipelineConfig
+                                {
+                                    Id = 1,
+                                    Name = "TestPipeline",
+                                    Branches = ["refs/heads/main"],
+                                    Status = [BuildResult.Failed, BuildResult.PartiallySucceeded, BuildResult.Canceled],
+                                    TimelineFilters = [new TimelineFilter { Type = TimelineRecordType.Job, Names = [new Regex(".*")] }],
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        };
+        var collector = new TestableAzureDevOpsCollector(config, storageProvider, buildClient);
+
+        await collector.CollectAsync();
+
+        var saved = GetSavedPipelineSignals(storageProvider);
+        var signal = Assert.Single(saved);
+        AssertOutOfScopeSignal(signal, existingSignal.Id);
+    }
+
+    [Fact]
+    public async Task CollectAsync_PipelineRemovedFromConfig_ExistingSignal_MarkedOutOfScope()
+    {
+        // Existing signal is for pipeline 1, but config now only has pipeline 99
+        var (existingSignal, storageProvider) = CreateExistingSignalWithWorkItem(definitionId: 1);
+        var buildClient = CreateMockBuildClient(null);
+
+        var config = CreateConfig(99, ["refs/heads/main"]);
+        var collector = new TestableAzureDevOpsCollector(config, storageProvider, buildClient);
+
+        await collector.CollectAsync();
+
+        var saved = GetSavedPipelineSignals(storageProvider);
+        var signal = Assert.Single(saved);
+        AssertOutOfScopeSignal(signal, existingSignal.Id);
+    }
+
+    [Fact]
+    public async Task CollectAsync_BranchRemovedFromConfig_ExistingSignal_MarkedOutOfScope()
+    {
+        // Existing signal is for refs/heads/main, but config now only has refs/heads/release/9.0
+        var (existingSignal, storageProvider) = CreateExistingSignalWithWorkItem(sourceBranch: "refs/heads/main");
+        var buildClient = CreateMockBuildClient(null);
+
+        var config = CreateConfig(1, ["refs/heads/release/9.0"]);
+        var collector = new TestableAzureDevOpsCollector(config, storageProvider, buildClient);
+
+        await collector.CollectAsync();
+
+        var saved = GetSavedPipelineSignals(storageProvider);
+        var signal = Assert.Single(saved);
+        AssertOutOfScopeSignal(signal, existingSignal.Id);
+    }
+
+    [Fact]
+    public async Task CollectAsync_TimelineFilterChanged_ExistingSignal_MarkedOutOfScope()
+    {
+        // Existing signal has a "Build" job record, but config's timeline filter now only matches "Deploy"
+        var build = CreateBuild(100, BuildResult.Failed, finishTime: new DateTime(2026, 4, 1));
+        var existingRecord = CreateTimelineRecord(result: TaskResult.Failed, name: "Build");
+        var existingSignal = new AzureDevOpsPipelineSignal(
+            ToPipelineInfo("https://dev.azure.com/testorg", build, [ToInfoRecord(existingRecord)]),
+            new Uri("https://dev.azure.com/testorg"));
+
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns([new WorkItem { Id = "wi-1", LinkedAnalyses = [new LinkedAnalysis(existingSignal.Id, [])] }]);
+        storageProvider.GetSignalAsync(existingSignal.Id).Returns(existingSignal);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
+
+        // New build still fails, but the timeline only has a "Build" job — and the filter now requires "Deploy"
+        var newBuild = CreateBuild(101, BuildResult.Failed, finishTime: new DateTime(2026, 4, 2));
+        var newRecord = CreateTimelineRecord(result: TaskResult.Failed, name: "Build");
+        var timeline = CreateTimeline(newRecord);
+        var buildClient = CreateMockBuildClient(newBuild, timeline);
+
+        var config = new AzureDevOpsConfig
+        {
+            Organizations =
+            [
+                new AzureDevOpsOrganizationConfig
+                {
+                    Url = "https://dev.azure.com/testorg",
+                    Projects =
+                    [
+                        new AzureDevOpsProjectConfig
+                        {
+                            Name = "TestProject",
+                            Pipelines =
+                            [
+                                new AzureDevOpsPipelineConfig
+                                {
+                                    Id = 1,
+                                    Name = "TestPipeline",
+                                    Branches = ["refs/heads/main"],
+                                    Status = [BuildResult.Failed, BuildResult.PartiallySucceeded, BuildResult.Canceled],
+                                    TimelineFilters = [new TimelineFilter { Type = TimelineRecordType.Job, Names = [new Regex("^Deploy$")] }],
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        };
+        var collector = new TestableAzureDevOpsCollector(config, storageProvider, buildClient);
+
+        await collector.CollectAsync();
+
+        var saved = GetSavedPipelineSignals(storageProvider);
+        var signal = Assert.Single(saved);
+        AssertOutOfScopeSignal(signal, existingSignal.Id);
+    }
+
+    [Fact]
+    public async Task CollectAsync_BuildResultNoLongerMonitored_ExistingSignal_MarkedOutOfScope()
+    {
+        // Existing signal was for a Failed build, config previously monitored Failed.
+        // Now config only monitors PartiallySucceeded — and the latest build is still Failed.
+        var (existingSignal, storageProvider) = CreateExistingSignalWithWorkItem(result: BuildResult.Failed);
+
+        var latestBuild = CreateBuild(101, BuildResult.Failed, finishTime: new DateTime(2026, 4, 2));
+        var buildClient = CreateMockBuildClient(latestBuild);
+
+        // Config now only monitors PartiallySucceeded — Failed is no longer tracked
+        var config = CreateConfig(1, ["refs/heads/main"], [BuildResult.PartiallySucceeded]);
+        var collector = new TestableAzureDevOpsCollector(config, storageProvider, buildClient);
+
+        await collector.CollectAsync();
+
+        var saved = GetSavedPipelineSignals(storageProvider);
+        var signal = Assert.Single(saved);
+        AssertResolvedSignal(signal, existingSignal.Id);
+    }
+
+    // ========== CollectionReason Tests ==========
+
+    [Fact]
+    public async Task CollectAsync_NewSignal_HasCollectionReasonNew()
+    {
+        var build = CreateBuild(100, BuildResult.Failed, finishTime: new DateTime(2026, 4, 5));
+        var record = CreateTimelineRecord(result: TaskResult.Failed);
+        var timeline = CreateTimeline(record);
+
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns(Array.Empty<WorkItem>());
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
+
+        var buildClient = CreateMockBuildClient(build, timeline);
+        var config = CreateConfig(1, ["refs/heads/main"]);
+        var collector = new TestableAzureDevOpsCollector(config, storageProvider, buildClient);
+
+        await collector.CollectAsync();
+
+        var saved = GetSavedPipelineSignals(storageProvider);
+        var signal = Assert.Single(saved);
+        Assert.Equal(SignalCollectionReason.New, signal.CollectionReason);
+    }
+
+    [Fact]
+    public async Task CollectAsync_UpdatedSignal_HasCollectionReasonUpdated()
+    {
+        var oldBuild = CreateBuild(100, BuildResult.Failed, finishTime: new DateTime(2026, 4, 1));
+        var existingSignal = new AzureDevOpsPipelineSignal(
+            ToPipelineInfo("https://dev.azure.com/testorg", oldBuild, [ToInfoRecord(CreateTimelineRecord(result: TaskResult.Failed))]),
+            new Uri("https://dev.azure.com/testorg"));
+
+        var newBuild = CreateBuild(101, BuildResult.Failed, finishTime: new DateTime(2026, 4, 2));
+        var timeline = CreateTimeline(CreateTimelineRecord(result: TaskResult.Failed));
+
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns([new WorkItem { Id = "wi-1", LinkedAnalyses = [new LinkedAnalysis(existingSignal.Id, [])] }]);
+        storageProvider.GetSignalAsync(existingSignal.Id).Returns(existingSignal);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
+
+        var buildClient = CreateMockBuildClient(newBuild, timeline);
+        var config = CreateConfig(1, ["refs/heads/main"]);
+        var collector = new TestableAzureDevOpsCollector(config, storageProvider, buildClient);
+
+        await collector.CollectAsync();
+
+        var saved = GetSavedPipelineSignals(storageProvider);
+        var signal = Assert.Single(saved);
+        Assert.Equal(existingSignal.Id, signal.Id);
+        Assert.Equal(SignalCollectionReason.Updated, signal.CollectionReason);
+        Assert.Equal(101, signal.TypedInfo.Build!.Id);
+    }
+
+    [Fact]
+    public async Task CollectAsync_ResolvedSignal_HasCollectionReasonResolved()
+    {
+        var failedBuild = CreateBuild(100, BuildResult.Failed, finishTime: new DateTime(2026, 4, 1));
+        var existingSignal = new AzureDevOpsPipelineSignal(
+            ToPipelineInfo("https://dev.azure.com/testorg", failedBuild, [ToInfoRecord(CreateTimelineRecord(result: TaskResult.Failed))]),
+            new Uri("https://dev.azure.com/testorg"));
+
+        var passingBuild = CreateBuild(101, BuildResult.Succeeded, finishTime: new DateTime(2026, 4, 2));
+
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns([new WorkItem { Id = "wi-1", LinkedAnalyses = [new LinkedAnalysis(existingSignal.Id, [])] }]);
+        storageProvider.GetSignalAsync(existingSignal.Id).Returns(existingSignal);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
+
+        var buildClient = CreateMockBuildClient(passingBuild);
+        var config = CreateConfig(1, ["refs/heads/main"], [BuildResult.Failed]);
+        var collector = new TestableAzureDevOpsCollector(config, storageProvider, buildClient);
+
+        await collector.CollectAsync();
+
+        var saved = GetSavedPipelineSignals(storageProvider);
+        var signal = Assert.Single(saved);
+        Assert.Equal(existingSignal.Id, signal.Id);
+        Assert.Equal(SignalCollectionReason.Resolved, signal.CollectionReason);
+        Assert.Equal(101, signal.TypedInfo.Build!.Id);
+        Assert.Empty(signal.TypedInfo.TimelineRecords!);
+    }
+
+    [Fact]
+    public async Task CollectAsync_NotFoundSignal_HasCollectionReasonNotFound()
+    {
+        // Existing signal but no build found (e.g. builds aged out)
+        var (existingSignal, storageProvider) = CreateExistingSignalWithWorkItem();
+        var buildClient = CreateMockBuildClient(null);
+
+        var config = CreateConfig(1, ["refs/heads/main"]);
+        var collector = new TestableAzureDevOpsCollector(config, storageProvider, buildClient);
+
+        await collector.CollectAsync();
+
+        var saved = GetSavedPipelineSignals(storageProvider);
+        var signal = Assert.Single(saved);
+        Assert.Equal(existingSignal.Id, signal.Id);
+        Assert.Equal(SignalCollectionReason.NotFound, signal.CollectionReason);
+    }
+
+    [Fact]
+    public async Task CollectAsync_OutOfScopeSignal_ConfigDrift_HasCollectionReasonOutOfScope()
+    {
+        // Existing signal's pipeline was removed from config
+        var (existingSignal, storageProvider) = CreateExistingSignalWithWorkItem(definitionId: 1);
+        var buildClient = CreateMockBuildClient(null);
+
+        // Config has pipeline 99, not pipeline 1
+        var config = CreateConfig(99, ["refs/heads/main"]);
+        var collector = new TestableAzureDevOpsCollector(config, storageProvider, buildClient);
+
+        await collector.CollectAsync();
+
+        var saved = GetSavedPipelineSignals(storageProvider);
+        var signal = Assert.Single(saved);
+        Assert.Equal(existingSignal.Id, signal.Id);
+        Assert.Equal(SignalCollectionReason.OutOfScope, signal.CollectionReason);
+    }
+
+    [Fact]
+    public async Task CollectAsync_OutOfScopeSignal_TimelineNoMatch_HasCollectionReasonOutOfScope()
+    {
+        // Build still fails but timeline records don't match the configured filters
+        var oldBuild = CreateBuild(100, BuildResult.Failed, finishTime: new DateTime(2026, 4, 1));
+        var existingSignal = new AzureDevOpsPipelineSignal(
+            ToPipelineInfo("https://dev.azure.com/testorg", oldBuild, [ToInfoRecord(CreateTimelineRecord(result: TaskResult.Failed, name: "Build"))]),
+            new Uri("https://dev.azure.com/testorg"));
+
+        var newBuild = CreateBuild(101, BuildResult.Failed, finishTime: new DateTime(2026, 4, 2));
+        var newRecord = CreateTimelineRecord(result: TaskResult.Failed, name: "Build");
+        var timeline = CreateTimeline(newRecord);
+
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns([new WorkItem { Id = "wi-1", LinkedAnalyses = [new LinkedAnalysis(existingSignal.Id, [])] }]);
+        storageProvider.GetSignalAsync(existingSignal.Id).Returns(existingSignal);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
+
+        var buildClient = CreateMockBuildClient(newBuild, timeline);
+
+        // Timeline filter requires "Deploy" but build only has "Build"
+        var config = new AzureDevOpsConfig
+        {
+            Organizations =
+            [
+                new AzureDevOpsOrganizationConfig
+                {
+                    Url = "https://dev.azure.com/testorg",
+                    Projects =
+                    [
+                        new AzureDevOpsProjectConfig
+                        {
+                            Name = "TestProject",
+                            Pipelines =
+                            [
+                                new AzureDevOpsPipelineConfig
+                                {
+                                    Id = 1,
+                                    Name = "TestPipeline",
+                                    Branches = ["refs/heads/main"],
+                                    Status = [BuildResult.Failed, BuildResult.PartiallySucceeded, BuildResult.Canceled],
+                                    TimelineFilters = [new TimelineFilter { Type = TimelineRecordType.Job, Names = [new Regex("^Deploy$")] }],
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        };
+        var collector = new TestableAzureDevOpsCollector(config, storageProvider, buildClient);
+
+        await collector.CollectAsync();
+
+        var saved = GetSavedPipelineSignals(storageProvider);
+        var signal = Assert.Single(saved);
+        Assert.Equal(existingSignal.Id, signal.Id);
+        Assert.Equal(SignalCollectionReason.OutOfScope, signal.CollectionReason);
     }
 }
 

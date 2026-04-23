@@ -7,7 +7,9 @@ namespace BuildDuty.Core;
 public class AzureDevOpsSignalCollector : SignalCollector<AzureDevOpsConfig>
 {
     private readonly ReleaseBranchResolver _branchResolver;
-    internal record OrganizationProjectContext(string OrganizationUrl, string ProjectName, VssConnection Connection, BuildHttpClient BuildClient);
+    private readonly HashSet<string> _validExistingSignals = [];
+    private readonly object _validExistingSignalsLock = new();
+    protected internal record OrganizationProjectContext(string OrganizationUrl, string ProjectName, VssConnection Connection, BuildHttpClient BuildClient);
 
     public AzureDevOpsSignalCollector(
         AzureDevOpsConfig config,
@@ -21,38 +23,48 @@ public class AzureDevOpsSignalCollector : SignalCollector<AzureDevOpsConfig>
 
     protected override async Task<List<Signal>> CollectCoreAsync()
     {
-        var pipelineSignals = (await StorageProvider.GetAllSignalsAsync())
+        var existingSignals = (await StorageProvider.GetUnresolvedSignalsAsync())
             .Where(s => s.Type == SignalType.AzureDevOpsPipeline)
-            .OfType<AzureDevOpsPipelineSignal>();
+            .OfType<AzureDevOpsPipelineSignal>()
+            .ToList();
 
         var collectedSignals = new List<Signal>();
+
         foreach (var organization in Config.Organizations)
         {
-            var connection = await TokenProvider.GetAzureDevOpsConnectionAsync(organization.Url);
-            var buildClient = await connection.GetClientAsync<BuildHttpClient>();
-
             foreach (var project in organization.Projects)
             {
-                var context = new OrganizationProjectContext(
-                    organization.Url,
-                    project.Name,
-                    connection,
-                    buildClient
-                );
+                var context = await CreateOrganizationProjectContextAsync(organization.Url, project.Name);
 
-                var projectSignals = await CollectPipelineSignalsAsync(context, project.Pipelines, pipelineSignals);
-                collectedSignals.AddRange(projectSignals);
+                var pipelineSignals = await CollectPipelineSignalsAsync(context, project.Pipelines, existingSignals);
+                collectedSignals.AddRange(pipelineSignals);
+            }
+        }
+
+        // Any existing signal not encountered during collection is out of scope.
+        foreach (var existing in existingSignals)
+        {
+            if (!_validExistingSignals.Contains(existing.Id))
+            {
+                existing.AsOutOfScope();
+                collectedSignals.Add(existing);
             }
         }
 
         return collectedSignals;
     }
 
+    protected virtual async Task<OrganizationProjectContext> CreateOrganizationProjectContextAsync(string organizationUrl, string projectName)
+    {
+        var connection = await TokenProvider.GetAzureDevOpsConnectionAsync(organizationUrl);
+        var buildClient = await connection.GetClientAsync<BuildHttpClient>();
+        return new OrganizationProjectContext(organizationUrl, projectName, connection, buildClient);
+    }
+
     internal async Task<List<AzureDevOpsPipelineSignal>> CollectPipelineSignalsAsync(
         OrganizationProjectContext context,
         List<AzureDevOpsPipelineConfig> pipelines,
-        IEnumerable<AzureDevOpsPipelineSignal> existingSignals
-        )
+        IEnumerable<AzureDevOpsPipelineSignal> existingSignals)
     {
         foreach (var pipeline in pipelines)
         {
@@ -91,93 +103,96 @@ public class AzureDevOpsSignalCollector : SignalCollector<AzureDevOpsConfig>
         return results.SelectMany(s => s).ToList();
     }
 
-    private async Task<List<AzureDevOpsPipelineSignal>> CollectSinglePipelineSignalsAsync(
+    internal async Task<List<AzureDevOpsPipelineSignal>> CollectSinglePipelineSignalsAsync(
         OrganizationProjectContext context,
         AzureDevOpsPipelineConfig pipeline,
-        IEnumerable<AzureDevOpsPipelineSignal> existingSignals
-        )
+        IEnumerable<AzureDevOpsPipelineSignal> existingSignals)
     {
         var signals = new List<AzureDevOpsPipelineSignal>();
         var branches = await ResolveBranchesAsync(context, pipeline);
 
         foreach (var branch in branches)
         {
-            // Find existing signal for this pipeline+branch (not by build ID — the latest build may differ)
-            var normalizedBranch = branch.StartsWith("refs/", StringComparison.OrdinalIgnoreCase) ? branch : $"refs/heads/{branch}";
             var existingSignal = existingSignals.FirstOrDefault(s =>
-                s.TypedInfo.Build.DefinitionId == pipeline.Id
-                && string.Equals(s.TypedInfo.Build.SourceBranch, normalizedBranch, StringComparison.OrdinalIgnoreCase));
+                s.TypedInfo.OrganizationUrl == context.OrganizationUrl &&
+                s.TypedInfo.ProjectName == context.ProjectName &&
+                s.TypedInfo.PipelineId == pipeline.Id &&
+                s.TypedInfo.Build?.SourceBranch == branch);
+
+            if (existingSignal != null)
+            {
+                lock (_validExistingSignalsLock)
+                {
+                    _validExistingSignals.Add(existingSignal.Id);
+                }
+            }
 
             var build = await GetLatestBuildAsync(context, pipeline.Id, branch, pipeline.Age);
 
+            // Build is invalid
             if (build == null || build.Result is not BuildResult buildResult)
             {
                 if (existingSignal != null)
                 {
-                    // No build found, but we had a previous signal
-                    // Update the existing signal to have null build info so AI can see it's now "recovered" (no active failure)
-                    var updatedSignal = new AzureDevOpsPipelineSignal(existingSignal.TypedInfo, existingSignal.Url);
-                    updatedSignal.PreserveFrom(existingSignal);
-                    signals.Add(updatedSignal);
+                    // Existing signal is no longer valid
+                    existingSignal.AsNotFound();
+                    existingSignal.Context = pipeline.Context;
+                    signals.Add(existingSignal);
                 }
                 continue;
             }
 
-            if (existingSignal?.TypedInfo.Build.FinishTime == build.FinishTime)
+            // Build is the same as the existing signal's build
+            if (existingSignal?.TypedInfo.Build?.FinishTime == build.FinishTime)
             {
-                // Build is the same as the existing signal's build, so skip (no new information for AI)
                 continue;
             }
 
+            // Build is not in the list of statuses we collect
             if (!pipeline.Status.Contains(build.Result ?? BuildResult.None))
             {
-                // Latest build is no longer a status we collect for (e.g. it succeeded).
-                // If there's an existing signal tied to a work item, update it so AI can see it's now changed.
+                // Existing signal is resolved
                 if (existingSignal != null)
                 {
-                    var buildInfo = ToBuildInfo(build);
-                    var pipelineInfo = new AzureDevOpsPipelineInfo(context.OrganizationUrl, build.Project?.Id ?? Guid.Empty, buildInfo, [], pipeline.Status);
-                    var updatedSignal = new AzureDevOpsPipelineSignal(pipelineInfo, existingSignal.Url);
-                    updatedSignal.Context = pipeline.Context;
-                    updatedSignal.PreserveFrom(existingSignal);
-                    signals.Add(updatedSignal);
+                    existingSignal.AsResolved(build, pipeline.Context);
+                    signals.Add(existingSignal);
                 }
                 continue;
             }
 
             var timelineRecords = await GetTimelineRecordsAsync(context, build.Id, pipeline.TimelineResults, pipeline.TimelineFilters);
 
-            // If timeline filters are configured but no records matched, the failure is
-            // in stages/jobs we don't monitor — skip this build.
+            // Timeline records don't match the configured filters
             if (pipeline.TimelineFilters is { Count: > 0 } && timelineRecords.Count == 0)
             {
+                // Existing signal is out of scope due to no matching timeline records
+                if (existingSignal != null)
+                {
+                    existingSignal.AsOutOfScope();
+                    existingSignal.Context = pipeline.Context;
+                    signals.Add(existingSignal);
+                }
                 continue;
             }
 
-            var pInfo = new AzureDevOpsPipelineInfo(context.OrganizationUrl, build.Project?.Id ?? Guid.Empty, ToBuildInfo(build), timelineRecords, pipeline.Status);
-            var buildUrl = new Uri($"{context.OrganizationUrl.TrimEnd('/')}/{build.Project?.Id ?? Guid.Empty}/_build/results?buildId={build.Id}");
-            var signal = new AzureDevOpsPipelineSignal(pInfo, buildUrl);
-            signal.Context = pipeline.Context;
-
-            if (existingSignal == null)
+            // Timeline records match the configured filters and there is an existing signal
+            if (existingSignal != null)
             {
-                signals.Add(signal);
+                existingSignal.AsUpdated(build, timelineRecords, pipeline.Context);
+                signals.Add(existingSignal);
                 continue;
             }
 
-            signal.PreserveFrom(existingSignal);
+            // Create a new signal for the current build
+            var buildInfo = new AzureDevOpsBuildInfo(build.Id, build.Result, build.Definition.Id, build.SourceBranch, build.FinishTime);
+            var pInfo = new AzureDevOpsPipelineInfo(context.OrganizationUrl, context.ProjectName, pipeline.Id, buildInfo, timelineRecords);
+            var buildUrl = new Uri($"{context.OrganizationUrl.TrimEnd('/')}/{context.ProjectName}/_build/results?buildId={build.Id}");
+            var signal = new AzureDevOpsPipelineSignal(pInfo, buildUrl);
             signals.Add(signal);
         }
 
         return signals;
     }
-
-    internal static AzureDevOpsBuildInfo ToBuildInfo(Build build) => new(
-        build.Id,
-        build.Result,
-        build.Definition.Id,
-        build.SourceBranch,
-        build.FinishTime);
 
     private async Task<Build?> GetLatestBuildAsync(
         OrganizationProjectContext context,
@@ -396,18 +411,20 @@ public class AzureDevOpsSignalCollector : SignalCollector<AzureDevOpsConfig>
         OrganizationProjectContext context,
         AzureDevOpsPipelineConfig pipeline)
     {
-        if (pipeline.Release is null)
-        {
-            return pipeline.Branches;
-        }
+        var branches = pipeline.Release is null
+            ? pipeline.Branches
+            : await _branchResolver.ResolveAsync(
+                context.Connection,
+                context.ProjectName,
+                pipeline.Id,
+                pipeline.Release.SupportPhases is { Count: > 0 }
+                    ? string.Join(',', pipeline.Release.SupportPhases)
+                    : null,
+                pipeline.Release.MinVersion);
 
-        return await _branchResolver.ResolveAsync(
-            context.Connection,
-            context.ProjectName,
-            pipeline.Id,
-            pipeline.Release.SupportPhases is { Count: > 0 }
-                ? string.Join(',', pipeline.Release.SupportPhases)
-                : null,
-            pipeline.Release.MinVersion);
+        return branches
+            .Select(b => b.StartsWith("refs/", StringComparison.OrdinalIgnoreCase) ? b : $"refs/heads/{b}")
+            .ToList();
     }
+
 }

@@ -39,9 +39,6 @@ public sealed class GitHubItemConfig
     [YamlMember(Alias = "name")]
     public Regex Name { get; set; } = new Regex(".*");
 
-    [YamlMember(Alias = "state")]
-    public ItemStateFilter State { get; set; } = ItemStateFilter.Open;
-
     [YamlMember(Alias = "context")]
     public string? Context { get; set; }
 
