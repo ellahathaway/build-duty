@@ -23,7 +23,7 @@ azureDevOps:
               timelineFilters:
                 - type: Stage
                   names:
-                    - "^Source.*"
+                    - "^VMR Source.*"
                 - type: Job
                   names:
                     - "^Validate Signing.*"
