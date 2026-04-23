@@ -33,9 +33,9 @@ public class AzureDevOpsTools
                 {
                     // Load the log
                     var context = await GetPipelineContextAsync(signalId);
-                    Guid projectId = context.Signal.TypedInfo.ProjectId;
-                    int buildId = context.Signal.TypedInfo.Build.Id;
-                    using var stream = await context.BuildClient.GetBuildLogAsync(projectId, buildId, logId);
+                    string projectName = context.Signal.TypedInfo.ProjectName;
+                    int buildId = context.Signal.TypedInfo.Build?.Id ?? throw new InvalidOperationException($"Signal {signalId} has no associated build.");
+                    using var stream = await context.BuildClient.GetBuildLogAsync(projectName, buildId, logId);
 
                     // Filter the log if filters were provided, otherwise return the full log
                     Regex? rx = null;
@@ -79,7 +79,7 @@ public class AzureDevOpsTools
                     {
                         var context = await GetPipelineContextAsync(signalId);
                         var info = context.Signal.TypedInfo;
-                        var timeline = await context.BuildClient.GetBuildTimelineAsync(info.ProjectId, info.Build.Id)
+                        var timeline = await context.BuildClient.GetBuildTimelineAsync(info.ProjectName, info.Build?.Id ?? throw new InvalidOperationException($"Signal {signalId} has no associated build."))
                             ?? throw new InvalidOperationException($"No timeline for build {info.Build.Id}.");
 
                         var allRecords = timeline.Records?.ToList() ?? [];

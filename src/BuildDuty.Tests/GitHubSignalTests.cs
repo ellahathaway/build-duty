@@ -61,7 +61,6 @@ public class GitHubSignalTests
                         Issues = [new GitHubItemConfig
                         {
                             Labels = labels ?? [],
-                            State = ItemStateFilter.Open,
                             Authors = authors ?? [],
                             ExcludeLabels = excludeLabels ?? [],
                         }]
@@ -83,7 +82,7 @@ public class GitHubSignalTests
                     new GitHubRepositoryConfig
                     {
                         Name = repo,
-                        PullRequests = configs ?? [new GitHubItemConfig { Name = new Regex(".*"), State = ItemStateFilter.Open }]
+                        PullRequests = configs ?? [new GitHubItemConfig { Name = new Regex(".*") }]
                     }
                 ]
             }
@@ -102,8 +101,8 @@ public class GitHubSignalTests
                     new GitHubRepositoryConfig
                     {
                         Name = "runtime",
-                        Issues = [new GitHubItemConfig { Labels = ["bug"], State = ItemStateFilter.Open }],
-                        PullRequests = [new GitHubItemConfig { Name = new Regex("^Update"), State = ItemStateFilter.Open }]
+                        Issues = [new GitHubItemConfig { Labels = ["bug"] }],
+                        PullRequests = [new GitHubItemConfig { Name = new Regex("^Update") }]
                     }
                 ]
             }
@@ -256,7 +255,7 @@ public class GitHubSignalTests
 
         var configs = new List<GitHubItemConfig>
         {
-            new() { Name = new Regex("^Update"), State = ItemStateFilter.Open }
+            new() { Name = new Regex("^Update") }
         };
 
         var client = Substitute.For<IGitHubClient>();
@@ -840,7 +839,7 @@ public class GitHubSignalTests
 
         var configs = new List<GitHubItemConfig>
         {
-            new() { Name = new Regex(".*"), State = ItemStateFilter.Open, Authors = ["dotnet-bot"] }
+            new() { Name = new Regex(".*"), Authors = ["dotnet-bot"] }
         };
 
         var client = Substitute.For<IGitHubClient>();
@@ -875,7 +874,7 @@ public class GitHubSignalTests
 
         var configs = new List<GitHubItemConfig>
         {
-            new() { Name = new Regex(".*"), State = ItemStateFilter.Open, Labels = ["bug"] }
+            new() { Name = new Regex(".*"), Labels = ["bug"] }
         };
 
         var client = Substitute.For<IGitHubClient>();
@@ -910,7 +909,7 @@ public class GitHubSignalTests
 
         var configs = new List<GitHubItemConfig>
         {
-            new() { Name = new Regex(".*"), State = ItemStateFilter.Open, ExcludeLabels = ["backport"] }
+            new() { Name = new Regex(".*"), ExcludeLabels = ["backport"] }
         };
 
         var client = Substitute.For<IGitHubClient>();
@@ -957,9 +956,9 @@ public class GitHubSignalTests
                         new GitHubRepositoryConfig
                         {
                             Name = "runtime",
-                            Issues = [new GitHubItemConfig { Labels = ["bug"], State = ItemStateFilter.Open }],
+                            Issues = [new GitHubItemConfig { Labels = ["bug"] }],
                             // Broad PR config that matches everything — previously would also collect the issue
-                            PullRequests = [new GitHubItemConfig { Name = new Regex(".*"), State = ItemStateFilter.Open }]
+                            PullRequests = [new GitHubItemConfig { Name = new Regex(".*") }]
                         }
                     ]
                 }
@@ -1174,8 +1173,8 @@ public class GitHubSignalTests
 
         var signal = Assert.Single(signals);
         var issueSignal = Assert.IsType<GitHubIssueSignal>(signal);
-        Assert.NotNull(issueSignal.TypedInfo.TimelineEvents);
-        var evt = Assert.Single(issueSignal.TypedInfo.TimelineEvents);
+        Assert.NotNull(issueSignal.TypedInfo.ItemInfo.TimelineEvents);
+        var evt = Assert.Single(issueSignal.TypedInfo.ItemInfo.TimelineEvents);
         Assert.Equal("cross-referenced", evt.Event);
         Assert.Equal("https://github.com/dotnet/sdk/pull/50", evt.SourceUrl);
         Assert.Equal("open", evt.SourceState);
@@ -1210,8 +1209,8 @@ public class GitHubSignalTests
         var signal = Assert.Single(signals);
         var issueSignal = Assert.IsType<GitHubIssueSignal>(signal);
         // Cross-referenced issues (not PRs) should be excluded
-        Assert.NotNull(issueSignal.TypedInfo.TimelineEvents);
-        Assert.Empty(issueSignal.TypedInfo.TimelineEvents);
+        Assert.NotNull(issueSignal.TypedInfo.ItemInfo.TimelineEvents);
+        Assert.Empty(issueSignal.TypedInfo.ItemInfo.TimelineEvents);
     }
 
     [Fact]
@@ -1240,9 +1239,217 @@ public class GitHubSignalTests
 
         var signal = Assert.Single(signals);
         var issueSignal = Assert.IsType<GitHubIssueSignal>(signal);
-        Assert.NotNull(issueSignal.TypedInfo.TimelineEvents);
-        Assert.Empty(issueSignal.TypedInfo.TimelineEvents);
+        Assert.NotNull(issueSignal.TypedInfo.ItemInfo.TimelineEvents);
+        Assert.Empty(issueSignal.TypedInfo.ItemInfo.TimelineEvents);
     }
 
     #endregion
+
+    // ========== CollectionReason Tests ==========
+
+    private static List<Signal> GetSavedSignals(IStorageProvider storageProvider) =>
+        storageProvider.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(IStorageProvider.SaveSignalAsync))
+            .Select(call => (Signal)call.GetArguments()[0]!)
+            .ToList();
+
+    [Fact]
+    public async Task CollectAsync_NewIssue_HasCollectionReasonNew()
+    {
+        var issue = CreateIssue(1, ItemState.Open, "Bug A", labels: [CreateLabel("bug")]);
+
+        var client = Substitute.For<IGitHubClient>();
+        client.Issue.GetAllForRepository("dotnet", "runtime", Arg.Any<RepositoryIssueRequest>())
+            .Returns([issue]);
+
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns(Array.Empty<WorkItem>());
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
+
+        var collector = new TestableGitHubCollector(CreateIssueConfig(), storageProvider, client);
+        await collector.CollectAsync();
+
+        var signal = Assert.Single(GetSavedSignals(storageProvider));
+        Assert.IsType<GitHubIssueSignal>(signal);
+        Assert.Equal(SignalCollectionReason.New, signal.CollectionReason);
+    }
+
+    [Fact]
+    public async Task CollectAsync_NewPullRequest_HasCollectionReasonNew()
+    {
+        var prIssue = CreateIssue(1, ItemState.Open, title: "Update dependencies", isPr: true, org: "dotnet", repo: "sdk");
+        var pr = CreatePullRequest(1, ItemState.Open, title: "Update dependencies");
+
+        var client = Substitute.For<IGitHubClient>();
+        client.Issue.GetAllForRepository("dotnet", "sdk", Arg.Any<RepositoryIssueRequest>())
+            .Returns([prIssue]);
+        client.PullRequest.Get("dotnet", "sdk", 1).Returns(pr);
+        SetupPullRequestMocks(client);
+
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns(Array.Empty<WorkItem>());
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
+
+        var collector = new TestableGitHubCollector(CreatePrConfig(), storageProvider, client);
+        await collector.CollectAsync();
+
+        var signal = Assert.Single(GetSavedSignals(storageProvider));
+        Assert.IsType<GitHubPullRequestSignal>(signal);
+        Assert.Equal(SignalCollectionReason.New, signal.CollectionReason);
+    }
+
+    [Fact]
+    public async Task CollectAsync_UpdatedIssue_HasCollectionReasonUpdated()
+    {
+        var originalIssue = CreateIssue(1, ItemState.Open, updatedAt: new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero), labels: [CreateLabel("bug")]);
+        var existingSignal = new GitHubIssueSignal(ToIssueInfo(originalIssue), new Uri(originalIssue.HtmlUrl));
+
+        var updatedIssue = CreateIssue(1, ItemState.Open, updatedAt: new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero), labels: [CreateLabel("bug")]);
+
+        var client = Substitute.For<IGitHubClient>();
+        client.Issue.GetAllForRepository("dotnet", "runtime", Arg.Any<RepositoryIssueRequest>())
+            .Returns([updatedIssue]);
+
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns([new WorkItem { Id = "wi-1", LinkedAnalyses = [new LinkedAnalysis(existingSignal.Id, [])] }]);
+        storageProvider.GetSignalAsync(existingSignal.Id).Returns(existingSignal);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
+
+        var collector = new TestableGitHubCollector(CreateIssueConfig(), storageProvider, client);
+        await collector.CollectAsync();
+
+        var signal = Assert.Single(GetSavedSignals(storageProvider));
+        Assert.Equal(existingSignal.Id, signal.Id);
+        Assert.Equal(SignalCollectionReason.Updated, signal.CollectionReason);
+    }
+
+    [Fact]
+    public async Task CollectAsync_ResolvedIssue_Refetch_HasCollectionReasonResolved()
+    {
+        // Existing issue signal — not returned by query (issue was closed), re-fetch returns closed
+        var originalIssue = CreateIssue(1, ItemState.Open, updatedAt: new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var existingSignal = new GitHubIssueSignal(ToIssueInfo(originalIssue), new Uri(originalIssue.HtmlUrl));
+
+        var closedIssue = CreateIssue(1, ItemState.Closed, updatedAt: new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
+
+        var client = Substitute.For<IGitHubClient>();
+        // Query returns nothing (issue is closed, query is Open only)
+        client.Issue.GetAllForRepository("dotnet", "runtime", Arg.Any<RepositoryIssueRequest>())
+            .Returns(Array.Empty<Issue>());
+        // Re-fetch returns the closed issue
+        client.Issue.Get("dotnet", "runtime", 1).Returns(closedIssue);
+
+        var config = CreateIssueConfig();
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns([new WorkItem { Id = "wi-1", LinkedAnalyses = [new LinkedAnalysis(existingSignal.Id, [])] }]);
+        storageProvider.GetSignalAsync(existingSignal.Id).Returns(existingSignal);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
+
+        var collector = new TestableGitHubCollector(config, storageProvider, client);
+        await collector.CollectAsync();
+
+        var signal = Assert.Single(GetSavedSignals(storageProvider));
+        Assert.Equal(existingSignal.Id, signal.Id);
+        Assert.Equal(SignalCollectionReason.Resolved, signal.CollectionReason);
+        var issueSignal = Assert.IsType<GitHubIssueSignal>(signal);
+        Assert.Equal("Closed", issueSignal.TypedInfo.ItemInfo.State);
+    }
+
+    [Fact]
+    public async Task CollectAsync_NotFoundIssue_Refetch_HasCollectionReasonNotFound()
+    {
+        // Existing issue signal — re-fetch throws (issue deleted or inaccessible)
+        var originalIssue = CreateIssue(1, ItemState.Open, updatedAt: new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var existingSignal = new GitHubIssueSignal(ToIssueInfo(originalIssue), new Uri(originalIssue.HtmlUrl));
+
+        var client = Substitute.For<IGitHubClient>();
+        client.Issue.GetAllForRepository("dotnet", "runtime", Arg.Any<RepositoryIssueRequest>())
+            .Returns(Array.Empty<Issue>());
+        client.Issue.Get("dotnet", "runtime", 1).Returns<Issue>(_ => throw new NotFoundException("Not found", System.Net.HttpStatusCode.NotFound));
+
+        var config = CreateIssueConfig();
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns([new WorkItem { Id = "wi-1", LinkedAnalyses = [new LinkedAnalysis(existingSignal.Id, [])] }]);
+        storageProvider.GetSignalAsync(existingSignal.Id).Returns(existingSignal);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
+
+        var collector = new TestableGitHubCollector(config, storageProvider, client);
+        await collector.CollectAsync();
+
+        var signal = Assert.Single(GetSavedSignals(storageProvider));
+        Assert.Equal(existingSignal.Id, signal.Id);
+        Assert.Equal(SignalCollectionReason.NotFound, signal.CollectionReason);
+    }
+
+    [Fact]
+    public async Task CollectAsync_OrgRemovedFromConfig_ExistingSignal_MarkedOutOfScope()
+    {
+        // Existing signal for dotnet/runtime, but config now only has "microsoft" org
+        var issue = CreateIssue(1, ItemState.Open);
+        var existingSignal = new GitHubIssueSignal(ToIssueInfo(issue), new Uri(issue.HtmlUrl));
+
+        var config = new GitHubConfig
+        {
+            Organizations =
+            [
+                new GitHubOrganizationConfig
+                {
+                    Organization = "microsoft",
+                    Repositories = [new GitHubRepositoryConfig { Name = "runtime", Issues = [new GitHubItemConfig()] }]
+                }
+            ]
+        };
+
+        var client = Substitute.For<IGitHubClient>();
+        client.Issue.GetAllForRepository("microsoft", "runtime", Arg.Any<RepositoryIssueRequest>())
+            .Returns(Array.Empty<Issue>());
+
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns([new WorkItem { Id = "wi-1", LinkedAnalyses = [new LinkedAnalysis(existingSignal.Id, [])] }]);
+        storageProvider.GetSignalAsync(existingSignal.Id).Returns(existingSignal);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
+
+        var collector = new TestableGitHubCollector(config, storageProvider, client);
+        await collector.CollectAsync();
+
+        var signal = Assert.Single(GetSavedSignals(storageProvider));
+        Assert.Equal(existingSignal.Id, signal.Id);
+        Assert.Equal(SignalCollectionReason.OutOfScope, signal.CollectionReason);
+    }
+
+    [Fact]
+    public async Task CollectAsync_RepoRemovedFromConfig_ExistingSignal_MarkedOutOfScope()
+    {
+        // Existing signal for dotnet/runtime, but config now only has dotnet/sdk
+        var issue = CreateIssue(1, ItemState.Open);
+        var existingSignal = new GitHubIssueSignal(ToIssueInfo(issue), new Uri(issue.HtmlUrl));
+
+        var config = new GitHubConfig
+        {
+            Organizations =
+            [
+                new GitHubOrganizationConfig
+                {
+                    Organization = "dotnet",
+                    Repositories = [new GitHubRepositoryConfig { Name = "sdk", Issues = [new GitHubItemConfig()] }]
+                }
+            ]
+        };
+
+        var client = Substitute.For<IGitHubClient>();
+        client.Issue.GetAllForRepository("dotnet", "sdk", Arg.Any<RepositoryIssueRequest>())
+            .Returns(Array.Empty<Issue>());
+
+        var storageProvider = Substitute.For<IStorageProvider>();
+        storageProvider.GetWorkItemsAsync().Returns([new WorkItem { Id = "wi-1", LinkedAnalyses = [new LinkedAnalysis(existingSignal.Id, [])] }]);
+        storageProvider.GetSignalAsync(existingSignal.Id).Returns(existingSignal);
+        storageProvider.SaveSignalAsync(Arg.Any<Signal>()).Returns(Task.CompletedTask);
+
+        var collector = new TestableGitHubCollector(config, storageProvider, client);
+        await collector.CollectAsync();
+
+        var signal = Assert.Single(GetSavedSignals(storageProvider));
+        Assert.Equal(existingSignal.Id, signal.Id);
+        Assert.Equal(SignalCollectionReason.OutOfScope, signal.CollectionReason);
+    }
 }

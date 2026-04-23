@@ -15,17 +15,62 @@ public abstract class Signal
 
     public string? Context { get; set; }
 
+    public SignalCollectionReason CollectionReason { get; set; } = SignalCollectionReason.New;
+
     public List<SignalAnalysis> Analyses { get; set; } = new();
 
-    /// <summary>
-    /// Copies identity and existing analyses from a previous version of this signal.
-    /// Call this when updating a signal that was already collected.
-    /// </summary>
-    public void PreserveFrom(Signal existing)
+    [JsonIgnore]
+    public bool IsResolvedCollectionReason => CollectionReason == SignalCollectionReason.Resolved || CollectionReason == SignalCollectionReason.NotFound || CollectionReason == SignalCollectionReason.OutOfScope;
+
+    public void AsUpdated(JsonElement info, Uri url, string? context = null)
     {
-        Id = existing.Id;
-        Analyses = existing.Analyses;
-        Context = this.Context ?? existing.Context;
+        Info = info;
+        Url = url;
+        CollectionReason = SignalCollectionReason.Updated;
+
+        if (context != null)
+        {
+            Context = context;
+        }
+    }
+
+    public void AsResolved(JsonElement info, Uri url, string? context = null)
+    {
+        Info = info;
+        Url = url;
+        CollectionReason = SignalCollectionReason.Resolved;
+
+        if (context != null)
+        {
+            Context = context;
+        }
+    }
+
+    public void AsNotFound(string? context = null)
+    {
+        CollectionReason = SignalCollectionReason.NotFound;
+
+        if (context != null)
+        {
+            Context = context;
+        }
+    }
+
+    public void AsOutOfScope()
+    {
+        CollectionReason = SignalCollectionReason.OutOfScope;
+    }
+
+    public void AsNew(JsonElement info, Uri url, string? context = null)
+    {
+        Info = info;
+        Url = url;
+        CollectionReason = SignalCollectionReason.New;
+
+        if (context != null)
+        {
+            Context = context;
+        }
     }
 }
 
@@ -71,4 +116,13 @@ public enum SignalType
     GitHubIssue,
     GitHubPullRequest,
     AzureDevOpsPipeline
+}
+
+public enum SignalCollectionReason
+{
+    New,
+    Updated,
+    Resolved,
+    NotFound,
+    OutOfScope
 }

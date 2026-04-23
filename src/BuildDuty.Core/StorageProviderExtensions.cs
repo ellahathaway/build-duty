@@ -2,10 +2,11 @@ namespace BuildDuty.Core;
 
 public static class StorageProviderExtensions
 {
-    public static async Task<ICollection<Signal>> GetAllSignalsAsync(this IStorageProvider storageProvider)
+    public static async Task<ICollection<Signal>> GetUnresolvedSignalsAsync(this IStorageProvider storageProvider)
     {
         var workItems = await storageProvider.GetWorkItemsAsync();
         var signalIds = workItems
+            .Where(wi => !wi.Resolved)
             .SelectMany(wi => wi.LinkedAnalyses.Select(la => la.SignalId))
             .Distinct();
 
@@ -14,7 +15,11 @@ public static class StorageProviderExtensions
         {
             try
             {
-                signals.Add(await storageProvider.GetSignalAsync(signalId));
+                var signal = await storageProvider.GetSignalAsync(signalId);
+                if (!signal.IsResolvedCollectionReason)
+                {
+                    signals.Add(signal);
+                }
             }
             catch (FileNotFoundException) { }
         }
