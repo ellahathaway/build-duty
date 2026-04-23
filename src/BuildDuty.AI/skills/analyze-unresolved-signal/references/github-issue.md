@@ -1,26 +1,35 @@
 # Reference: GitHub Issue (SignalType.GitHubIssue)
 
-Applies when signal type is a GitHub issue. Issue details are in the signal's info.
+Applies when signal type is a GitHub issue. Issue details are in `signal.Info` (`JsonElement`).
 
 ---
 
-## Classify the issue
+## Analyze Signal
 
-Check the signal context, if available, for monitoring rationale and correlation hints (related pipelines, PRs, branches).
+Applies to signals that were collected as `New` and `Updated`.
+
+### If `collectionReason` is `New`
+
+- Identify each distinct active problem or tracker scope from the current issue body/comments.
+- Create analyses for each distinct finding.
+
+### If `collectionReason` is `Updated`
+
+- Re-evaluate the issue using the latest body/comments/context.
+- For each existing matching analysis, update the analysis text and data to reflect current evidence, even if the root cause is unchanged.
+- Resolve analyses that are no longer supported by the current issue state.
+- Create analyses for newly introduced independent problems.
 
 From the signal's info, determine:
 
-- **Active problem** — issue is open; describes an unresolved bug/regression/outage/build break.
-- **Resolved / mitigated** — the signal indicates resolution when the issue is closed, or the issue body/comments clearly state the problem is fixed or mitigated (e.g., a fix has been merged, a workaround applied, or the underlying cause was addressed externally). The root causes described by existing analyses are no longer active.
+- **Active problem** — issue describes an unresolved bug/regression/outage/build break.
 - **Tracker / meta issue** — aggregates links to other issues/PRs/failures rather than one concrete problem.
 
 If the info is insufficient, use the GitHub MCP to pull additional information.
 
 Note whether the issue describes **one** root cause or **multiple** independent failures (each becomes a separate analysis).
 
----
-
-## Analysis data — always include:
+### Analysis data — always include:
 
 | Field | Source |
 |---|---|
@@ -39,6 +48,10 @@ Example — open build break:
 ```
 
 ### Analysis text — concise cause statement
+
+Check the signal context, if available, for monitoring rationale and correlation hints (related pipelines, PRs, branches).
+
+For `Updated` signals, avoid reusing stale wording from prior triage runs. Rewrite the analysis text to match the newest available evidence and scope.
 
 Examples:
 - `Alpine 3.23 ships OpenSSL 3.5 which drops support for legacy algorithms; cryptography tests fail with CryptographicException on Alpine CI legs.`

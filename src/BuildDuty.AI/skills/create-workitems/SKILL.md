@@ -12,33 +12,29 @@ After existing work items have been updated, some analyses remain orphaned — n
 You receive:
 - A **triage run ID** (`triage_{guid}`)
 
-## Steps
+## Step 1 - Collect orphaned analyses
 
-### 1. Collect orphaned analyses
+Keep a list of analyses and are not linked to any work item (orphaned analyses).
 
-- Use `list_analyses_for_triage` (linkedStatus: `unlinked`) to get analyses on triage signals that are not linked to any work item.
-  - Each work item has a `LinkedAnalyses` list — entries of `(SignalId, AnalysisIds[])`. Each analysis ID points to a specific analysis entry on a signal. Analyses have a `Status` (new, updated, or resolved) — resolved analyses stay linked and preserve provenance.
-- After listing the analyses, discard any with `status: Resolved` — resolved analyses do not need work items. If none remain after filtering, return early with zeros.
+List all signal analyses from the triage run. For each analysis:
+1. List the ids of work items linked to the analysis. If there are no linked work items, continue to the next step. Otherwise, skip this analysis.
+2. Get the specific analysis. Determine if the analysis is resolved by examining the `Status` field in the analysis. If the analysis is not resolved, continue to the next step. Otherwise, skip this analysis.
+3. Add the analysis to the list of orphaned analyses.
 
-### 2. Load each orphaned analysis
+## Step 2 - Group analyses by root cause
 
-For each orphaned entry, load the analysis using `get_analysis` by its signal ID and analysis ID.
+Using [references/incident-grouping.md](./references/incident-grouping.md) as a guide for grouping, compare all orphaned analyses from the previous step and form groups that share the same underlying issue.
 
-### 3. Group by root cause
-
-Using [references/incident-grouping.md](./references/incident-grouping.md), compare root causes across all orphaned analyses and form groups that share the same underlying issue.
-
-- Analyses from different signals can be in the same group if they describe the same root cause.
+Guidance:
+- Analyses from different signals can be in the same group if they describe the same root cause or are otherwise closely related.
 - A single signal may contribute analyses to multiple groups if its analyses describe different root causes.
-- When uncertain, split into separate groups rather than merge.
-- Every orphaned analysis must appear in exactly one group.
+- When uncertain of grouping, split into separate groups rather than merge.
+- Every orphaned analysis must appear in at least one group.
 
-### 4. Create a work item per group
+## Step 3 - Create Work Items
 
-For each group, using [references/issue-writing.md](./references/issue-writing.md):
-
-1. Create a new work item with the triage ID, `summary`, `issueSignature`, and the group's `linkedAnalyses` (signal ID + analysis ID pairs).
+For each group created in Step 2, create a work item.
 
 ## Output
 
-No text output is required. The CLI determines result counts by inspecting work item state after this skill completes.
+No text output is required.

@@ -2,13 +2,11 @@
 
 Determine which analyses represent the same underlying issue.
 
----
+The signal sub-agent and work item sub-agent can be useful for delegating signal and workitem tasks when necessary.
 
 ## Definitions
 - **Signal**: A unit of observation (e.g., pipeline run, PR, issue).
 - **Analysis**: The interpretation of a signal, or element of a signal, that identifies its cause and supporting evidence.
-
----
 
  ## Workflow
  1. For each analysis, load the analysis by its signal ID and analysis ID using `get_analysis` if not already loaded.
@@ -16,8 +14,6 @@ Determine which analyses represent the same underlying issue.
  3. Cross-reference evidence across orphaned analyses to find causal chains (see below).
  4. Use the signal's `context` field to understand pipeline/repo dependencies and relationships.
  5. Form groups only when causal evidence aligns.
-
----
 
  ## Cause vs Symptom
  Group analyses by **shared cause**, not shared symptom.
@@ -29,8 +25,6 @@ Determine which analyses represent the same underlying issue.
  - Multiple pipeline analyses show `artifact not found`
    - If they depend on the same upstream pipeline → same cause, group them
    - If each references different missing artifacts → different causes, keep separate
-
----
 
 ## Correlation Strategy
 
@@ -65,8 +59,6 @@ Evaluate using:
 - Two analyses reference the same file path and failing task but describe different symptoms → Same root cause
 - A GitHub issue analysis reports a general `error NU1301`, while a pipeline analysis logs the same error for a specific package → Same underlying NuGet infrastructure issue
 
----
-
  ### Causal Chain Detection
  An analysis may describe a failure that is a **downstream effect** of another analysis's root cause.
 
@@ -86,7 +78,17 @@ Detect causal chains by cross-referencing evidence in the analyses:
 - Downstream analyses are **symptoms**
 - Group all analyses in the chain into the same work item
 
----
+### Cross-Branch Correlation
+Analyses from the same pipeline definition or the same repo but on different branches often represent the same underlying issue:
+
+- Same error/failure pattern across multiple release branches (e.g., release/10.0.2xx and release/10.0.3xx) → Same root cause, group them
+- Same task failure with matching error signatures on different branches of the same pipeline → Same root cause
+- Different branch names alone do NOT make failures separate — evaluate the cause and structural evidence first
+
+**Examples:**
+- SignCheck reports unsigned files on release/10.0.2xx and release/10.0.3xx with matching file paths and error patterns → Same signing configuration issue
+- A NuGet restore failure occurs on main and release/9.0 targeting the same feed → Same infrastructure issue
+- Build failures on two branches caused by different code changes → Different causes, keep separate
 
 ### Cross-Type Correlation
 Analyses from different signal types can represent the same incident:
@@ -94,8 +96,6 @@ Analyses from different signal types can represent the same incident:
 - A GitHub issue analysis tracking a failure + a pipeline analysis showing that failure → Same incident
 - A GitHub PR analysis fixing an issue + the issue analysis → Same incident
 - An upstream pipeline analysis + downstream dependent pipeline analyses → Same incident
-
----
 
 ## Merge Criteria
 Merge analyses only if:
@@ -114,15 +114,11 @@ Do NOT group analyses based solely on:
 - Generic wording overlap in cause text
 - Temporal proximity (failures occurring at the same time)
 
----
-
 ## Common Misgrouping Pitfalls
 
 - Two pipeline analyses fail with the same error code but in different services with no shared dependency → Do NOT merge
 - Multiple test failures in the same repository due to unrelated code paths → Do NOT merge
 - Failures occur at the same time after a deployment, but no shared evidence exists → Do NOT merge without causal proof
-
----
 
 ## Grouping Decision Heuristic
 
@@ -133,8 +129,6 @@ Merge analyses if:
 
 Otherwise:
 - Keep analyses separate
-
----
 
 ## Precision Rule
 If uncertain, split.
