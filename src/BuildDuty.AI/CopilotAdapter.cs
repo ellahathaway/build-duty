@@ -1,4 +1,3 @@
-using System.Text.Json;
 using BuildDuty.Core;
 using GitHub.Copilot.SDK;
 using Microsoft.Extensions.AI;
@@ -14,8 +13,8 @@ public class CopilotAdapter
 {
     private readonly CopilotClient _client;
     private readonly IBuildDutyConfigProvider _configProvider;
-    private readonly ICollection<AIFunction>? _tools;
-    private readonly ICollection<string>? _skills;
+    private readonly List<AIFunction> _tools;
+    private readonly List<string>? _skillsDirectories;
     private readonly string GitHubToken;
 
     private const string DefaultInstructions = """
@@ -41,8 +40,9 @@ public class CopilotAdapter
 
     public static class Agents
     {
-        public const string AnalyzeSignalTriage = "analyze_signal_triage";
-        public const string WorkItemTriage = "work_item_triage";
+        public const string PipelineLog = "pipeline_log";
+        public const string Signal = "signals";
+        public const string WorkItem = "work_item";
         public const string Review = "review";
     }
 
@@ -50,25 +50,25 @@ public class CopilotAdapter
     [
         new CustomAgentConfig
         {
-            Name = Agents.AnalyzeSignalTriage,
-            Description = "Analyzes a signal to create, update, and resolve analyses of the signal.",
-            Tools = ["get_signal", "read_pipeline_log", "create_signal_analysis", "update_signal_analysis", "resolve_signal_analysis", "get_json_value"],
-            Prompt = "You analyze a signal to create, update, and resolve analyses of the signal.",
+            Name = Agents.PipelineLog,
+            Description = "Reads and analyzes Azure DevOps build pipeline logs using the read_pipeline_log tool. Use this agent when you need to retrieve and interpret CI/CD log content.",
+            Tools = [ "read_pipeline_log", "get_timeline_records" ],
+            Prompt = "You read and analyze Azure DevOps pipeline logs to extract relevant information. Use read_pipeline_log to retrieve log content by signal ID and log ID. Use get_timeline_records to list timeline records for a signal.",
         },
         new CustomAgentConfig
         {
-            Name = Agents.WorkItemTriage,
-            Description = "Updates, resolves, and creates work items based on analyzed signals.",
-            Tools = ["get_signal", "get_work_item", "get_analysis", "get_work_items_for_analysis", "list_work_items", "list_work_items_for_triage", "list_analyses_for_triage", "create_work_item", "link_analysis_to_work_item", "unlink_analysis_from_work_item", "update_work_item", "resolve_work_item", "get_json_value"],
-            Prompt = "You update, resolve, and create work items based on analyzed signals.",
+            Name = Agents.Signal,
+            Description = "Works with signals from a build-duty triage run. Analyzes signals and creates signal analyses.",
+            Tools = [ "get_signal", "create_signal_analysis", "update_signal_analysis", "resolve_signal_analysis", "get_json_value", "get_signal_analyses", "list_analyses_for_triage", "get_analysis", "list_work_items_for_analysis" ],
+            Prompt = "You can get signals, read signals, edit signals, create/update/resolve signal analyses, and extract JSON values from signals.",
         },
         new CustomAgentConfig
         {
-            Name = Agents.Review,
-            Description = "Interactive review of work items.",
-            Tools = null, // all tools
-            Prompt = "You help the user review work items interactively. Users will send unfiltered messages asking about the workitem and related information.",
-        },
+            Name = Agents.WorkItem,
+            Description = "Works with work items from a build-duty triage run.",
+            Tools = [ "list_work_items", "list_work_items_for_triage", "get_work_item", "create_work_item", "update_work_item", "resolve_work_item", "link_analysis_to_work_item", "unlink_analysis_from_work_item", "get_json_value" ],
+            Prompt = "You can get work items, read work items, edit work items, adjust linked signals/analyses for work items, and extract JSON values from work items.",
+        }
     ];
 
     public CopilotAdapter(
@@ -76,12 +76,12 @@ public class CopilotAdapter
         IBuildDutyConfigProvider configProvider,
         string gitHubToken,
         ICollection<AIFunction>? tools = null,
-        ICollection<string>? skills = null)
+        List<string>? skillsDirectories = null)
     {
         _client = client;
         _configProvider = configProvider;
-        _tools = tools;
-        _skills = skills;
+        _tools = tools is not null ? new List<AIFunction>(tools) : [];
+        _skillsDirectories = skillsDirectories;
         GitHubToken = gitHubToken;
     }
 
@@ -102,8 +102,7 @@ public class CopilotAdapter
     public virtual async Task<CopilotSession> CreateSessionAsync(
         bool streaming = false,
         string? agent = null,
-        bool throwAfterRetries = false,
-        SessionEndHandler? onSessionEnd = null)
+        bool throwAfterRetries = false)
     {
         var hooks = new SessionHooks
         {
@@ -132,15 +131,11 @@ public class CopilotAdapter
             }
         };
 
-        if (onSessionEnd is not null)
-        {
-            hooks.OnSessionEnd = onSessionEnd;
-        }
-
         var config = new SessionConfig
         {
             OnPermissionRequest = PermissionHandler.ApproveAll,
-            SkillDirectories = _skills?.Select(Path.GetFullPath).ToList(),
+            SkillDirectories = _skillsDirectories,
+            WorkingDirectory = AppContext.BaseDirectory,
             Streaming = streaming,
             SystemMessage = new SystemMessageConfig
             {
@@ -160,15 +155,6 @@ public class CopilotAdapter
         }
 
         var session = await _client.CreateSessionAsync(config);
-
-        if (_skills != null)
-        {
-            foreach (var skill in _skills)
-            {
-                var skillName = Path.GetFileName(skill);
-                await session.Rpc.Skills.EnableAsync(skillName);
-            }
-        }
 
         return session;
     }
@@ -212,14 +198,12 @@ public class CopilotAdapter
         string prompt,
         string? agent = null,
         bool streaming = false,
-        bool throwAfterRetries = false,
-        SessionEndHandler? onSessionEnd = null)
+        bool throwAfterRetries = false)
     {
         await using var session = await CreateSessionAsync(
             streaming: streaming,
             agent: agent,
-            throwAfterRetries: throwAfterRetries,
-            onSessionEnd: onSessionEnd);
+            throwAfterRetries: throwAfterRetries);
 
         try
         {

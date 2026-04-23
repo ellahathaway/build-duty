@@ -56,16 +56,13 @@ internal static class ServiceCollectionExtensions
             tools.AddRange(sp.GetRequiredService<AzureDevOpsTools>().GetTools());
             tools.AddRange(sp.GetRequiredService<StorageTools>().GetTools());
 
-            var skillsDirectory = Path.Combine(AppContext.BaseDirectory, "skills");
-            var skills = Directory.Exists(skillsDirectory)
-                ? Directory.GetDirectories(skillsDirectory).ToList()
-                : null;
+            List<string>? skillsDirectories = new List<string> { Path.Combine(AppContext.BaseDirectory, "skills") };
 
             var gitHubToken = sp.GetRequiredService<IGeneralTokenProvider>()
                 .GetTokenForRepositoryAsync("https://github.com").GetAwaiter().GetResult()
                 ?? throw new InvalidOperationException("Failed to retrieve GitHub token. Ensure the GitHub CLI is authenticated via 'gh auth login'.");
 
-            return new CopilotAdapter(client, configProvider, gitHubToken, tools, skills);
+            return new CopilotAdapter(client, configProvider, gitHubToken, tools, skillsDirectories);
         });
         return services;
     }

@@ -141,7 +141,7 @@ internal sealed class ReviewCommand : BaseCommand<BaseSettings>
     private async Task RunInteractiveChat(List<string> selectedWorkItemIds, string initialInstruction)
     {
         using var terminal = new ChatTerminal();
-        var session = await _copilotAdapter.CreateSessionAsync(streaming: true, agent: CopilotAdapter.Agents.Review);
+        var session = await _copilotAdapter.CreateSessionAsync(streaming: true);
         RegisterChatStreamHandler(session, terminal);
 
         var inputChannel = Channel.CreateUnbounded<string?>();
@@ -192,7 +192,7 @@ internal sealed class ReviewCommand : BaseCommand<BaseSettings>
                 {
                     await CancelAgentAsync();
                     await session.DisposeAsync();
-                    session = await _copilotAdapter.CreateSessionAsync(streaming: true, agent: CopilotAdapter.Agents.Review);
+                    session = await _copilotAdapter.CreateSessionAsync(streaming: true);
                     RegisterChatStreamHandler(session, terminal);
                     terminal.WriteOutput("\n\x1b[2m(session reset)\x1b[0m\n");
                     continue;
