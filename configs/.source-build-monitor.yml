@@ -14,7 +14,11 @@ azureDevOps:
                 from source for mono distros.
               release: &all-phases
                 repository: dotnet-dotnet
-                supportPhases: [active, maintenance, preview, go-live, rc]
+                supportPhases:
+                  - active
+                  - maintenance
+                  - preview
+                  - goLive
             - id: 1330
               name: Source Build Unified Build
               age: 20d
@@ -37,7 +41,9 @@ azureDevOps:
                 Builds the VMR from source for .NET 8 and 9.
               release: &servicing-only
                 repository: dotnet-dotnet
-                supportPhases: [active, maintenance]
+                supportPhases:
+                  - active
+                  - maintenance
             - id: 1301
               name: Source Build License Scan
               age: 20d

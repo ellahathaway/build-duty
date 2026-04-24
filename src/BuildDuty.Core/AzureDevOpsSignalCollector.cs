@@ -417,9 +417,7 @@ public class AzureDevOpsSignalCollector : SignalCollector<AzureDevOpsConfig>
                 context.Connection,
                 context.ProjectName,
                 pipeline.Id,
-                pipeline.Release.SupportPhases is { Count: > 0 }
-                    ? string.Join(',', pipeline.Release.SupportPhases)
-                    : null,
+                pipeline.Release.SupportPhases,
                 pipeline.Release.MinVersion);
 
         return branches

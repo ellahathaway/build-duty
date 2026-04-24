@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Dotnet.Release;
 using Microsoft.TeamFoundation.Build.WebApi;
 using YamlDotNet.Serialization;
 
@@ -123,7 +124,7 @@ public sealed class ReleaseBranchConfig
     /// .NET support phases to include
     /// </summary>
     [YamlMember(Alias = "supportPhases")]
-    public required List<string> SupportPhases { get; set; }
+    public required List<SupportPhase> SupportPhases { get; set; }
 
     /// <summary>Minimum major version to include (e.g. 8).</summary>
     [YamlMember(Alias = "minVersion")]
