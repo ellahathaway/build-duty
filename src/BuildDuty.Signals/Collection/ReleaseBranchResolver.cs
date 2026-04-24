@@ -8,6 +8,7 @@ using Dotnet.Release.Releases;
 using Microsoft.TeamFoundation.Build.WebApi;
 using Microsoft.TeamFoundation.SourceControl.WebApi;
 using Microsoft.VisualStudio.Services.WebApi;
+using System.Text.Json;
 
 namespace BuildDuty.Signals.Collection;
 
@@ -23,8 +24,7 @@ namespace BuildDuty.Signals.Collection;
 /// </summary>
 public sealed class ReleaseBranchResolver
 {
-    private static readonly HashSet<SupportPhase> DefaultPhases =
-        [SupportPhase.Active, SupportPhase.Maintenance, SupportPhase.Preview, SupportPhase.GoLive];
+    private static readonly string ReleasesIndexUrl = "https://example.com/releases/index.json";
 
     private static readonly Regex ReleaseBranchPattern =
         new(@"^refs/heads/((internal/)?release/((\d+)\.(\d+)\.(\d+)xx)(-.+)?)$", RegexOptions.Compiled);
@@ -35,9 +35,7 @@ public sealed class ReleaseBranchResolver
     private static readonly Regex SdkVersionPattern =
         new(@"^(\d+)\.(\d+)\.(\d+)(?:-(preview|rc)\.(\d+))?", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-    private readonly ConcurrentDictionary<string, Lazy<Task<string?>>> _pipelineRepoCache = new();
-    private readonly ConcurrentDictionary<string, Lazy<Task<List<string>?>>> _repoBranchCache = new();
-    private readonly ConcurrentDictionary<string, Lazy<Task<List<string>>>> _resolvedCache = new();
+    private readonly ConcurrentDictionary<PipelineInfo, Lazy<Task<List<string>>>> _resolvedCache = new();
 
     private record PipelineInfo(string Org, string Project, int PipelineId);
 
@@ -57,40 +55,19 @@ public sealed class ReleaseBranchResolver
         ReleaseBranchConfig releaseConfig)
     {
         var org = connection.Uri.GetLeftPart(UriPartial.Authority);
-        var phases = releaseConfig.SupportPhases is { Count: > 0 }
-            ? string.Join(",", releaseConfig.SupportPhases.OrderBy(p => p))
-            : "";
-        var cacheKey = $"{org}|{project}|{pipelineId}|{phases}|{releaseConfig.MinVersion}";
-        return _resolvedCache.GetOrAdd(cacheKey,
+        return _resolvedCache.GetOrAdd(new PipelineInfo(org, project, pipelineId),
             _ => new Lazy<Task<List<string>>>(() =>
                 ResolveInternalAsync(connection, project, pipelineId, releaseConfig.SupportPhases, releaseConfig.MinVersion))).Value;
     }
 
     private async Task<List<string>> ResolveInternalAsync(
         VssConnection connection, string project, int pipelineId,
-        string? supportPhases, int? minVersion)
+        List<SupportPhase>? supportPhases, int? minVersion)
     {
         var org = connection.Uri.GetLeftPart(UriPartial.Authority);
 
-        var pipelineKey = $"{org}|{project}|{pipelineId}";
-        var repoName = await _pipelineRepoCache.GetOrAdd(pipelineKey,
-            _ => new Lazy<Task<string?>>(() => FetchPipelineRepoAsync(connection, project, pipelineId))).Value;
-
-        if (string.IsNullOrWhiteSpace(repoName))
-        {
-            return ["main"];
-        }
-
-        var repoKey = $"{org}|{project}|{repoName}";
-        var rawBranches = await _repoBranchCache.GetOrAdd(repoKey,
-            _ => new Lazy<Task<List<string>?>>(() => FetchRepoBranchesAsync(connection, project, repoName))).Value;
-
-        if (rawBranches is null)
-        {
-            return ["main"];
-        }
-
-        var index = await _releasesIndex.Value;
+        var repoName = await FetchPipelineRepoAsync(connection, project, pipelineId) ?? throw new Exception("Failed to fetch pipeline repository");
+        var rawBranches = await FetchRepoBranchesAsync(connection, project, repoName) ?? throw new Exception("Failed to fetch repository branches");
         var supportedChannels = GetSupportedChannels(index, supportPhases, minVersion);
         if (supportedChannels is null)
         {
@@ -397,22 +374,16 @@ public sealed class ReleaseBranchResolver
     }
 
     internal static HashSet<string>? GetSupportedChannels(
-        IList<MajorReleaseIndexItem>? entries, IReadOnlyCollection<SupportPhase>? supportPhases, int? minVersion)
+        IList<MajorReleaseIndexItem>? entries, IReadOnlyCollection<SupportPhase> supportPhases, int? minVersion)
     {
         if (entries is null)
         {
             return null;
         }
 
-        var phases = DefaultPhases;
-        if (!string.IsNullOrWhiteSpace(supportPhases))
-        {
-            phases = supportPhases.Split(',').Select(p => p.Trim().ToLowerInvariant()).ToHashSet();
-        }
-
         return entries
-            .Where(e => !string.IsNullOrEmpty(e.SupportPhase) && !string.IsNullOrEmpty(e.ChannelVersion))
-            .Where(e => phases.Contains(e.SupportPhase!.Trim().ToLowerInvariant()))
+            .Where(e => !string.IsNullOrEmpty(e.ChannelVersion))
+            .Where(e => supportPhases.Contains(e.SupportPhase))
             .Where(e =>
             {
                 var parts = e.ChannelVersion!.Split('.');

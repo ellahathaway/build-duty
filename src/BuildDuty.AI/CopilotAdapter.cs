@@ -1,4 +1,3 @@
-using BuildDuty.Core;
 using GitHub.Copilot.SDK;
 using Microsoft.Extensions.AI;
 
@@ -12,10 +11,10 @@ namespace BuildDuty.AI;
 public class CopilotAdapter
 {
     private readonly CopilotClient _client;
-    private readonly IBuildDutyConfigProvider _configProvider;
     private readonly List<AIFunction> _tools;
     private readonly List<string>? _skillsDirectories;
-    private readonly string GitHubToken;
+    private readonly string _gitHubToken;
+    private readonly string? _model;
 
     private const string DefaultInstructions = """
         You are a build-duty agent that helps engineers with the build-duty process (non-interactive triaging and interactive reviewing).
@@ -73,16 +72,16 @@ public class CopilotAdapter
 
     public CopilotAdapter(
         CopilotClient client,
-        IBuildDutyConfigProvider configProvider,
         string gitHubToken,
         ICollection<AIFunction>? tools = null,
-        List<string>? skillsDirectories = null)
+        List<string>? skillsDirectories = null,
+        string model = "")
     {
         _client = client;
-        _configProvider = configProvider;
         _tools = tools is not null ? new List<AIFunction>(tools) : [];
         _skillsDirectories = skillsDirectories;
-        GitHubToken = gitHubToken;
+        _gitHubToken = gitHubToken;
+        _model = model;
     }
 
     /// <summary>
@@ -148,10 +147,9 @@ public class CopilotAdapter
             McpServers = await BuildGitHubMcpServerAsync(),
         };
 
-        var model = _configProvider.Get().Ai?.Model;
-        if (model is not null)
+        if (_model is not null)
         {
-            config.Model = model;
+            config.Model = _model;
         }
 
         var session = await _client.CreateSessionAsync(config);
@@ -161,7 +159,7 @@ public class CopilotAdapter
 
     private async Task<Dictionary<string, object>> BuildGitHubMcpServerAsync()
     {
-        if (string.IsNullOrWhiteSpace(GitHubToken))
+        if (string.IsNullOrWhiteSpace(_gitHubToken))
         {
             throw new InvalidOperationException("GitHub token is required for the GitHub MCP server but was not found.");
         }
@@ -174,7 +172,7 @@ public class CopilotAdapter
                 Tools = ["*"],
                 Headers = new Dictionary<string, string>
                 {
-                    ["Authorization"] = $"Bearer {GitHubToken}"
+                    ["Authorization"] = $"Bearer {_gitHubToken}"
                 }
             }
         };
