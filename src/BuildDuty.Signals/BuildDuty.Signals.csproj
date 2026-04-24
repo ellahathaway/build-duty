@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>BuildDuty.Signals</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <PackageId>BuildDuty.Signals</PackageId>
+    <Description>Build-duty configuration reading and signal collection library. Reads build-duty YAML configs, collects signals from Azure DevOps and GitHub APIs, and outputs XML-serializable signal data.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="BuildDuty.Signals.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Dotnet.Release.Releases" Version="1.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.2" />
+    <PackageReference Include="Microsoft.TeamFoundationServer.ExtendedClient" Version="20.264.0-preview" />
+    <PackageReference Include="Microsoft.VisualStudio.Services.Client" Version="20.264.0-preview" />
+    <PackageReference Include="Octokit" Version="14.0.0" />
+    <PackageReference Include="YamlDotNet" Version="16.3.0" />
+    <PackageReference Include="GitHub.Copilot.SDK" Version="0.2.2-preview.0" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <!-- Use the system-installed Copilot CLI (prerequisite in README) instead of
+         downloading and bundling the native binary. This avoids PackAsTool
+         stripping runtimes/ and the single-RID-per-build limitation. -->
+    <CopilotSkipCliDownload>true</CopilotSkipCliDownload>
+  </PropertyGroup>
+
+</Project>

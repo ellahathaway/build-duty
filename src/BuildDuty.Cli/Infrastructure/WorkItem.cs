@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace BuildDuty.Core;
+namespace BuildDuty.Cli.Infrastructure;
 
 public record LinkedAnalysis(string SignalId, List<string> AnalysisIds);
 

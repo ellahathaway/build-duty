@@ -1,4 +1,4 @@
-namespace BuildDuty.Core;
+namespace BuildDuty.Cli.Infrastructure;
 
 /// <summary>
 /// Generates deterministic work item IDs with a wi_ prefix.

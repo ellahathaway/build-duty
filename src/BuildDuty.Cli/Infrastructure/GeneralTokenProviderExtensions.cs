@@ -2,7 +2,7 @@ using Microsoft.VisualStudio.Services.OAuth;
 using Microsoft.VisualStudio.Services.WebApi;
 using Octokit;
 
-namespace BuildDuty.Core;
+namespace BuildDuty.Cli.Infrastructure;
 
 public static class GeneralTokenProviderExtensions
 {

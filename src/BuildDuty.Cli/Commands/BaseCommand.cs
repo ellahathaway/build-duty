@@ -1,4 +1,4 @@
-using BuildDuty.Core;
+using BuildDuty.Signals.Configuration;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -7,22 +7,20 @@ namespace BuildDuty.Cli.Commands;
 internal abstract class BaseCommand<TSettings> : AsyncCommand<TSettings>
     where TSettings : BaseSettings
 {
-    private readonly IBuildDutyConfigProvider _configProvider;
+    public readonly IConfigProvider _configProvider;
+
     public BuildDutyFailures Failures = new();
 
-    protected BaseCommand(IBuildDutyConfigProvider configProvider)
+    protected BaseCommand(IConfigProvider configProvider)
     {
         _configProvider = configProvider;
     }
 
-    public sealed override async Task<int> ExecuteAsync(
-        CommandContext context,
-        TSettings settings)
+    public sealed override async Task<int> ExecuteAsync(CommandContext context, TSettings settings)
     {
         int result;
         try
         {
-            _configProvider.SetConfigPath(settings.Config);
             result = await ExecuteCommandAsync(context, settings);
         }
         catch (Exception ex)

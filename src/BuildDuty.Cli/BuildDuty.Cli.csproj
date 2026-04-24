@@ -19,6 +19,7 @@
   <ItemGroup>
     <ProjectReference Include="..\BuildDuty.Core\BuildDuty.Core.csproj" />
     <ProjectReference Include="..\BuildDuty.AI\BuildDuty.AI.csproj" />
+    <ProjectReference Include="..\BuildDuty.Signals\BuildDuty.Signals.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

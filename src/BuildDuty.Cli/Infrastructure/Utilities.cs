@@ -1,4 +1,4 @@
-namespace BuildDuty.Core;
+namespace BuildDuty.Cli.Infrastructure;
 
 public static class Utilities
 {

@@ -6,6 +6,6 @@ namespace BuildDuty.Cli.Commands;
 public class BaseSettings : CommandSettings
 {
     [CommandOption("--config")]
-    [Description("Path to .build-duty.yml config file")]
-    public string? Config { get; set; }
+    [Description("Path to the config file")]
+    public required string Config { get; set; }
 }

@@ -4,5 +4,7 @@
     <Project Path="src/BuildDuty.Core/BuildDuty.Core.csproj" />
     <Project Path="src/BuildDuty.AI/BuildDuty.AI.csproj" />
     <Project Path="src/BuildDuty.Tests/BuildDuty.Tests.csproj" />
+    <Project Path="src/BuildDuty.Signals/BuildDuty.Signals.csproj" />
+    <Project Path="src/BuildDuty.Signals.Tests/BuildDuty.Signals.Tests.csproj" />
   </Folder>
 </Solution>

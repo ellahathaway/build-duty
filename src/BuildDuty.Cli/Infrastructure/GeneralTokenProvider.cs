@@ -1,6 +1,6 @@
 using Maestro.Common;
 
-namespace BuildDuty.Core;
+namespace BuildDuty.Cli.Infrastructure;
 
 public interface IGeneralTokenProvider
 {

@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace BuildDuty.Core;
+namespace BuildDuty.Cli.Infrastructure;
 
 public sealed record TriageRun
 {
@@ -10,8 +10,8 @@ public sealed record TriageRun
     [JsonPropertyName("timeStarted")]
     public DateTime TimeStarted { get; set; } = DateTime.UtcNow;
 
-    [JsonPropertyName("signalIds")]
-    public List<string> SignalIds { get; set; } = new List<string>();
+    [JsonPropertyName("signalsXmlPath")]
+    public string SignalsXmlPath { get; set; } = string.Empty;
 
     [JsonPropertyName("status")]
     public TriageRunStatus Status { get; set; } = TriageRunStatus.NotStarted;

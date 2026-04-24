@@ -1,8 +1,9 @@
 using System.ComponentModel;
 using BuildDuty.AI;
-using BuildDuty.Core;
-using BuildDuty.Core.Models;
-using GitHub.Copilot.SDK;
+using BuildDuty.Signals;
+using BuildDuty.Signals.Collection;
+using BuildDuty.Signals.Configuration;
+using BuildDuty.Cli.Infrastructure;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -19,18 +20,18 @@ internal sealed class TriageRunSettings : BaseSettings
 
 internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
 {
-    private readonly ISignalCollectorFactory _signalCollectorFactory;
+    private readonly ISignalProvider _signalProvider;
     private readonly IStorageProvider _storageProvider;
     private readonly CopilotAdapter _copilotAdapter;
 
     public TriageRunCommand(
-        IBuildDutyConfigProvider configProvider,
-        ISignalCollectorFactory signalCollectorFactory,
+        IConfigProvider configProvider,
+        ISignalProvider signalProvider,
         IStorageProvider storageProvider,
         CopilotAdapter copilotAdapter)
         : base(configProvider)
     {
-        _signalCollectorFactory = signalCollectorFactory;
+        _signalProvider = signalProvider;
         _storageProvider = storageProvider;
         _copilotAdapter = copilotAdapter;
     }
@@ -56,15 +57,14 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
         else
         {
             triageRun = new TriageRun();
-            await _storageProvider.SaveTriageRunAsync(triageRun);
+            await _storageProvider.UpdateTriageRunStatusAsync(triageRun.Id, TriageRunStatus.NotStarted);
         }
 
-        await CollectAllSignalsAsync(triageRun);
-        if (triageRun.SignalIds.Count == 0)
+        await CollectAllSignalsAsync(triageRun, settings.Config);
+        if (!File.Exists(triageRun.SignalsXmlPath))
         {
             AnsiConsole.MarkupLine("[yellow]↷[/] No signals collected. Nothing to triage.");
-            triageRun.Status = TriageRunStatus.Done;
-            await _storageProvider.SaveTriageRunAsync(triageRun);
+            await _storageProvider.UpdateTriageRunStatusAsync(triageRun.Id, TriageRunStatus.Done);
             return 0;
         }
 
@@ -72,73 +72,44 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
         await UpdateWorkItemsAsync(triageRun);
         await CreateWorkItemsAsync(triageRun);
 
-        triageRun.Status = TriageRunStatus.Done;
-        await _storageProvider.SaveTriageRunAsync(triageRun);
+        await _storageProvider.UpdateTriageRunStatusAsync(triageRun.Id, TriageRunStatus.Done);
         return 0;
     }
 
-    private async Task CollectAllSignalsAsync(TriageRun triageRun)
+    private async Task CollectAllSignalsAsync(TriageRun triageRun, string configPath)
     {
         if (triageRun.Status != TriageRunStatus.CollectingSignals && triageRun.Status != TriageRunStatus.NotStarted)
         {
             return;
         }
 
-        foreach (var signalId in triageRun.SignalIds)
-        {
-            await _storageProvider.DeleteSignalAsync(signalId);
-        }
-        triageRun.SignalIds.Clear();
-
-        AnsiConsole.MarkupLine("\n[bold]Collecting signals...[/]");
-
-        triageRun.Status = TriageRunStatus.CollectingSignals;
-        await _storageProvider.SaveTriageRunAsync(triageRun);
+        await _storageProvider.UpdateTriageRunStatusAsync(triageRun.Id, TriageRunStatus.CollectingSignals);
         var collectedSignalIds = new List<string>();
 
         await RunWithProgressAsync(async ctx =>
-            {
-                var azureDevOpsSignalsTask = CollectSignalsAsync<AzureDevOpsConfig>(ctx);
-                var githubSignalsTask = CollectSignalsAsync<GitHubConfig>(ctx);
-
-                var results = await Task.WhenAll(azureDevOpsSignalsTask, githubSignalsTask);
-                collectedSignalIds.AddRange(results.SelectMany(ids => ids));
-            });
-
-        triageRun.SignalIds = collectedSignalIds;
-        if (collectedSignalIds.Count > 0)
         {
-            AnsiConsole.MarkupLine($"[green]✓[/] Collected [bold]{collectedSignalIds.Count}[/] signals.");
-        }
-    }
-
-    private async Task<List<string>> CollectSignalsAsync<TConfig>(dynamic ctx) where TConfig : class
-    {
-        string source = typeof(TConfig).Name;
-        var configTask = ctx.AddTask($"[bold]{source}[/]", maxValue: 1);
-        try
-        {
-            var signalCollector = _signalCollectorFactory.CreateCollector<TConfig>();
-            if (signalCollector is null)
+            var progressTask = ctx.AddTask("[bold]Signals[/]", maxValue: 1);
+            try
             {
-                configTask.Description = $"[yellow]↷[/] {source} (not configured)";
-                return [];
+                var config = _configProvider.Get(configPath);
+                var signals = await _signalProvider.CollectSignalsAsync(config);
+                if (signals.Count == 0)
+                {
+                    return;
+                }
+                await _storageProvider.SaveSignalsToTriageRun(triageRun.Id, signals);
             }
-
-            var signalIds = await signalCollector.CollectAsync();
-            configTask.Description = $"[green]✓[/] {source} ({signalIds.Count} signals)";
-            return signalIds;
-        }
-        catch (Exception ex)
-        {
-            configTask.Description = $"[red]✗[/] {source}";
-            throw new Exception($"Error collecting signals from {source}: {ex.Message}", ex);
-        }
-        finally
-        {
-            configTask.Increment(1);
-            configTask.StopTask();
-        }
+            catch (Exception ex)
+            {
+                progressTask.Description = "[red]✗[/] Signals";
+                throw new Exception($"Error collecting signals: {ex.Message}", ex);
+            }
+            finally
+            {
+                progressTask.Increment(1);
+                progressTask.StopTask();
+            }
+        });
     }
 
     private async Task AnalyzeCollectedSignalsAsync(TriageRun triageRun)
@@ -148,8 +119,7 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
             return;
         }
 
-        triageRun.Status = TriageRunStatus.AnalyzingSignals;
-        await _storageProvider.SaveTriageRunAsync(triageRun);
+        await _storageProvider.UpdateTriageRunStatusAsync(triageRun.Id, TriageRunStatus.AnalyzingSignals);
 
         AnsiConsole.MarkupLine("\n[bold]Analyzing signals...[/]");
 
@@ -272,8 +242,7 @@ internal sealed class TriageRunCommand : BaseCommand<TriageRunSettings>
             return;
         }
 
-        triageRun.Status = TriageRunStatus.UpdatingWorkItems;
-        await _storageProvider.SaveTriageRunAsync(triageRun);
+        await _storageProvider.UpdateTriageRunStatusAsync(triageRun.Id, triageRun.Status);
 
         AnsiConsole.MarkupLine("\n[bold]Updating work items...[/]");
 
@@ -436,7 +405,7 @@ internal sealed class TriageListCommand : BaseCommand<BaseSettings>
     private readonly IStorageProvider _storageProvider;
 
     public TriageListCommand(
-        IBuildDutyConfigProvider configProvider,
+        IConfigProvider configProvider,
         IStorageProvider storageProvider)
         : base(configProvider)
     {
@@ -479,7 +448,7 @@ internal sealed class TriageShowCommand : BaseCommand<TriageShowSettings>
     IStorageProvider _storageProvider;
 
     public TriageShowCommand(
-        IBuildDutyConfigProvider configProvider,
+        IConfigProvider configProvider,
         IStorageProvider storageProvider)
         : base(configProvider)
     {

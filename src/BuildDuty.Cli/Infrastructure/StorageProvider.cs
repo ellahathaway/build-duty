@@ -1,18 +1,18 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using BuildDuty.Signals;
+using BuildDuty.Signals.Configuration;
 
-namespace BuildDuty.Core;
+namespace BuildDuty.Cli.Infrastructure;
 
 public interface IStorageProvider
 {
     Task SaveWorkItemAsync(WorkItem workItem);
     Task<WorkItem> GetWorkItemAsync(string workItemId);
     Task<ICollection<WorkItem>> GetWorkItemsAsync();
-    Task SaveSignalAsync(Signal signal);
-    Task DeleteSignalAsync(string signalId);
-    Task<Signal> GetSignalAsync(string signalId);
-    Task SaveTriageRunAsync(TriageRun triageRun);
+    Task UpdateTriageRunStatusAsync(string triageId, TriageRunStatus status);
     Task<TriageRun> GetTriageRunAsync(string triageId);
+    Task SaveSignalsToTriageRun(string triageId, List<Signal> signals);
     Task<ICollection<TriageRun>> GetTriageRunsAsync();
 }
 
@@ -26,23 +26,20 @@ public sealed class StorageProvider : IStorageProvider
         Converters =
         {
             new JsonStringEnumConverter(),
-            new SignalJsonConverter(),
         }
     };
 
     private readonly Lazy<string> _rootDirectory;
 
-    public StorageProvider(IBuildDutyConfigProvider configProvider)
+    public StorageProvider(string name)
     {
         _rootDirectory = new Lazy<string>(() =>
         {
-            var configName = configProvider.Get().Name;
             var root = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                ".build-duty", configName);
+                ".build-duty", name);
             Directory.CreateDirectory(root);
             Directory.CreateDirectory(Path.Combine(root, "workitems"));
-            Directory.CreateDirectory(Path.Combine(root, "signals"));
             Directory.CreateDirectory(Path.Combine(root, "triage"));
             return root;
         });
@@ -67,26 +64,36 @@ public sealed class StorageProvider : IStorageProvider
         return await Task.WhenAll(loadTasks);
     }
 
-    public async Task SaveSignalAsync(Signal signal)
-        => await SaveToJsonFileAsync(GetSignalFilePath(signal.Id), signal);
-
-    public async Task DeleteSignalAsync(string signalId)
+    public async Task UpdateTriageRunStatusAsync(string triageId, TriageRunStatus status)
     {
-        var filePath = GetSignalFilePath(signalId);
-        if (File.Exists(filePath))
-        {
-            File.Delete(filePath);
-        }
+        var triageRun = await GetTriageRunAsync(triageId);
+        triageRun.Status = status;
+        await SaveToJsonFileAsync(GetTriageRunFilePath(triageRun.Id), triageRun);
     }
 
-    public async Task<Signal> GetSignalAsync(string signalId)
-        => await LoadFromJsonFileAsync<Signal>(GetSignalFilePath(signalId));
+    public async Task SaveSignalsToTriageRun(string triageId, List<Signal> signals)
+    {
+        var triageRun = await GetTriageRunAsync(triageId);
+        string signalsXmlPath = Path.Combine(GetTriageRunsDirectory(), $"{triageRun.Id}_signals.xml");
+        if (File.Exists(signalsXmlPath))
+        {
+            File.Delete(signalsXmlPath);
+        }
+        SignalXmlSerializer.SerializeToFile(signals, signalsXmlPath);
+        triageRun.SignalsXmlPath = signalsXmlPath;
+        await SaveToJsonFileAsync(GetTriageRunFilePath(triageRun.Id), triageRun);
+    }
 
-    public async Task SaveTriageRunAsync(TriageRun triageRun)
-        => await SaveToJsonFileAsync(GetTriageRunFilePath(triageRun.Id), triageRun);
-
-    public async Task<TriageRun> GetTriageRunAsync(string triageRunId)
-        => await LoadFromJsonFileAsync<TriageRun>(GetTriageRunFilePath(triageRunId));
+    public async Task<TriageRun> GetTriageRunAsync(string? triageRunId = null)
+    {
+        if (triageRunId is null)
+        {
+            var triageRun = new TriageRun();
+            await SaveToJsonFileAsync(GetTriageRunFilePath(triageRun.Id), triageRun);
+            return triageRun;
+        }
+        return await LoadFromJsonFileAsync<TriageRun>(GetTriageRunFilePath(triageRunId));
+    }
 
     public async Task<ICollection<TriageRun>> GetTriageRunsAsync()
     {
@@ -126,45 +133,7 @@ public sealed class StorageProvider : IStorageProvider
     }
 
     private string GetWorkItemsDirectory() => Path.Combine(_rootDirectory.Value, "workitems");
-    private string GetSignalDirectory() => Path.Combine(_rootDirectory.Value, "signals");
     private string GetTriageRunsDirectory() => Path.Combine(_rootDirectory.Value, "triage");
-
     private string GetWorkItemFilePath(string workItemId) => Path.Combine(GetWorkItemsDirectory(), $"{workItemId}.json");
-    private string GetSignalFilePath(string signalId) => Path.Combine(GetSignalDirectory(), $"{signalId}.json");
     private string GetTriageRunFilePath(string triageRunId) => Path.Combine(GetTriageRunsDirectory(), $"{triageRunId}.json");
-}
-
-internal sealed class SignalJsonConverter : JsonConverter<Signal>
-{
-    public override Signal Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
-    {
-        using var document = JsonDocument.ParseValue(ref reader);
-        var root = document.RootElement;
-
-        if (!root.TryGetProperty("type", out var typeProp))
-        {
-            throw new JsonException("Missing required property 'type'.");
-        }
-
-        SignalType type = Enum.Parse<SignalType>(typeProp.GetString()!, ignoreCase: true);
-
-        return type switch
-        {
-            SignalType.GitHubIssue =>
-                root.Deserialize<GitHubIssueSignal>(options) ?? throw new JsonException("Failed to deserialize GitHubIssueSignal."),
-
-            SignalType.GitHubPullRequest =>
-                root.Deserialize<GitHubPullRequestSignal>(options) ?? throw new JsonException("Failed to deserialize GitHubPullRequestSignal."),
-
-            SignalType.AzureDevOpsPipeline =>
-                root.Deserialize<AzureDevOpsPipelineSignal>(options) ?? throw new JsonException("Failed to deserialize AzureDevOpsPipelineSignal."),
-
-            _ => throw new JsonException($"Unsupported signal type '{type}'.")
-        };
-    }
-
-    public override void Write(Utf8JsonWriter writer, Signal value, JsonSerializerOptions options)
-    {
-        JsonSerializer.Serialize(writer, (object)value, value.GetType(), options);
-    }
 }
