@@ -1,31 +1,44 @@
+using System.Diagnostics;
 using Maestro.Common;
-using Microsoft.DotNet.DarcLib.Helpers;
 
 namespace BuildDuty.Core;
 
-public sealed class GitHubTokenProvider(IProcessManager processManager) : IRemoteTokenProvider
+/// <summary>
+/// Token provider for GitHub APIs using the gh CLI for authentication.
+/// Requires the user to be logged in via <c>gh auth login</c>.
+/// </summary>
+internal class GitHubTokenProvider : IRemoteTokenProvider
 {
     public string GetTokenForRepository(string repoUri)
         => GetTokenForRepositoryAsync(repoUri).GetAwaiter().GetResult()!;
 
     public async Task<string?> GetTokenForRepositoryAsync(string repoUri)
     {
-        var result = await processManager.Execute("gh", ["auth", "token"], timeout: TimeSpan.FromSeconds(10));
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = "gh",
+                Arguments = "auth token",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }
+        };
 
-        if (!result.Succeeded)
+        process.Start();
+        var output = await process.StandardOutput.ReadToEndAsync();
+        var error = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+
+        if (process.ExitCode != 0)
         {
             throw new InvalidOperationException(
-                $"Failed to retrieve GitHub token via 'gh auth token' (exit code {result.ExitCode}). " +
-                "Ensure the GitHub CLI is installed and authenticated via 'gh auth login'.");
+                $"Failed to retrieve GitHub token via 'gh auth token' (exit code {process.ExitCode}). " +
+                $"Ensure the GitHub CLI is installed and authenticated via 'gh auth login'. Error: {error}");
         }
 
-        var token = result.StandardOutput.Trim();
-        if (string.IsNullOrWhiteSpace(token))
-        {
-            throw new InvalidOperationException(
-                "The 'gh auth token' command returned an empty token. Run 'gh auth login' to authenticate.");
-        }
-
-        return token;
+        return output.Trim();
     }
 }

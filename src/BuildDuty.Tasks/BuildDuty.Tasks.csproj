@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>BuildDuty.Tasks</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <PackageId>BuildDuty.Tasks</PackageId>
+    <Description>MSBuild task for build-duty signal collection. Collects signals from Azure DevOps and GitHub based on a .build-duty.yml config file and writes structured JSON output.</Description>
+    <DevelopmentDependency>true</DevelopmentDependency>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <!-- MSBuild tasks must not produce an executable -->
+    <OutputType>Library</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BuildDuty.Core\BuildDuty.Core.csproj" PrivateAssets="all" />
+    <ProjectReference Include="..\BuildDuty.Signals\BuildDuty.Signals.csproj" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Build.Utilities.Core" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+  <!-- Pack the .targets file and task assembly into the package -->
+  <ItemGroup>
+    <Content Include="build\BuildDuty.Tasks.targets" PackagePath="build\" Pack="true" />
+  </ItemGroup>
+
+</Project>

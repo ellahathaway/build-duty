@@ -1,0 +1,4 @@
+<Project>
+  <UsingTask TaskName="BuildDuty.Tasks.CollectSignals"
+             AssemblyFile="$(MSBuildThisFileDirectory)..\lib\net10.0\BuildDuty.Tasks.dll" />
+</Project>

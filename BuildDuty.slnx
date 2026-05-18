@@ -1,8 +1,11 @@
 <Solution>
   <Folder Name="/src/">
-    <Project Path="src/BuildDuty.Cli/BuildDuty.Cli.csproj" />
+    <Project Path="src/BuildDuty.Mcp/BuildDuty.Mcp.csproj" />
+    <Project Path="src/BuildDuty.Configuration/BuildDuty.Configuration.csproj" />
+    <Project Path="src/BuildDuty.Configuration.Tests/BuildDuty.Configuration.Tests.csproj" />
     <Project Path="src/BuildDuty.Core/BuildDuty.Core.csproj" />
-    <Project Path="src/BuildDuty.AI/BuildDuty.AI.csproj" />
-    <Project Path="src/BuildDuty.Tests/BuildDuty.Tests.csproj" />
+    <Project Path="src/BuildDuty.Signals/BuildDuty.Signals.csproj" />
+    <Project Path="src/BuildDuty.Signals.Tests/BuildDuty.Signals.Tests.csproj" />
+    <Project Path="src/BuildDuty.Tasks/BuildDuty.Tasks.csproj" />
   </Folder>
 </Solution>

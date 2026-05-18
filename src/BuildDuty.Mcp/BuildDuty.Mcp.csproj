@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>BuildDuty.Mcp</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <PackAsTool>true</PackAsTool>
+    <PackageId>ellahathaway.buildduty.mcp</PackageId>
+    <PackageType>McpServer</PackageType>
+    <Description>MCP server for build-duty signal collection. Exposes signal collection and config resolution as MCP tools for use with GitHub Copilot and other AI surfaces.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <ChangelogFile>CHANGELOG.md</ChangelogFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BuildDuty.Core\BuildDuty.Core.csproj" />
+    <ProjectReference Include="..\BuildDuty.Signals\BuildDuty.Signals.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Ionide.KeepAChangelog.Tasks" PrivateAssets="all" />
+    <PackageReference Include="ModelContextProtocol" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="Microsoft.Extensions.Logging" />
+  </ItemGroup>
+
+</Project>

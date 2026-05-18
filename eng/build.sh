@@ -44,9 +44,9 @@ if [ "$PACK" = true ]; then
 fi
 
 if [ "$INSTALL" = true ]; then
-    echo "==> Install (global tool)"
-    dotnet tool uninstall -g buildduty 2>/dev/null || true
-    dotnet tool install --global --add-source "$ARTIFACTS/packages" buildduty
+    echo "==> Install (MCP server global tool)"
+    dotnet tool uninstall -g ellahathaway.buildduty.mcp 2>/dev/null || true
+    dotnet tool install --global --add-source "$ARTIFACTS/packages" ellahathaway.buildduty.mcp --prerelease
 fi
 
 echo "==> Done"

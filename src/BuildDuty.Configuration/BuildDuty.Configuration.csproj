@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>BuildDuty.Configuration</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <PackageId>BuildDuty.Configuration</PackageId>
+    <Description>Build-duty configuration</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Dotnet.Release.Releases" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.TeamFoundationServer.ExtendedClient" />
+    <PackageReference Include="Microsoft.VisualStudio.Services.Client" />
+    <PackageReference Include="Octokit" />
+    <PackageReference Include="YamlDotNet" />
+  </ItemGroup>
+
+</Project>

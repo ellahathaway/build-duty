@@ -13,8 +13,7 @@ azureDevOps:
                 VMR source-only build outer loop validation. Builds the .NET SDK
                 from source for mono distros.
               release: &all-phases
-                repository: dotnet-dotnet
-                supportPhases: [active, maintenance, preview, go-live, rc]
+                supportPhases: [active, maintenance, preview, goLive]
             - id: 1330
               name: Source Build Unified Build
               age: 20d
@@ -28,7 +27,7 @@ azureDevOps:
                   names:
                     - "^Validate Signing.*"
               release:
-                <<: *all-phases
+                supportPhases: [active, maintenance, preview, goLive]
                 minVersion: 10
             - id: 1219
               name: Source Build Pre-10.0
@@ -36,8 +35,8 @@ azureDevOps:
               context: >
                 Builds the VMR from source for .NET 8 and 9.
               release: &servicing-only
-                repository: dotnet-dotnet
                 supportPhases: [active, maintenance]
+                maxVersion: 9
             - id: 1301
               name: Source Build License Scan
               age: 20d
@@ -62,7 +61,7 @@ azureDevOps:
                 branches for .NET 9 servicing. Feeds into the Source Build
                 Pre-10.0 pipeline. If this fails, the VMR will be out of sync
                 and the pre-10.0 build may build stale code.
-              release: *all-phases
+              release: *servicing-only
             - id: 1379
               name: VMR Sync SDK (public)
               age: 20d
@@ -71,7 +70,7 @@ azureDevOps:
                 branches for .NET 9 servicing. Feeds into the Source Build
                 Pre-10.0 pipeline. Public counterpart to the internal VMR Sync
                 SDK pipeline.
-              release: *all-phases
+              release: *servicing-only
             - id: 1228
               name: VMR Sync Installer (internal)
               age: 20d
@@ -89,9 +88,9 @@ azureDevOps:
                 Public counterpart to the internal VMR Sync Installer pipeline.
               release: *servicing-only
 
-github:
+gitHub:
   organizations:
-    - organization: dotnet
+    - name: dotnet
       repositories:
         - name: source-build
           issues:

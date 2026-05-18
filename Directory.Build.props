@@ -4,11 +4,13 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <VersionPrefix>0.1.0</VersionPrefix>
+    <VersionSuffix>preview</VersionSuffix>
     <RootNamespace>BuildDuty.$(MSBuildProjectName.Replace("BuildDuty.", ""))</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.6" />
-    <PackageReference Include="NuGet.Packaging" Version="7.0.3" />
+    <PackageReference Include="System.Security.Cryptography.Xml" />
+    <PackageReference Include="NuGet.Packaging" />
   </ItemGroup>
 </Project>

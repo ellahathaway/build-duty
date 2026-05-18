@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>BuildDuty.Signals</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <PackageId>BuildDuty.Signals</PackageId>
+    <Description>Build-duty configuration reading and signal collection library. Reads build-duty YAML configs, collects signals from Azure DevOps and GitHub APIs, and outputs XML-serializable signal data.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="BuildDuty.Signals.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BuildDuty.Configuration\BuildDuty.Configuration.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Dotnet.Release.Releases" />
+    <PackageReference Include="Maestro.Common" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.TeamFoundationServer.ExtendedClient" />
+    <PackageReference Include="Microsoft.VisualStudio.Services.Client" />
+    <PackageReference Include="Octokit" />
+    <PackageReference Include="YamlDotNet" />
+  </ItemGroup>
+
+</Project>

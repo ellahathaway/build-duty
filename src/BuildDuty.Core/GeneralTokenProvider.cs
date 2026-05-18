@@ -1,37 +1,55 @@
+using System.Diagnostics;
 using Maestro.Common;
+using Maestro.Common.AzureDevOpsTokens;
 
 namespace BuildDuty.Core;
 
-public interface IGeneralTokenProvider
+public class GeneralTokenProvider : IRemoteTokenProvider
 {
-    string GetTokenForRepository(string repoUri);
-    Task<string?> GetTokenForRepositoryAsync(string repoUri);
-}
+    private readonly IAzureDevOpsTokenProvider _azdoTokenProvider;
+    private readonly GitHubTokenProvider _gitHubTokenProvider;
 
-public sealed class GeneralTokenProvider(
-    IRemoteTokenProvider azureDevOpsTokenProvider,
-    IRemoteTokenProvider githubTokenProvider) : IGeneralTokenProvider
-{
+    public GeneralTokenProvider()
+    {
+        var options = new AzureDevOpsTokenProviderOptions
+            {
+                ["default"] = new AzureDevOpsCredentialResolverOptions()
+            };
+        _azdoTokenProvider = AzureDevOpsTokenProvider.FromStaticOptions(options);
+        _gitHubTokenProvider = new GitHubTokenProvider();
+    }
+
     public string GetTokenForRepository(string repoUri)
-        => GetProvider(repoUri).GetTokenForRepository(repoUri)
-            ?? throw new InvalidOperationException($"No token available for repository '{repoUri}'.");
+    {
+        if (repoUri.Contains("dev.azure.com", StringComparison.OrdinalIgnoreCase) ||
+            repoUri.Contains("visualstudio.com", StringComparison.OrdinalIgnoreCase))
+        {
+            return _azdoTokenProvider.GetTokenForRepository(repoUri) ?? throw new InvalidOperationException($"Failed to retrieve Azure DevOps token for repository: {repoUri}");
+        }
+        else if (repoUri.Contains("github.com", StringComparison.OrdinalIgnoreCase))
+        {
+            return _gitHubTokenProvider.GetTokenForRepository(repoUri);
+        }
+        else
+        {
+            throw new NotSupportedException($"Unsupported repository URI: {repoUri}");
+        }
+    }
 
     public Task<string?> GetTokenForRepositoryAsync(string repoUri)
-        => GetProvider(repoUri).GetTokenForRepositoryAsync(repoUri);
-
-    private IRemoteTokenProvider GetProvider(string repoUri)
     {
-        if (!Uri.TryCreate(repoUri, UriKind.Absolute, out var uri))
+        if (repoUri.Contains("dev.azure.com", StringComparison.OrdinalIgnoreCase) ||
+            repoUri.Contains("visualstudio.com", StringComparison.OrdinalIgnoreCase))
         {
-            return githubTokenProvider;
+            return _azdoTokenProvider.GetTokenForRepositoryAsync(repoUri);
         }
-
-        if (uri.Host.Contains("dev.azure.com", StringComparison.OrdinalIgnoreCase)
-            || uri.Host.Contains("visualstudio.com", StringComparison.OrdinalIgnoreCase))
+        else if (repoUri.Contains("github.com", StringComparison.OrdinalIgnoreCase))
         {
-            return azureDevOpsTokenProvider;
+            return _gitHubTokenProvider.GetTokenForRepositoryAsync(repoUri);
         }
-
-        return githubTokenProvider;
+        else
+        {
+            throw new NotSupportedException($"Unsupported repository URI: {repoUri}");
+        }
     }
 }

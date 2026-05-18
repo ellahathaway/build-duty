@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "build-duty-mcp-server": {
+      "type": "local",
+      "command": "dotnet",
+      "args": ["dnx", "--yes", "ellahathaway.buildduty.mcp"],
+      "env": {},
+      "tools": ["*"]
+    },
+    "azure-devops-mcp-server": {
+      "type": "http",
+      "url": "https://mcp.dev.azure.com/dnceng",
+      "tools": ["*"]
+    },
+    "github-mcp-server": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "tools": ["*"]
+    }
+  }
+}
