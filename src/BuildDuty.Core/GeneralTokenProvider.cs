@@ -12,9 +12,9 @@ public class GeneralTokenProvider : IRemoteTokenProvider
     public GeneralTokenProvider()
     {
         var options = new AzureDevOpsTokenProviderOptions
-            {
-                ["default"] = new AzureDevOpsCredentialResolverOptions()
-            };
+        {
+            ["default"] = new AzureDevOpsCredentialResolverOptions()
+        };
         _azdoTokenProvider = AzureDevOpsTokenProvider.FromStaticOptions(options);
         _gitHubTokenProvider = new GitHubTokenProvider();
     }

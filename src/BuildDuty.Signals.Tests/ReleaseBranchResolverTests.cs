@@ -1,7 +1,7 @@
 using System.Reflection;
-using BuildDuty.Signals.Collection;
 using BuildDuty.Configuration.Models;
 using BuildDuty.Services.Configuration;
+using BuildDuty.Signals.Collection;
 using Maestro.Common;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;

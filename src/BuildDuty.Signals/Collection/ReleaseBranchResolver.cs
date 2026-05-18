@@ -151,7 +151,7 @@ public sealed class ReleaseBranchResolver
         }
 
         var branchPatch = match.Groups["patch"].Value;
-        var branchFeatureBand = match.Groups["featureBand"].Success 
+        var branchFeatureBand = match.Groups["featureBand"].Success
             ? int.Parse(match.Groups["featureBand"].Value)
             : int.Parse(branchPatch[0].ToString());
 

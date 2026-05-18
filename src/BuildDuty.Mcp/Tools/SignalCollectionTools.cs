@@ -4,9 +4,9 @@ using BuildDuty.Core;
 using BuildDuty.Services.Configuration;
 using BuildDuty.Signals;
 using BuildDuty.Signals.Collection;
-using Microsoft.Extensions.Logging;
 using Maestro.Common;
 using Maestro.Common.AzureDevOpsTokens;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 
 namespace BuildDuty.Mcp.Tools;
@@ -83,7 +83,11 @@ public class SignalCollectionTools
         while (dir is not null)
         {
             var candidate = Path.Combine(dir, ".build-duty.yml");
-            if (File.Exists(candidate)) return candidate;
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+
             dir = Directory.GetParent(dir)?.FullName;
         }
         return null;

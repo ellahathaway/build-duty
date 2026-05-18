@@ -1,7 +1,7 @@
+using BuildDuty.Configuration.Models;
 using Microsoft.TeamFoundation.Build.WebApi;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
-using BuildDuty.Configuration.Models;
 
 namespace BuildDuty.Services.Configuration;
 
