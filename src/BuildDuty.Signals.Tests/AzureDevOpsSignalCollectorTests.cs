@@ -3,6 +3,7 @@ using BuildDuty.Configuration.Models;
 using BuildDuty.Services.Configuration;
 using BuildDuty.Signals.Collection;
 using Maestro.Common;
+using Microsoft.Deployment.DotNet.Releases;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.TeamFoundation.Build.WebApi;
 using Xunit;

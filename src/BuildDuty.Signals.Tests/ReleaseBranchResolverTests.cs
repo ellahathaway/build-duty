@@ -1,8 +1,12 @@
+using System.Collections.Concurrent;
+using System.Collections.ObjectModel;
 using System.Reflection;
+using System.Text.Json;
 using BuildDuty.Configuration.Models;
 using BuildDuty.Services.Configuration;
 using BuildDuty.Signals.Collection;
 using Maestro.Common;
+using Microsoft.Deployment.DotNet.Releases;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -10,18 +14,6 @@ namespace BuildDuty.Signals.Tests;
 
 public class ReleaseBranchResolverTests
 {
-    private static MajorReleaseIndexItem Entry(string channel, string releasesJsonUrl) => new(
-        ChannelVersion: channel,
-        LatestRelease: "",
-        LatestReleaseDate: DateOnly.MinValue,
-        Security: false,
-        LatestRuntime: "",
-        LatestSdk: "",
-        Product: ".NET",
-        SupportPhase: SupportPhase.Active,
-        EolDate: DateOnly.MaxValue,
-        ReleasesJson: releasesJsonUrl);
-
     private static ReleaseBranchConfig Config(params SupportPhase[] phases) => new()
     {
         MinVersion = 8,
@@ -153,12 +145,12 @@ public class ReleaseBranchResolverTests
         // So latest feature band = 2, meaning 1xx and 2xx are included but 3xx is not
         var resolver = CreateResolverWithSdks(new Dictionary<string, ChannelData>
         {
-            ["9.0"] = new(SupportPhase.Eol, "9.0.6", [["9.0.203", "9.0.106"], ["9.0.202", "9.0.105"]]),
+            ["9.0"] = new(SupportPhase.EOL, "9.0.6", [["9.0.203", "9.0.106"], ["9.0.202", "9.0.105"]]),
         });
 
-        var include1xx = await InvokeMatchAsync(resolver, "refs/heads/release/9.0.1xx", Config(SupportPhase.Eol));
-        var include2xx = await InvokeMatchAsync(resolver, "refs/heads/release/9.0.2xx", Config(SupportPhase.Eol));
-        var exclude3xx = await InvokeMatchAsync(resolver, "refs/heads/release/9.0.3xx", Config(SupportPhase.Eol));
+        var include1xx = await InvokeMatchAsync(resolver, "refs/heads/release/9.0.1xx", Config(SupportPhase.EOL));
+        var include2xx = await InvokeMatchAsync(resolver, "refs/heads/release/9.0.2xx", Config(SupportPhase.EOL));
+        var exclude3xx = await InvokeMatchAsync(resolver, "refs/heads/release/9.0.3xx", Config(SupportPhase.EOL));
 
         Assert.True(include1xx);
         Assert.True(include2xx);
@@ -269,91 +261,68 @@ public class ReleaseBranchResolverTests
     {
         var resolver = new ReleaseBranchResolver(new StubTokenProvider(), NullLogger.Instance);
 
-        var index = channels.ToDictionary(
+        var products = channels.ToDictionary(
             kvp => kvp.Key,
-            kvp => Entry(kvp.Key, $"https://example.invalid/{kvp.Key}/releases.json"));
+            kvp => CreateProduct(kvp.Key, kvp.Value.Phase, kvp.Value.LatestRelease));
 
         SetPrivateField(
             resolver,
-            "_releaseIndexEntriesTask",
-            new Lazy<Task<Dictionary<string, MajorReleaseIndexItem>>>(() => Task.FromResult(index)));
+            "_productsTask",
+            new Lazy<Task<Dictionary<string, Product>>>(() => Task.FromResult(products)));
 
-        PrimeReleaseCacheWithSdks(resolver, channels);
-        return resolver;
-    }
-
-    private static void PrimeReleaseCacheWithSdks(
-        ReleaseBranchResolver resolver,
-        Dictionary<string, ChannelData> channels)
-    {
-        var resolverType = typeof(ReleaseBranchResolver);
-        var majorReleasesType = resolverType.GetNestedType("MajorReleases", BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("MajorReleases type not found.");
-        var releaseType = resolverType.GetNestedType("Release", BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("Release type not found.");
-        var sdkType = resolverType.GetNestedType("Sdk", BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("Sdk type not found.");
-
-        var cacheField = resolverType.GetField("_releasesCache", BindingFlags.Instance | BindingFlags.NonPublic)
+        // Prime releases cache
+        var cacheField = typeof(ReleaseBranchResolver).GetField("_releasesCache", BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new InvalidOperationException("_releasesCache field not found.");
-        var cache = cacheField.GetValue(resolver)
-            ?? throw new InvalidOperationException("_releasesCache value is null.");
-        var tryAddMethod = cache.GetType().GetMethod("TryAdd")
-            ?? throw new InvalidOperationException("TryAdd method not found on releases cache.");
+        var cache = (ConcurrentDictionary<string, Lazy<Task<ReadOnlyCollection<ProductRelease>>>>)cacheField.GetValue(resolver)!;
 
         foreach (var (channel, data) in channels)
         {
-            var releaseListType = typeof(List<>).MakeGenericType(releaseType);
-            var releaseList = Activator.CreateInstance(releaseListType)
-                ?? throw new InvalidOperationException("Could not create Release list.");
-
-            // Each inner array represents one release's SDKs
-            foreach (var releaseSdks in data.ReleaseSdks)
-            {
-                var sdkListType = typeof(List<>).MakeGenericType(sdkType);
-                var sdkList = Activator.CreateInstance(sdkListType)
-                    ?? throw new InvalidOperationException("Could not create SDK list.");
-
-                foreach (var sdkVersion in releaseSdks)
-                {
-                    var sdk = Activator.CreateInstance(sdkType)
-                        ?? throw new InvalidOperationException("Could not create Sdk instance.");
-                    sdkType.GetProperty("Version")!.SetValue(sdk, sdkVersion);
-                    sdkType.GetProperty("RuntimeVersion")!.SetValue(sdk, "0.0.0");
-                    sdkListType.GetMethod("Add")!.Invoke(sdkList, [sdk]);
-                }
-
-                var release = Activator.CreateInstance(releaseType)
-                    ?? throw new InvalidOperationException("Could not create Release instance.");
-                releaseType.GetProperty("Sdks")!.SetValue(release, sdkList);
-                releaseListType.GetMethod("Add")!.Invoke(releaseList, [release]);
-            }
-
-            var majorRelease = Activator.CreateInstance(majorReleasesType)
-                ?? throw new InvalidOperationException("Could not create MajorReleases instance.");
-            majorReleasesType.GetProperty("ChannelVersion")!.SetValue(majorRelease, channel);
-            majorReleasesType.GetProperty("SupportPhase")!.SetValue(majorRelease, data.Phase);
-            majorReleasesType.GetProperty("LatestRelease")!.SetValue(majorRelease, data.LatestRelease);
-            majorReleasesType.GetProperty("Releases")!.SetValue(majorRelease, releaseList);
-
-            var lazyTask = CreateLazyTask(majorReleasesType, majorRelease);
-            _ = (bool)(tryAddMethod.Invoke(cache, [channel, lazyTask]) ?? false);
+            var product = products[channel];
+            var releases = CreateReleases(product, data.ReleaseSdks);
+            cache.TryAdd(channel, new Lazy<Task<ReadOnlyCollection<ProductRelease>>>(() => Task.FromResult(releases)));
         }
+
+        return resolver;
     }
 
-    private static object CreateLazyTask(Type valueType, object value)
+    private static Product CreateProduct(string channel, SupportPhase phase, string latestRelease)
     {
-        var helper = typeof(ReleaseBranchResolverTests)
-            .GetMethod(nameof(CreateLazyTaskGeneric), BindingFlags.Static | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("CreateLazyTaskGeneric helper method not found.");
-
-        return helper.MakeGenericMethod(valueType).Invoke(null, [value])
-            ?? throw new InvalidOperationException("Could not create Lazy<Task<T>>.");
+        var supportPhaseStr = phase switch
+        {
+            SupportPhase.Active => "active",
+            SupportPhase.EOL => "eol",
+            SupportPhase.GoLive => "go-live",
+            SupportPhase.Maintenance => "maintenance",
+            SupportPhase.Preview => "preview",
+            _ => "unknown"
+        };
+        var json = $$"""{"channel-version":"{{channel}}","latest-release":"{{latestRelease}}","latest-release-date":"2026-01-01","security":false,"latest-runtime":"{{latestRelease}}","latest-sdk":"{{channel}}.100","product":".NET","support-phase":"{{supportPhaseStr}}","release-type":"lts","releases.json":"https://example.invalid/{{channel}}/releases.json"}""";
+        using var doc = JsonDocument.Parse(json);
+        return (Product)Activator.CreateInstance(
+            typeof(Product),
+            BindingFlags.NonPublic | BindingFlags.Instance,
+            null,
+            [doc.RootElement],
+            null)!;
     }
 
-    private static Lazy<Task<T>> CreateLazyTaskGeneric<T>(T value) where T : notnull
+    private static ReadOnlyCollection<ProductRelease> CreateReleases(Product product, string[][] releaseSdks)
     {
-        return new Lazy<Task<T>>(() => Task.FromResult(value));
+        var releases = releaseSdks.Select(sdks => CreateRelease(product, sdks)).ToList();
+        return new ReadOnlyCollection<ProductRelease>(releases);
+    }
+
+    private static ProductRelease CreateRelease(Product product, string[] sdkVersions)
+    {
+        var sdksJson = string.Join(",", sdkVersions.Select(v => $$"""{"version":"{{v}}","version-display":"{{v}}"}"""));
+        var json = $$"""{"release-date":"2026-01-01","release-version":"{{product.LatestReleaseVersion}}","security":false,"sdks":[{{sdksJson}}]}""";
+        using var doc = JsonDocument.Parse(json);
+        return (ProductRelease)Activator.CreateInstance(
+            typeof(ProductRelease),
+            BindingFlags.NonPublic | BindingFlags.Instance,
+            null,
+            [doc.RootElement, product],
+            null)!;
     }
 
     private static void SetPrivateField(object target, string fieldName, object value)

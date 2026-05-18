@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <PackageReference Include="Maestro.Common" />
+    <PackageReference Include="Microsoft.Deployment.DotNet.Releases" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="Microsoft.TeamFoundationServer.ExtendedClient" />
     <PackageReference Include="Microsoft.VisualStudio.Services.Client" />

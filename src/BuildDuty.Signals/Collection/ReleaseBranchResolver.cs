@@ -1,34 +1,27 @@
 using System.Collections.Concurrent;
-using System.Net.Http.Json;
-using System.Text.Json;
-using System.Text.Json.Serialization;
+using System.Collections.ObjectModel;
 using System.Text.RegularExpressions;
 using BuildDuty.Configuration.Models;
 using BuildDuty.Services.Configuration;
 using Maestro.Common;
+using Microsoft.Deployment.DotNet.Releases;
 using Microsoft.Extensions.Logging;
 
 namespace BuildDuty.Signals.Collection;
 
 public sealed class ReleaseBranchResolver
 {
-    private static readonly string ReleasesIndexUrl = "https://raw.githubusercontent.com/dotnet/core/main/release-notes/releases-index.json";
     private static readonly Regex ReleaseBranchPatternXx =
         new(@"^refs/heads/((internal/)?release/((?<major>\d+)\.(?<minor>\d+)\.(?<featureBand>\d)xx)(?:-(?<preReleaseLabel>preview|rc)\.?(?<preReleaseVersion>\d+))?)$", RegexOptions.Compiled);
     private static readonly Regex ReleaseBranchPatternNnn =
         new(@"^refs/heads/((internal/)?release/((?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d{3}))(?:-(?<preReleaseLabel>preview|rc)\.?(?<preReleaseVersion>\d+))?)$", RegexOptions.Compiled);
     private static readonly Regex VersionPattern =
         new(@"^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:-(?<preReleaseLabel>preview|rc)\.(?<preReleaseVersion>\d))?", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private static readonly JsonSerializerOptions ReleaseJsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.KebabCaseLower,
-        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.KebabCaseLower) }
-    };
 
     private readonly IRemoteTokenProvider _tokenProvider;
     private readonly ILogger _logger;
-    private readonly Lazy<Task<Dictionary<string, MajorReleaseIndexItem>>> _releaseIndexEntriesTask;
-    private readonly ConcurrentDictionary<string, Lazy<Task<MajorReleases>>> _releasesCache = new();
+    private readonly Lazy<Task<Dictionary<string, Product>>> _productsTask;
+    private readonly ConcurrentDictionary<string, Lazy<Task<ReadOnlyCollection<ProductRelease>>>> _releasesCache = new();
     private readonly ConcurrentDictionary<PipelineInfo, List<string>> _resolvedCache = new();
     private record PipelineInfo(string Org, string Project, int PipelineId);
 
@@ -36,7 +29,7 @@ public sealed class ReleaseBranchResolver
     {
         _tokenProvider = tokenProvider;
         _logger = logger;
-        _releaseIndexEntriesTask = new Lazy<Task<Dictionary<string, MajorReleaseIndexItem>>>(LoadReleaseIndexAsync);
+        _productsTask = new Lazy<Task<Dictionary<string, Product>>>(LoadProductsAsync);
     }
 
     /// <summary>
@@ -125,27 +118,22 @@ public sealed class ReleaseBranchResolver
         var minor = match.Groups["minor"].Value;
         string branchChannel = $"{major}.{minor}";
 
-        var releaseIndexEntries = await _releaseIndexEntriesTask.Value;
-        if (!releaseIndexEntries.TryGetValue(branchChannel, out var indexEntry))
+        var products = await _productsTask.Value;
+        if (!products.TryGetValue(branchChannel, out var product))
         {
             // Unknown channel: only allow explicit pre-release branches when Preview is requested.
             return match.Groups["preReleaseLabel"].Success && releaseConfig.SupportPhases.Contains(SupportPhase.Preview);
         }
 
-        // Fetch channel metadata lazily and cache by channel.
-        var majorRelease = await _releasesCache.GetOrAdd(
-            branchChannel,
-            _ => new Lazy<Task<MajorReleases>>(() => LoadMajorReleaseAsync(indexEntry, branchChannel))).Value;
-
-        if (!releaseConfig.SupportPhases.Contains(majorRelease.SupportPhase))
+        if (!releaseConfig.SupportPhases.Contains(product.SupportPhase))
         {
             return false;
         }
 
         // Pre-release branches (preview/rc) are only valid for Preview or GoLive channels.
         if (match.Groups["preReleaseLabel"].Success &&
-            majorRelease.SupportPhase != SupportPhase.Preview &&
-            majorRelease.SupportPhase != SupportPhase.GoLive)
+            product.SupportPhase != SupportPhase.Preview &&
+            product.SupportPhase != SupportPhase.GoLive)
         {
             return false;
         }
@@ -155,9 +143,9 @@ public sealed class ReleaseBranchResolver
             ? int.Parse(match.Groups["featureBand"].Value)
             : int.Parse(branchPatch[0].ToString());
 
-        if (majorRelease.SupportPhase == SupportPhase.Preview || majorRelease.SupportPhase == SupportPhase.GoLive)
+        if (product.SupportPhase == SupportPhase.Preview || product.SupportPhase == SupportPhase.GoLive)
         {
-            var latestReleaseMatch = ValidateAndParseVersion(majorRelease.LatestRelease, branchChannel);
+            var latestReleaseMatch = ValidateAndParseVersion(product.LatestReleaseVersion.ToString(), branchChannel);
 
             var preReleaseLabel = match.Groups["preReleaseLabel"].Value;
             var latestPreReleaseLabel = latestReleaseMatch.Groups["preReleaseLabel"].Value;
@@ -175,10 +163,15 @@ public sealed class ReleaseBranchResolver
             return true;
         }
 
-        if (majorRelease.SupportPhase == SupportPhase.Eol)
+        // Fetch per-channel release details lazily and cache by channel.
+        var releases = await _releasesCache.GetOrAdd(
+            branchChannel,
+            _ => new Lazy<Task<ReadOnlyCollection<ProductRelease>>>(() => product.GetReleasesAsync())).Value;
+
+        if (product.SupportPhase == SupportPhase.EOL)
         {
             // For EOL releases, include up to latest known feature band (derived from released SDKs).
-            var latestFeatureBand = GetLatestReleasedFeatureBand(majorRelease);
+            var latestFeatureBand = GetLatestReleasedFeatureBand(releases);
             return branchFeatureBand <= latestFeatureBand;
         }
 
@@ -186,7 +179,7 @@ public sealed class ReleaseBranchResolver
         // For NNN branches, exclude branches whose SDK version has already been released.
         if (!match.Groups["featureBand"].Success)
         {
-            var releasedSdkVersions = GetReleasedSdkVersions(majorRelease);
+            var releasedSdkVersions = GetReleasedSdkVersions(releases);
             // Branch patch is the full SDK patch (e.g., 107, 203, 300).
             // The SDK version for this branch is "{major}.{minor}.{patch}".
             var branchSdkVersion = $"{major}.{minor}.{branchPatch}";
@@ -199,19 +192,10 @@ public sealed class ReleaseBranchResolver
         return true;
     }
 
-    private async Task<Dictionary<string, MajorReleaseIndexItem>> LoadReleaseIndexAsync()
+    private static async Task<Dictionary<string, Product>> LoadProductsAsync()
     {
-        using var client = CreatePublicHttpClient();
-        var majorReleaseIndex = await client.GetFromJsonAsync<MajorReleasesIndex>(ReleasesIndexUrl, ReleaseJsonOptions)
-            ?? throw new Exception("Failed to fetch releases index");
-        return majorReleaseIndex.ReleasesIndex.ToDictionary(r => r.ChannelVersion);
-    }
-
-    private async Task<MajorReleases> LoadMajorReleaseAsync(MajorReleaseIndexItem indexEntry, string branchChannel)
-    {
-        using var client = CreatePublicHttpClient();
-        return await client.GetFromJsonAsync<MajorReleases>(indexEntry.ReleasesJson, ReleaseJsonOptions)
-            ?? throw new Exception($"Failed to fetch major release data for channel '{branchChannel}'");
+        var products = await ProductCollection.GetAsync();
+        return products.ToDictionary(p => p.ProductVersion);
     }
 
     private Match ValidateAndParseVersion(string version, string branchChannel)
@@ -228,21 +212,14 @@ public sealed class ReleaseBranchResolver
     /// Extracts all released SDK base versions (e.g., "10.0.107", "10.0.203") from the release data.
     /// Only includes stable (non-prerelease) SDK versions.
     /// </summary>
-    private static HashSet<string> GetReleasedSdkVersions(MajorReleases majorRelease)
+    private static HashSet<string> GetReleasedSdkVersions(ReadOnlyCollection<ProductRelease> releases)
     {
         var versions = new HashSet<string>();
-        foreach (var release in majorRelease.Releases)
+        foreach (var release in releases)
         {
-            if (release.Sdks is null)
-            {
-                continue;
-            }
-
             foreach (var sdk in release.Sdks)
             {
-                // Parse just the base version (major.minor.patch) from full SDK version strings
-                // e.g., "10.0.107" from "10.0.107" or "10.0.100-rc.1.25451.107" → skip pre-release
-                var sdkMatch = VersionPattern.Match(sdk.Version);
+                var sdkMatch = VersionPattern.Match(sdk.Version.ToString());
                 if (sdkMatch.Success && !sdkMatch.Groups["preReleaseLabel"].Success)
                 {
                     var major = sdkMatch.Groups["major"].Value;
@@ -259,19 +236,14 @@ public sealed class ReleaseBranchResolver
     /// Gets the highest feature band number from released stable SDKs.
     /// Feature band is the first digit of the SDK patch (e.g., 3 for "9.0.313").
     /// </summary>
-    private static int GetLatestReleasedFeatureBand(MajorReleases majorRelease)
+    private static int GetLatestReleasedFeatureBand(ReadOnlyCollection<ProductRelease> releases)
     {
         int maxBand = 0;
-        foreach (var release in majorRelease.Releases)
+        foreach (var release in releases)
         {
-            if (release.Sdks is null)
-            {
-                continue;
-            }
-
             foreach (var sdk in release.Sdks)
             {
-                var sdkMatch = VersionPattern.Match(sdk.Version);
+                var sdkMatch = VersionPattern.Match(sdk.Version.ToString());
                 if (sdkMatch.Success && !sdkMatch.Groups["preReleaseLabel"].Success)
                 {
                     var patch = sdkMatch.Groups["patch"].Value;
@@ -284,42 +256,5 @@ public sealed class ReleaseBranchResolver
             }
         }
         return maxBand;
-    }
-
-    private static HttpClient CreatePublicHttpClient()
-    {
-        var client = new HttpClient();
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("BuildDuty/1.0");
-        return client;
-    }
-
-    private sealed class MajorReleases
-    {
-        [JsonPropertyName("channel-version")]
-        public required string ChannelVersion { get; set; }
-
-        [JsonPropertyName("support-phase")]
-        public SupportPhase SupportPhase { get; set; }
-
-        [JsonPropertyName("latest-release")]
-        public required string LatestRelease { get; set; }
-
-        [JsonPropertyName("releases")]
-        public required List<Release> Releases { get; set; }
-    }
-
-    private sealed class Release
-    {
-        [JsonPropertyName("sdks")]
-        public List<Sdk>? Sdks { get; set; }
-    }
-
-    private sealed class Sdk
-    {
-        [JsonPropertyName("version")]
-        public required string Version { get; set; }
-
-        [JsonPropertyName("runtime-version")]
-        public required string RuntimeVersion { get; set; }
     }
 }

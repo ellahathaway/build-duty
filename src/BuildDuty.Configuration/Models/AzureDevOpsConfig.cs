@@ -1,3 +1,4 @@
+using Microsoft.Deployment.DotNet.Releases;
 using Microsoft.TeamFoundation.Build.WebApi;
 
 namespace BuildDuty.Configuration.Models;
