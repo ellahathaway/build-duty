@@ -2,7 +2,6 @@ using System.Reflection;
 using BuildDuty.Signals.Collection;
 using BuildDuty.Configuration.Models;
 using BuildDuty.Services.Configuration;
-using Dotnet.Release;
 using Maestro.Common;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.TeamFoundation.Build.WebApi;

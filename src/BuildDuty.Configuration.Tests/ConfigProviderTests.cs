@@ -1,6 +1,5 @@
 using BuildDuty.Configuration.Models;
 using BuildDuty.Services.Configuration;
-using Dotnet.Release;
 using Microsoft.TeamFoundation.Build.WebApi;
 using Xunit;
 

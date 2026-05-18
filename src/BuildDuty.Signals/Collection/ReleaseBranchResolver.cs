@@ -5,8 +5,6 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using BuildDuty.Configuration.Models;
 using BuildDuty.Services.Configuration;
-using Dotnet.Release;
-using Dotnet.Release.Releases;
 using Maestro.Common;
 using Microsoft.Extensions.Logging;
 

@@ -16,7 +16,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Dotnet.Release.Releases" />
     <PackageReference Include="Maestro.Common" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="Microsoft.TeamFoundationServer.ExtendedClient" />

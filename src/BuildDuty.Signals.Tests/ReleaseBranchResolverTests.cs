@@ -2,8 +2,6 @@ using System.Reflection;
 using BuildDuty.Signals.Collection;
 using BuildDuty.Configuration.Models;
 using BuildDuty.Services.Configuration;
-using Dotnet.Release;
-using Dotnet.Release.Releases;
 using Maestro.Common;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -22,9 +20,7 @@ public class ReleaseBranchResolverTests
         Product: ".NET",
         SupportPhase: SupportPhase.Active,
         EolDate: DateOnly.MaxValue,
-        ReleaseType: ReleaseType.LTS,
-        ReleasesJson: releasesJsonUrl,
-        PatchReleasesInfoUri: "");
+        ReleasesJson: releasesJsonUrl);
 
     private static ReleaseBranchConfig Config(params SupportPhase[] phases) => new()
     {
