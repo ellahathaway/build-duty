@@ -13,25 +13,25 @@
       "name": "triage",
       "description": "Signal collection, pipeline/issue/PR analysis, and incident reconciliation for build-duty triage.",
       "version": "0.0.1",
-      "source": "./triage"
+      "source": ".github/plugin/triage"
     },
     {
       "name": "reporting",
       "description": "Triage summaries, incident timelines, trend reports, and rotation handoff documentation.",
       "version": "0.0.1",
-      "source": "./reporting"
+      "source": ".github/plugin/reporting"
     },
     {
       "name": "remediation",
       "description": "Automated fixes for incidents",
       "version": "0.0.1",
-      "source": "./remediation"
+      "source": ".github/plugin/remediation"
     },
     {
       "name": "config-management",
       "description": "Managing build-duty configs",
       "version": "0.0.1",
-      "source": "./config-management"
+      "source": ".github/plugin/config-management"
     }
   ]
 }
