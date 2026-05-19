@@ -3,13 +3,13 @@
     "build-duty-mcp-server": {
       "type": "local",
       "command": "dotnet",
-      "args": ["dnx", "--yes", "ellahathaway.buildduty.mcp"],
+      "args": ["run", "--project", "../../../src/BuildDuty.Mcp/BuildDuty.Mcp.csproj"],
       "env": {},
       "tools": ["*"]
     },
     "azure-devops-mcp-server": {
       "type": "http",
-      "url": "https://mcp.dev.azure.com/dnceng",
+      "url": "https://mcp.dev.azure.com/",
       "tools": ["*"]
     },
     "github-mcp-server": {

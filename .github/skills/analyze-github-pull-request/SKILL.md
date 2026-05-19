@@ -7,6 +7,9 @@ description: Analyzes GitHub pull request to understand proposed changes, merge/
 
 Investigate GitHub pull request to understand its status and relationship to tracked issues
 
+## Prerequisites
+- The GitHub Copilot API MCP server must be available: HTTP, "https://api.githubcopilot.com/mcp/"
+
 ## Context
 
 The information given likely contains the following fields:

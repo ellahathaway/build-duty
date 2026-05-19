@@ -10,9 +10,9 @@ Run a full build-duty triage cycle: collect signals, analyze each one, and recon
 ## Prerequisites
 
 ### MCP Servers
-- The `build-duty-mcp-server` MCP server must be available (provides signal collection)
-- The `azure-devops-mcp-server` MCP server must be available (for pipeline log access)
-- The `github-mcp-server` MCP server must be available (for issue/PR access)
+- The Build-Duty MCP server must be available
+- The GitHub Copilot API MCP server must be available: HTTP, "https://api.githubcopilot.com/mcp/"
+- The Azure DevOps MCP server must be available: HTTP, "https://mcp.dev.azure.com/"
 
 ### Config Files
 
