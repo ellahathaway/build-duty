@@ -7,6 +7,9 @@ description: Analyzes Azure DevOps pipeline build to determine root cause, impac
 
 Investigate Azure DevOps pipeline build to understand its status and what caused any failures/non-successful results.
 
+# Prerequisites
+- The Azure DevOps MCP server must be available: HTTP, "https://mcp.dev.azure.com/"
+
 ## Context
 
 The information given likely contains the following fields:

@@ -1,0 +1,34 @@
+{
+  "name": "remediation",
+  "version": "0.0.1",
+  "description": "Automated fixes for incidents",
+  "author": {
+    "name": "Ella Hathaway",
+    "email": "ellahathaway@microsoft.com"
+  },
+  "license": "MIT",
+  "keywords": [
+    "build-duty",
+    "remediation",
+    "automation",
+    "retry",
+    "baselines"
+  ],
+  "skills": [
+    "../../skills/retry-build"
+  ],
+  "mcpServers": {
+    "build-duty-mcp-server": {
+      "command": "dotnet",
+      "args": ["run", "--project", "../../../src/BuildDuty.Mcp/BuildDuty.Mcp.csproj"]
+    },
+    "azure-devops-mcp-server": {
+      "type": "http",
+      "url": "https://mcp.dev.azure.com/"
+    },
+    "github-mcp-server": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/"
+    }
+  }
+}

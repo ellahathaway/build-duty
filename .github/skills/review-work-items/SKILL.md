@@ -7,6 +7,11 @@ description: Interactively review and investigate active triage findings — dig
 
 Help the user investigate and review active triage findings. This skill is used when the user wants to understand a specific failure in more detail or determine what action to take.
 
+## Prerequisites
+- The Build-Duty MCP server must be available
+- The GitHub Copilot API MCP server must be available: HTTP, "https://api.githubcopilot.com/mcp/"
+- The Azure DevOps MCP server must be available: HTTP, "https://mcp.dev.azure.com/"
+
 ## Input
 
 You receive one or more triage findings (from the reconcile-findings skill output or from collected signal data) that the user wants to investigate further.

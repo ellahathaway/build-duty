@@ -7,6 +7,9 @@ description: Analyzes a GitHub issue to understand tracked problems, current sta
 
 Investigate a GitHub issue to understand what is being tracked and its current state. Issue data is provided in the prompt.
 
+## Prerequisites
+- The GitHub Copilot API MCP server must be available: HTTP, "https://api.githubcopilot.com/mcp/"
+
 ## Context
 
 The information given likely contains the following fields:
