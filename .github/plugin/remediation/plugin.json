@@ -15,12 +15,12 @@
     "baselines"
   ],
   "skills": [
-    "../../skills/retry-build"
+    "skills/retry-build"
   ],
   "mcpServers": {
     "build-duty-mcp-server": {
       "command": "dotnet",
-      "args": ["run", "--project", "../../../src/BuildDuty.Mcp/BuildDuty.Mcp.csproj"]
+      "args": ["tool", "run", "BuildDuty.Mcp"]
     },
     "azure-devops-mcp-server": {
       "type": "http",

@@ -61,19 +61,65 @@ cd build-duty
 build-duty-mcp --help
 ```
 
+### Install the MCP server tool
+
+The MCP server package (`ellahathaway.buildduty.mcp`) is hosted on GitHub Packages.
+One-time setup:
+
+```bash
+# Ensure your GitHub CLI token has read:packages scope
+gh auth refresh --scopes read:packages
+
+# Add the GitHub Packages NuGet source (one-time)
+dotnet nuget add source \
+  --username YOUR_GITHUB_USERNAME \
+  --password "$(gh auth token)" \
+  --store-password-in-clear-text \
+  --name github-ellahathaway \
+  "https://nuget.pkg.github.com/ellahathaway/index.json"
+
+# Install the MCP server tool globally
+dotnet tool install --global ellahathaway.buildduty.mcp --version 0.0.1
+```
+
 ## Usage
 
-### Option 1: Triage Skill (recommended)
+### Option 1: Copilot Marketplace (recommended)
 
-Clone this repo and using the `/triage` skill to triage + explore active incidents.
+Add the build-duty marketplace and install plugins:
+
+```bash
+# Add the marketplace
+copilot plugin marketplace add ellahathaway/build-duty
+
+# Install the triage plugin
+copilot plugin install triage@build-duty
+```
+
+> **Prerequisite:** The plugin requires the build-duty MCP server tool.
+> See [Install the MCP server tool](#install-the-mcp-server-tool) above.
+
+Then you're ready to use the skills:
 
 ```
-@build-duty triage my pipelines
-@build-duty investigate the timeout in dotnet-source-build
+triage my pipelines
+investigate the timeout in dotnet-source-build
 ```
 
-The agent uses the skills in `.github/copilot/skills/` and connects to three
-MCP servers (BuildDuty, Azure DevOps, GitHub) configured in `.github/copilot/mcp.json`.
+Available plugins:
+
+| Plugin | Description |
+|--------|-------------|
+| `triage` | Signal collection, pipeline/issue/PR analysis, and incident reconciliation |
+| `reporting` | Triage summaries, incident timelines, and rotation handoff docs |
+| `remediation` | Automated fixes for incidents (retry builds, etc.) |
+| `config-management` | Managing `.build-duty.yml` configs |
+
+Browse all available plugins with:
+
+```bash
+copilot plugin marketplace browse build-duty
+```
 
 ### Option 2: MSBuild Task
 
@@ -91,20 +137,27 @@ Reference the `BuildDuty.Tasks` package for deterministic signal collection:
 </Project>
 ```
 
-### Option 3: MCP Server
+### Option 3: MCP Server (standalone)
 
-Install and configure the MCP server:
+> **Prerequisite:** Install the MCP server tool first.
+> See [Install the MCP server tool](#install-the-mcp-server-tool) above.
+
+For standalone MCP server usage (e.g., custom clients or development), add the
+following to your MCP client configuration:
 
 ```json
 {
   "mcpServers": {
     "build-duty-mcp-server": {
       "command": "dotnet",
-      "args": ["dnx", "--yes", "ellahathaway.buildduty.mcp"]
+      "args": ["tool", "run", "BuildDuty.Mcp"]
     }
   }
 }
 ```
+
+If working in this repo, the MCP server is already configured in `.github/mcp.json`
+and will be picked up automatically by GitHub Copilot.
 
 Available tools:
 - `build_duty_collect_signals` — collect signals from configured sources

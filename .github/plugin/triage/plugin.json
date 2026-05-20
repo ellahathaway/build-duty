@@ -16,16 +16,16 @@
     "monitoring"
   ],
   "skills": [
-    "../../skills/triage",
-    "../../skills/analyze-azure-devops-pipeline",
-    "../../skills/analyze-github-issue",
-    "../../skills/analyze-github-pull-request",
-    "../../skills/reconcile-findings"
+    "skills/triage",
+    "skills/analyze-azure-devops-pipeline",
+    "skills/analyze-github-issue",
+    "skills/analyze-github-pull-request",
+    "skills/reconcile-findings"
   ],
   "mcpServers": {
     "build-duty-mcp-server": {
       "command": "dotnet",
-      "args": ["run", "--project", "../../../src/BuildDuty.Mcp/BuildDuty.Mcp.csproj"]
+      "args": ["tool", "run", "BuildDuty.Mcp"]
     },
     "azure-devops-mcp-server": {
       "type": "http",
