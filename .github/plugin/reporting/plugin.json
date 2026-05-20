@@ -15,13 +15,13 @@
     "trends"
   ],
   "skills": [
-    "../../skills/generate-handoff",
-    "../../skills/review-work-items"
+    "skills/generate-handoff",
+    "skills/review-work-items"
   ],
   "mcpServers": {
     "build-duty-mcp-server": {
       "command": "dotnet",
-      "args": ["run", "--project", "../../../src/BuildDuty.Mcp/BuildDuty.Mcp.csproj"]
+      "args": ["tool", "run", "BuildDuty.Mcp"]
     },
     "github-mcp-server": {
       "type": "http",

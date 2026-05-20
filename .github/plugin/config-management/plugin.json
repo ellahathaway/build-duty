@@ -15,12 +15,12 @@
     "pipelines"
   ],
   "skills": [
-    "../../skills/validate-config"
+    "skills/validate-config"
   ],
   "mcpServers": {
     "build-duty-mcp-server": {
       "command": "dotnet",
-      "args": ["run", "--project", "../../../src/BuildDuty.Mcp/BuildDuty.Mcp.csproj"]
+      "args": ["tool", "run", "BuildDuty.Mcp"]
     },
     "azure-devops-mcp-server": {
       "type": "http",
