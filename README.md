@@ -149,8 +149,7 @@ following to your MCP client configuration:
 {
   "mcpServers": {
     "build-duty-mcp-server": {
-      "command": "dotnet",
-      "args": ["tool", "run", "BuildDuty.Mcp"]
+      "command": "BuildDuty.Mcp"
     }
   }
 }
