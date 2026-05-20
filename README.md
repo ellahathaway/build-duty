@@ -8,29 +8,19 @@ and GitHub, and provides Copilot skills and an MCP server for AI-powered triage.
 BuildDuty is split into deterministic libraries (signal collection, config) and
 AI integration (MCP server, Copilot skills):
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Copilot Surface (CLI, VS Code, Workspace)           │
-│                                                             │
-│  /triage, /analyze-*, /reconcile skills │
-│                                                             │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │              MCP Tool Calls                          │   │
-│  └────────┬───────────────────┬───────────────────┬─────┘   │
-└───────────┼───────────────────┼───────────────────┼─────────┘
-            │                   │                   │
-   ┌────────▼─────────┐ ┌──────▼────────┐ ┌───────▼─────────┐
-   │ BuildDuty MCP     │ │ AzDO MCP      │ │ GitHub MCP      │
-   │ (build-duty-mcp)  │ │ Server        │ │ Server          │
-   │                   │ │               │ │                 │
-   │ - collect signals │ │ - logs        │ │ - issues        │
-   │ - read config     │ │ - builds      │ │ - PRs           │
-   └─────────┬─────────┘ └───────────────┘ └─────────────────┘
-             │
-   ┌─────────▼─────────────────────────────────┐
-   │ BuildDuty Libraries (no AI)               │
-   │  BuildDuty.Configuration + BuildDuty.Signals │
-   └───────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph copilot["Copilot Surface (CLI, VS Code, Workspace)"]
+        skills["/triage, /analyze-*, /reconcile skills"]
+        calls["MCP Tool Calls"]
+        skills --> calls
+    end
+
+    calls --> buildDutyMcp["BuildDuty MCP<br/>(build-duty-mcp)<br/><br/>- collect signals<br/>- read config"]
+    calls --> azdoMcp["AzDO MCP Server<br/><br/>- logs<br/>- builds"]
+    calls --> githubMcp["GitHub MCP Server<br/><br/>- issues<br/>- PRs"]
+
+    buildDutyMcp --> libraries["BuildDuty Libraries (no AI)<br/>BuildDuty.Configuration + BuildDuty.Signals"]
 ```
 
 ## Quick start
