@@ -20,8 +20,8 @@
   ],
   "mcpServers": {
     "build-duty-mcp-server": {
-      "command": "dotnet",
-      "args": ["tool", "run", "BuildDuty.Mcp"]
+      "command": "BuildDuty.Mcp",
+      "args": []
     },
     "github-mcp-server": {
       "type": "http",

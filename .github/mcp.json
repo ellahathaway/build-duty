@@ -2,8 +2,8 @@
   "mcpServers": {
     "build-duty-mcp-server": {
       "type": "local",
-      "command": "dotnet",
-      "args": ["tool", "run", "BuildDuty.Mcp"],
+      "command": "BuildDuty.Mcp",
+      "args": [],
       "tools": ["*"]
     },
     "azure-devops-mcp-server": {
