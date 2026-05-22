@@ -1,0 +1,37 @@
+{
+  "name": "build-duty",
+  "owner": {
+    "name": "Ella Hathaway",
+    "email": "ellahathaway@microsoft.com"
+  },
+  "metadata": {
+    "description": "AI-powered build-duty workflows for .NET source-build infrastructure",
+    "version": "0.0.1"
+  },
+  "plugins": [
+    {
+      "name": "triage",
+      "description": "Signal collection, pipeline/issue/PR analysis, and incident reconciliation for build-duty triage.",
+      "version": "0.0.1",
+      "source": ".github/plugin/triage"
+    },
+    {
+      "name": "reporting",
+      "description": "Triage summaries, incident timelines, trend reports, and rotation handoff documentation.",
+      "version": "0.0.1",
+      "source": ".github/plugin/reporting"
+    },
+    {
+      "name": "remediation",
+      "description": "Automated fixes for incidents",
+      "version": "0.0.1",
+      "source": ".github/plugin/remediation"
+    },
+    {
+      "name": "config-management",
+      "description": "Managing build-duty configs",
+      "version": "0.0.1",
+      "source": ".github/plugin/config-management"
+    }
+  ]
+}

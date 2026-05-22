@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "isRoot": true,
+  "tools": {
+    "ellahathaway.buildduty.mcp": {
+      "version": "0.0.1",
+      "commands": [
+        "BuildDuty.Mcp"
+      ],
+      "rollForward": false
+    }
+  }
+}

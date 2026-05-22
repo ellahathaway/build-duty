@@ -1,0 +1,39 @@
+{
+  "name": "triage",
+  "version": "0.0.1",
+  "description": "Signal collection, pipeline/issue/PR analysis, and incident reconciliation for build-duty triage.",
+  "author": {
+    "name": "Ella Hathaway",
+    "email": "ellahathaway@microsoft.com"
+  },
+  "license": "MIT",
+  "keywords": [
+    "build-duty",
+    "source-build",
+    "triage",
+    "azure-devops",
+    "dotnet",
+    "monitoring"
+  ],
+  "skills": [
+    "skills/triage",
+    "skills/analyze-azure-devops-pipeline",
+    "skills/analyze-github-issue",
+    "skills/analyze-github-pull-request",
+    "skills/reconcile-findings"
+  ],
+  "mcpServers": {
+    "build-duty-mcp-server": {
+      "command": "BuildDuty.Mcp",
+      "args": []
+    },
+    "azure-devops-mcp-server": {
+      "type": "http",
+      "url": "https://mcp.dev.azure.com/"
+    },
+    "github-mcp-server": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/"
+    }
+  }
+}

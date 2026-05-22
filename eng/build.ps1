@@ -13,6 +13,9 @@ if ($Install) {
     $Pack = $true
 }
 
+Write-Host '==> Clean'
+Get-ChildItem -Path (Join-Path $RepoRoot 'src') -Include bin, obj -Directory -Recurse | Remove-Item -Recurse -Force
+
 Write-Host '==> Restore'
 dotnet restore $Solution
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -34,9 +37,9 @@ if ($Pack) {
 }
 
 if ($Install) {
-    Write-Host '==> Install (global tool)'
-    & { $ErrorActionPreference = 'SilentlyContinue'; dotnet tool uninstall -g buildduty 2>&1 | Out-Null }
-    dotnet tool install --global --add-source (Join-Path $Artifacts 'packages') buildduty
+    Write-Host '==> Install (MCP server global tool)'
+    & { $ErrorActionPreference = 'SilentlyContinue'; dotnet tool uninstall -g ellahathaway.buildduty.mcp 2>&1 | Out-Null }
+    dotnet tool install --global --add-source (Join-Path $Artifacts 'packages') ellahathaway.buildduty.mcp --prerelease
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 

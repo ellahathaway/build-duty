@@ -16,7 +16,8 @@ BuildDuty and create a config file for a repository you already monitor. If you
 maintain a pipeline or track GitHub issues as part of build duty, that is the
 ideal starting point.
 
-Try to run the build-duty tool in line with your usual build-duty workflow cadence.
+Clone the repo to get access to the `@build-duty` Copilot agent and skills, then
+use them during your regular build-duty rotation.
 
 ## Reporting Feedback and Bugs
 

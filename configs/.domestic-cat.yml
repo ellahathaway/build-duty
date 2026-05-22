@@ -1,0 +1,33 @@
+name: domestic-cat
+
+github:
+  organizations:
+    - organization: dotnet
+      repositories:
+        - name: sdk
+          prs:
+            - &bot-prs
+              name: ".*"
+              authors:
+                - app/dotnet-maestro
+                - dotnet-bot
+                - app/dependabot
+                - github-actions[bot]
+                - vseanreesermsft
+              excludeLabels:
+                - "wait for release"
+                - backport
+                - "Branch Lockdown"
+                - "DO NOT MERGE"
+                - do-not-merge
+              context: >
+                Open bot/automation PRs.
+        - name: installer
+          prs:
+            - *bot-prs
+        - name: templating
+          prs:
+            - *bot-prs
+        - name: workload-versions
+          prs:
+            - *bot-prs

@@ -25,6 +25,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+echo "==> Clean"
+find "$REPO_ROOT/src" -type d \( -name bin -o -name obj \) -exec rm -rf {} +
+
 echo "==> Restore"
 dotnet restore "$SOLUTION"
 
@@ -41,9 +44,9 @@ if [ "$PACK" = true ]; then
 fi
 
 if [ "$INSTALL" = true ]; then
-    echo "==> Install (global tool)"
-    dotnet tool uninstall -g buildduty 2>/dev/null || true
-    dotnet tool install --global --add-source "$ARTIFACTS/packages" buildduty
+    echo "==> Install (MCP server global tool)"
+    dotnet tool uninstall -g ellahathaway.buildduty.mcp 2>/dev/null || true
+    dotnet tool install --global --add-source "$ARTIFACTS/packages" ellahathaway.buildduty.mcp --prerelease
 fi
 
 echo "==> Done"

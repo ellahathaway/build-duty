@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "build-duty-mcp-server": {
+      "type": "local",
+      "command": "BuildDuty.Mcp",
+      "args": [],
+      "tools": ["*"]
+    },
+    "azure-devops-mcp-server": {
+      "type": "http",
+      "url": "https://mcp.dev.azure.com/",
+      "tools": ["*"]
+    },
+    "github-mcp-server": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "tools": ["*"]
+    }
+  }
+}
