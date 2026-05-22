@@ -30,14 +30,15 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
     Throw-Setup 'dotnet SDK is required. Install .NET SDK and run setup again.'
 }
 
-$GhVersionText = ((gh --version | Select-Object -First 1) -split '\s+')[2].TrimStart('v')
+$GhVersionLine = gh --version | Select-Object -First 1
+if ($GhVersionLine -notmatch 'gh version ([0-9]+(?:\.[0-9]+)+)') {
+    Throw-Setup 'Unable to determine gh version. Ensure gh is installed correctly.'
+}
+
+$GhVersionText = $Matches[1]
 $GhVersion = [Version]$GhVersionText
 if ($GhVersion -lt $MinimumGhVersion) {
     Throw-Setup "gh CLI $MinimumGhVersion+ required, you have $GhVersionText. Upgrade gh and retry."
-}
-
-if ($LASTEXITCODE -ne 0) {
-    Throw-Setup 'Unable to determine gh version. Ensure gh is installed correctly.'
 }
 
 gh auth status *> $null
@@ -50,8 +51,10 @@ if ($LASTEXITCODE -ne 0) {
     Throw-Setup 'Azure CLI is not authenticated. Run: az login'
 }
 
-$ExistingSource = dotnet nuget list source | Select-String -SimpleMatch $NuGetSourceName, $NuGetSourceUrl
-if (-not $ExistingSource) {
+$NuGetSources = dotnet nuget list source
+$HasSourceName = $NuGetSources | Select-String -Pattern ("^\s*[0-9]+\.\s+" + [Regex]::Escape($NuGetSourceName) + '(\s|$)')
+$HasSourceUrl = $NuGetSources | Select-String -Pattern ([Regex]::Escape($NuGetSourceUrl))
+if (-not $HasSourceName -and -not $HasSourceUrl) {
     $GhUser = (gh api user -q .login).Trim()
     if ([string]::IsNullOrWhiteSpace($GhUser)) {
         Throw-Setup 'Unable to determine GitHub username from gh auth.'
@@ -94,4 +97,4 @@ if (Get-Command BuildDuty.Mcp -ErrorAction SilentlyContinue) {
     exit 0
 }
 
-Throw-Setup 'BuildDuty.Mcp installed but not found on PATH. Add ~/.dotnet/tools to PATH and restart your shell.'
+Throw-Setup 'BuildDuty.Mcp installed but not found on PATH. Add your .NET global tools directory to PATH and restart your shell.'

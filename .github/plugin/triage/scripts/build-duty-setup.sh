@@ -39,7 +39,8 @@ command_exists gh || fail "GitHub CLI (gh) is required. Install gh 2.66.0+ and r
 command_exists az || fail "Azure CLI (az) is required. Install Azure CLI and run setup again."
 command_exists dotnet || fail "dotnet SDK is required. Install .NET SDK and run setup again."
 
-GH_VERSION="$(gh --version | head -n1 | awk '{print $3}')"
+GH_VERSION="$(gh --version | sed -n '1s/^gh version \([0-9][0-9.]*\).*/\1/p')"
+[ -n "$GH_VERSION" ] || fail "Unable to determine gh version. Ensure gh is installed correctly."
 if ! version_ge "$GH_VERSION" "$MIN_GH_VERSION"; then
   fail "gh CLI ${MIN_GH_VERSION}+ required, you have ${GH_VERSION}. Upgrade gh and retry."
 fi
@@ -52,7 +53,9 @@ if ! az account show >/dev/null 2>&1; then
   fail "Azure CLI is not authenticated. Run: az login"
 fi
 
-if ! dotnet nuget list source | grep -qiE "(^|\s)${NUGET_SOURCE_NAME}(\s|$)|${NUGET_SOURCE_URL}"; then
+NUGET_SOURCES="$(dotnet nuget list source)"
+if ! printf '%s\n' "$NUGET_SOURCES" | sed -n 's/^[[:space:]]*[0-9]\+\. \([^ ]\+\).*/\1/p' | grep -Fxq "$NUGET_SOURCE_NAME" \
+  && ! printf '%s\n' "$NUGET_SOURCES" | grep -Fq "$NUGET_SOURCE_URL"; then
   GH_USER="$(gh api user -q .login 2>/dev/null || true)"
   [ -n "$GH_USER" ] || fail "Unable to determine GitHub username from gh auth."
 
