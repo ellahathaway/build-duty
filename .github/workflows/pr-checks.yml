@@ -24,7 +24,7 @@ jobs:
         run: dotnet format BuildDuty.slnx --verify-no-changes
 
   build-and-pack-linux:
-    name: Build and Pack (Linux)
+    name: Build, Pack, and Install (Linux)
     runs-on: ubuntu-latest
 
     steps:
@@ -36,11 +36,14 @@ jobs:
         with:
           global-json-file: global.json
 
-      - name: Build and Pack
-        run: ./eng/build.sh --pack
+      - name: Build, Pack, and Install
+        run: ./eng/build.sh --install
+
+      - name: Verify installation
+        run: build-duty --version
 
   build-and-pack-windows:
-    name: Build and Pack (Windows)
+    name: Build, Pack, and Install (Windows)
     runs-on: windows-latest
 
     steps:
@@ -52,6 +55,10 @@ jobs:
         with:
           global-json-file: global.json
 
-      - name: Build and Pack
+      - name: Build, Pack, and Install
         shell: pwsh
-        run: ./eng/build.ps1 -Pack
+        run: ./eng/build.ps1 -Install
+
+      - name: Verify installation
+        shell: pwsh
+        run: build-duty --version
