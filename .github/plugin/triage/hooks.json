@@ -4,8 +4,8 @@
     "sessionStart": [
       {
         "type": "command",
-        "bash": "./scripts/build-duty-setup.sh",
-        "powershell": "./scripts/build-duty-setup.ps1",
+        "bash": "../scripts/build-duty-setup.sh",
+        "powershell": "../scripts/build-duty-setup.ps1",
         "timeoutSec": 60
       }
     ]
