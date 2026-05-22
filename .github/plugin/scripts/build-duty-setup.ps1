@@ -1,4 +1,5 @@
 $ErrorActionPreference = 'Stop'
+[Console]::Error.WriteLine("[build-duty hook] sessionStart fired at $(Get-Date -Format o)")
 
 $PackageName = 'ellahathaway.buildduty.mcp'
 $NuGetSourceName = 'github-ellahathaway'
