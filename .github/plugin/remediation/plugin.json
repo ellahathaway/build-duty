@@ -14,6 +14,7 @@
     "retry",
     "baselines"
   ],
+  "hooks": "hooks.json",
   "skills": [
     "skills/retry-build"
   ],

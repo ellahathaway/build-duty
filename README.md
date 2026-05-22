@@ -72,6 +72,9 @@ dotnet nuget add source \
 dotnet tool install --global ellahathaway.buildduty.mcp --version 0.0.1
 ```
 
+> Marketplace plugins now run this setup automatically during `sessionStart`.
+> Manual setup is still useful for standalone MCP usage.
+
 ## Usage
 
 ### Option 1: Copilot Marketplace (recommended)
@@ -86,8 +89,12 @@ copilot plugin marketplace add ellahathaway/build-duty
 copilot plugin install triage@build-duty
 ```
 
-> **Prerequisite:** The plugin requires the build-duty MCP server tool.
-> See [Install the MCP server tool](#install-the-mcp-server-tool) above.
+On first session start, the plugin auto-installs `BuildDuty.Mcp` if needed.
+The setup hook checks:
+- `gh` CLI version is 2.66.0+
+- `gh auth` is logged in
+- `az` is logged in
+- GitHub Packages NuGet source is configured
 
 Then you're ready to use the skills:
 

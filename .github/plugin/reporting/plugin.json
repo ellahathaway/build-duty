@@ -14,6 +14,7 @@
     "handoff",
     "trends"
   ],
+  "hooks": "hooks.json",
   "skills": [
     "skills/generate-handoff",
     "skills/review-work-items"

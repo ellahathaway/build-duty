@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "./scripts/build-duty-setup.sh",
+        "powershell": "./scripts/build-duty-setup.ps1",
+        "timeoutSec": 60
+      }
+    ]
+  }
+}
