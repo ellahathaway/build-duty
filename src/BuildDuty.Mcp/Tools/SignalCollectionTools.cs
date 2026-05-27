@@ -27,7 +27,7 @@ public class SignalCollectionTools
     {
         if (string.IsNullOrWhiteSpace(configPath))
         {
-            return "Error: Missing required configPath. Provide the path to a .build-duty.yml file before running triage.";
+            return "Error: configPath is required. Provide the path to a .build-duty.yml file.";
         }
 
         var config = ConfigProvider.LoadFromFile(configPath);
