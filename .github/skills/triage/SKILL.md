@@ -20,13 +20,13 @@ A config file is a `.yml` file that specifies:
 - Which Azure DevOps pipelines to monitor (by org/project or specific pipeline IDs)
 - Which GitHub repos to monitor for issues and PRs (by org/repo or specific filters)
 
-One or more `.yml` config files must either be present or provided as input.
+A config path must be provided as input when triage starts.
 
-Important: If more than one config file is present, prompt the user to select which one(s) to run. Do not proceed without at least one config file.
+If a config path is not provided, prompt the user for the path to a `.build-duty.yml` file before proceeding.
 
 ## Step 1 — Collect Signals
 
-Use the `build_duty_collect_signals` tool to collect signals from the configured sources.
+Use the `build_duty_collect_signals` tool with a required `configPath` value to collect signals from the configured sources.
 
 This returns structured signal data including:
 - Azure DevOps pipeline failures (with timeline records and log IDs)
