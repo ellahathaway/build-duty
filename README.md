@@ -149,7 +149,7 @@ If working in this repo, the MCP server is already configured in `.github/mcp.js
 and will be picked up automatically by GitHub Copilot.
 
 Available tools:
-- `build_duty_collect_signals` — collect signals from configured sources
+- `build_duty_collect_signals` — collect signals from configured sources (requires `configPath`)
 - `build_duty_get_config` — read and resolve a `.build-duty.yml` config
 
 ## Configuration

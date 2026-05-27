@@ -23,13 +23,11 @@ public class SignalCollectionTools
     [McpServerTool(Name = "build_duty_collect_signals")]
     [Description("Collect signals from Azure DevOps and GitHub based on a .build-duty.yml config file. Returns structured XML signal data including pipeline failures, GitHub issues, and PRs.")]
     public static async Task<string> CollectSignals(
-        [Description("Path to the .build-duty.yml config file. If not provided, searches current directory.")] string? configPath = null)
+        [Description("Path to the .build-duty.yml config file. Required.")] string configPath)
     {
-        configPath ??= FindConfigFile();
-
-        if (configPath is null)
+        if (string.IsNullOrWhiteSpace(configPath))
         {
-            return "Error: No .build-duty.yml config file found. Provide a configPath parameter.";
+            return "Error: Missing required configPath. Provide the path to a .build-duty.yml file before running triage.";
         }
 
         var config = ConfigProvider.LoadFromFile(configPath);
