@@ -31,7 +31,7 @@ Describe 'Plugin hook wiring' {
     }
 
     Context 'hooks.json files are valid' {
-        It '<pluginName>/hooks.json is valid JSON with sessionStart array' -ForEach @(
+        It '<pluginName>/hooks.json is valid JSON with skillInvocation array' -ForEach @(
             @{ pluginName = 'triage' }
             @{ pluginName = 'config-management' }
             @{ pluginName = 'remediation' }
@@ -41,24 +41,8 @@ Describe 'Plugin hook wiring' {
             $hooksPath | Should -Exist
             $hooks = Get-Content $hooksPath -Raw | ConvertFrom-Json
             $hooks.version | Should -Be 1
-            $hooks.hooks.sessionStart | Should -Not -BeNullOrEmpty
-            $hooks.hooks.sessionStart.Count | Should -BeGreaterOrEqual 1
             $hooks.hooks.skillInvocation | Should -Not -BeNullOrEmpty
             $hooks.hooks.skillInvocation.Count | Should -BeGreaterOrEqual 1
-        }
-
-        It '<pluginName>/hooks.json sessionStart entry has required fields' -ForEach @(
-            @{ pluginName = 'triage' }
-            @{ pluginName = 'config-management' }
-            @{ pluginName = 'remediation' }
-            @{ pluginName = 'reporting' }
-        ) {
-            $hooksPath = Join-Path $PluginRoot $pluginName 'hooks.json'
-            $hook = (Get-Content $hooksPath -Raw | ConvertFrom-Json).hooks.sessionStart[0]
-            $hook.type | Should -Be 'command'
-            $hook.bash | Should -Not -BeNullOrEmpty
-            $hook.powershell | Should -Not -BeNullOrEmpty
-            $hook.timeoutSec | Should -BeGreaterThan 0
         }
 
         It '<pluginName>/hooks.json skillInvocation entry has required fields' -ForEach @(
@@ -94,7 +78,7 @@ Describe 'Plugin hook wiring' {
             @{ pluginName = 'reporting' }
         ) {
             $hooksPath = Join-Path $PluginRoot $pluginName 'hooks.json'
-            $hook = (Get-Content $hooksPath -Raw | ConvertFrom-Json).hooks.sessionStart[0]
+            $hook = (Get-Content $hooksPath -Raw | ConvertFrom-Json).hooks.skillInvocation[0]
             $resolvedBash = Join-Path $PluginRoot $pluginName $hook.bash
             $resolvedBash = [System.IO.Path]::GetFullPath($resolvedBash)
             $resolvedBash | Should -Exist
@@ -107,7 +91,7 @@ Describe 'Plugin hook wiring' {
             @{ pluginName = 'reporting' }
         ) {
             $hooksPath = Join-Path $PluginRoot $pluginName 'hooks.json'
-            $hook = (Get-Content $hooksPath -Raw | ConvertFrom-Json).hooks.sessionStart[0]
+            $hook = (Get-Content $hooksPath -Raw | ConvertFrom-Json).hooks.skillInvocation[0]
             $resolvedPs = Join-Path $PluginRoot $pluginName $hook.powershell
             $resolvedPs = [System.IO.Path]::GetFullPath($resolvedPs)
             $resolvedPs | Should -Exist
