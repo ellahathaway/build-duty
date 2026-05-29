@@ -15,15 +15,23 @@ BeforeAll {
 Describe 'build-duty-setup.ps1' {
 
     Context 'Early exit when BuildDuty.Mcp already on PATH' {
-        BeforeAll {
-            Mock Get-Command { return [PSCustomObject]@{ Name = 'BuildDuty.Mcp' } } -ParameterFilter { $Name -eq 'BuildDuty.Mcp' }
-        }
-
         It 'Exits 0 and prints Skipping setup' {
-            # Write-Host goes to Information stream (6) - capture via transcript
-            $output = powershell -NoProfile -Command "& '$ScriptPath'" 2>&1
-            $LASTEXITCODE | Should -Be 0
-            ($output -join "`n") | Should -Match 'Skipping setup'
+            # Create a temporary stub so Get-Command finds BuildDuty.Mcp in a child process
+            $stubDir = Join-Path ([System.IO.Path]::GetTempPath()) "buildduty-stub-$([guid]::NewGuid().ToString('N'))"
+            New-Item -ItemType Directory -Path $stubDir -Force | Out-Null
+            $stubFile = Join-Path $stubDir 'BuildDuty.Mcp.cmd'
+            Set-Content -Path $stubFile -Value '@echo stub'
+
+            try {
+                $output = & pwsh -NoProfile -Command "
+                    `$env:PATH = '$stubDir' + [IO.Path]::PathSeparator + `$env:PATH
+                    & '$ScriptPath'
+                " 2>&1
+                $LASTEXITCODE | Should -Be 0
+                ($output -join "`n") | Should -Match 'Skipping setup'
+            } finally {
+                Remove-Item -Recurse -Force $stubDir -ErrorAction SilentlyContinue
+            }
         }
     }
 
