@@ -55,3 +55,25 @@ jobs:
       - name: Build and Pack
         shell: pwsh
         run: ./eng/build.ps1 -Pack
+
+  plugin-hook-tests:
+    name: Plugin Hook Tests
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Pester
+        shell: pwsh
+        run: Install-Module -Name Pester -Force -Scope CurrentUser -SkipPublisherCheck -MinimumVersion 5.0
+
+      - name: Run Pester tests
+        shell: pwsh
+        run: |
+          Import-Module Pester -MinimumVersion 5.0 -Force
+          $config = New-PesterConfiguration
+          $config.Run.Path = '.github/plugin/scripts/tests'
+          $config.Output.Verbosity = 'Detailed'
+          $config.Run.Exit = $true
+          Invoke-Pester -Configuration $config
