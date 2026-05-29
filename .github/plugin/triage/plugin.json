@@ -15,6 +15,7 @@
     "dotnet",
     "monitoring"
   ],
+  "hooks": "hooks.json",
   "skills": [
     "skills/triage",
     "skills/analyze-azure-devops-pipeline",
