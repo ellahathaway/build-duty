@@ -43,6 +43,8 @@ Describe 'Plugin hook wiring' {
             $hooks.version | Should -Be 1
             $hooks.hooks.sessionStart | Should -Not -BeNullOrEmpty
             $hooks.hooks.sessionStart.Count | Should -BeGreaterOrEqual 1
+            $hooks.hooks.skillInvocation | Should -Not -BeNullOrEmpty
+            $hooks.hooks.skillInvocation.Count | Should -BeGreaterOrEqual 1
         }
 
         It '<pluginName>/hooks.json sessionStart entry has required fields' -ForEach @(
@@ -53,6 +55,20 @@ Describe 'Plugin hook wiring' {
         ) {
             $hooksPath = Join-Path $PluginRoot $pluginName 'hooks.json'
             $hook = (Get-Content $hooksPath -Raw | ConvertFrom-Json).hooks.sessionStart[0]
+            $hook.type | Should -Be 'command'
+            $hook.bash | Should -Not -BeNullOrEmpty
+            $hook.powershell | Should -Not -BeNullOrEmpty
+            $hook.timeoutSec | Should -BeGreaterThan 0
+        }
+
+        It '<pluginName>/hooks.json skillInvocation entry has required fields' -ForEach @(
+            @{ pluginName = 'triage' }
+            @{ pluginName = 'config-management' }
+            @{ pluginName = 'remediation' }
+            @{ pluginName = 'reporting' }
+        ) {
+            $hooksPath = Join-Path $PluginRoot $pluginName 'hooks.json'
+            $hook = (Get-Content $hooksPath -Raw | ConvertFrom-Json).hooks.skillInvocation[0]
             $hook.type | Should -Be 'command'
             $hook.bash | Should -Not -BeNullOrEmpty
             $hook.powershell | Should -Not -BeNullOrEmpty

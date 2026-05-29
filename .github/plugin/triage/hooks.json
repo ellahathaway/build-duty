@@ -8,6 +8,14 @@
         "powershell": "../scripts/build-duty-setup.ps1",
         "timeoutSec": 60
       }
+    ],
+    "skillInvocation": [
+      {
+        "type": "command",
+        "bash": "../scripts/build-duty-setup.sh",
+        "powershell": "../scripts/build-duty-setup.ps1",
+        "timeoutSec": 60
+      }
     ]
   }
 }
