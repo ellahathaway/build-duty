@@ -543,7 +543,7 @@ async function startServer(instanceId) {
                 const configName = basename(instanceState.activeConfig);
                 session.send(
                     `Create a new session named "Triage: ${configName}" and run triage for config path: ${instanceState.activeConfig}. ` +
-                    `Use the kickoff_prompt: "/triage with config path: ${instanceState.activeConfig}" in autopilot mode. ` +
+                    `Use the kickoff_prompt: "/triage with config path: ${instanceState.activeConfig} — output as JSON" in autopilot mode. ` +
                     `When the triage session completes, push the signals and incidents to triage-dashboard canvas instance "${instanceId}" with configPath "${instanceState.activeConfig}" using update_signals and update_incidents. Then set status to idle.`
                 );
             }
