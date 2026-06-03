@@ -543,15 +543,8 @@ async function startServer(instanceId) {
                 const configName = basename(instanceState.activeConfig);
                 session.send(
                     `Create a new session named "Triage: ${configName}" and run triage for config path: ${instanceState.activeConfig}. ` +
-                    `Use the kickoff_prompt below in autopilot mode:\n\n` +
-                    `"/triage with config path: ${instanceState.activeConfig} — output as JSON\n\n` +
-                    `IMPORTANT: You MUST complete ALL triage steps before outputting JSON:\n` +
-                    `1. Collect signals using build_duty_collect_signals\n` +
-                    `2. Analyze EACH signal (use /analyze-azure-devops-pipeline, /analyze-github-issue, /analyze-github-pull-request)\n` +
-                    `3. Reconcile findings into incidents using /reconcile-findings\n` +
-                    `4. THEN output the final JSON with analyzed results — NOT raw collected signals\n\n` +
-                    `The JSON must include both 'signals' (flat format) and 'incidents' (with rootCause, category, severity, grouped signals, and nextSteps)."\n\n` +
-                    `When the triage session completes, parse the JSON output (the fenced json code block) and push the "signals" array via update_signals and the "incidents" array via update_incidents to triage-dashboard canvas instance "${instanceId}" with configPath "${instanceState.activeConfig}". Then set status to idle.`
+                    `Use the kickoff_prompt: "/triage with config path: ${instanceState.activeConfig}" in autopilot mode. ` +
+                    `When the triage session completes, push the signals and incidents to triage-dashboard canvas instance "${instanceId}" with configPath "${instanceState.activeConfig}" using update_signals and update_incidents. Then set status to idle.`
                 );
             }
             return;
