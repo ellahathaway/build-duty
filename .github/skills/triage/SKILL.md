@@ -7,6 +7,30 @@ description: Full build-duty triage workflow — collects signals from configure
 
 Run a full build-duty triage cycle: collect signals, analyze each one, and reconcile findings.
 
+## Workflow Overview
+
+The triage skill executes these steps **in order** — do not skip any step:
+
+1. **Collect** — Gather raw signals from configured pipelines and repos
+2. **Analyze** — Investigate each signal individually to determine root cause
+3. **Reconcile** — Group related findings into incidents, classify severity
+4. **Present** — Output a structured report (markdown or JSON depending on caller request)
+
+All four steps are required. The skill is not complete until the final output is produced with analyzed and reconciled results.
+
+## Output Modes
+
+### Default (Markdown)
+Present a structured triage report as described in Step 4 below, followed by an interactive prompt for automated follow-up actions (Step 5).
+
+### JSON Output Mode
+When the caller requests **JSON output** (e.g., "output as JSON", "return JSON"):
+- **Still perform Steps 1–3 in full** — collect, analyze, and reconcile. Do NOT skip analysis or reconciliation.
+- Skip the markdown report (Step 4) and the interactive prompt (Step 5).
+- Output a single fenced JSON code block with the schema described at the end of this file.
+
+The JSON output must reflect *analyzed and reconciled* results — not raw collected signals.
+
 ## Prerequisites
 
 ### MCP Servers
@@ -129,6 +153,44 @@ Ask the user: "Which of these would you like me to do? (all / none / comma-separ
 
 Then execute the selected actions using the appropriate tools (GitHub MCP for issues/comments, AzDo MCP for build retries, etc.).
 
-## Output
+## JSON Output Schema
 
-A structured triage report followed by an interactive prompt for automated follow-up actions.
+When JSON output mode is active (see "Output Modes" at the top), output this schema:
+
+```json
+{
+  "signals": [
+    {
+      "type": "azdo_build | github_issue | github_pr",
+      "title": "Short descriptive name",
+      "buildId": "12345",
+      "branch": "main",
+      "status": "failed | partially_succeeded | open | closed",
+      "url": "https://dev.azure.com/...",
+      "pipeline": "dotnet-dotnet (1330)",
+      "number": 123,
+      "repo": "dotnet/source-build"
+    }
+  ],
+  "incidents": [
+    {
+      "title": "Short incident name",
+      "severity": "high | medium | low",
+      "category": "TestFailure | BuildFailure | Timeout | Infrastructure | Dependency | Configuration | Unknown",
+      "description": "1-2 sentence summary",
+      "rootCause": "Concise explanation",
+      "affectedBranches": ["main", "release/10.0.4xx"],
+      "signals": [ ... ],
+      "nextSteps": "Actionable recommendation"
+    }
+  ]
+}
+```
+
+### Field rules:
+- **type**: `azdo_build` for pipelines, `github_issue` for issues, `github_pr` for PRs.
+- **buildId**: Numeric AzDO build ID as a string. Only for `azdo_build`.
+- **pipeline**: Format as `"name (definitionId)"`. Only for `azdo_build`.
+- **number** / **repo**: Only for `github_issue` and `github_pr`.
+- **incidents[].signals**: The subset of top-level signals grouped into this incident. Same schema as top-level signals.
+- **severity**: `high` = active regressions or blocking; `medium` = ongoing tracked; `low` = warnings or stale.
