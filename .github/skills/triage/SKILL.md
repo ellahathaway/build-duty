@@ -135,7 +135,15 @@ A structured triage report followed by an interactive prompt for automated follo
 
 ## JSON Output Mode
 
-When the caller requests **JSON output** (e.g., "output as JSON", "return JSON"), skip the markdown report and Step 5 interactive prompt. Instead, output a single fenced JSON code block with this schema:
+When the caller requests **JSON output** (e.g., "output as JSON", "return JSON"):
+
+1. **Still perform Steps 1–3 in full** — collect signals, analyze each one, and reconcile findings into incidents. Do NOT skip analysis or reconciliation.
+2. Skip the markdown report (Step 4) and the interactive prompt (Step 5).
+3. Instead, output a single fenced JSON code block with the schema below.
+
+**Important**: The JSON output must reflect the *analyzed and reconciled* results — not raw collected signals. Each incident must have a root cause, category, and grouped signals derived from the analysis in Steps 2–3.
+
+Schema:
 
 ```json
 {
