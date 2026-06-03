@@ -121,28 +121,55 @@ internal sealed class AzureDevOpsSignalCollector : ISignalCollector
             _logger.LogDebug("    '{PipelineName}' branches: {Branches}", pipeline.Name, string.Join(", ", branches));
         }
 
-        if (branches.Count == 0)
+        // When no branches are configured and no release config is set,
+        // query without a branch filter to get the latest build across all branches.
+        BuildHttpClient buildClient;
+        try
         {
-            _logger.LogDebug("  '{PipelineName}' (id:{PipelineId}): no branches to check, skipping", pipeline.Name, pipeline.Id);
+            buildClient = await _tokenProvider.GetAzureDevOpsBuildClient(orgUrl);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error connecting to Azure DevOps for pipeline {PipelineName}", pipeline.Name);
+            failures.Add(new CollectionFailure($"azdo:{orgUrl}/{projectName}/{pipeline.Id}", ex.Message));
             return (signals, scopes, failures);
         }
 
-        // Collect signals for all branches in parallel using a shared client
-        using var buildClient = await _tokenProvider.GetAzureDevOpsBuildClient(orgUrl);
-        var branchTasks = branches.Select(branch => CollectBranchSignalAsync(
-            orgUrl, projectName, pipeline, branch, buildClient, cancellationToken));
-        var branchResults = await Task.WhenAll(branchTasks);
-
-        foreach (var result in branchResults)
+        using (buildClient)
         {
-            if (result.Signal is not null)
+            if (branches.Count == 0)
             {
-                signals.Add(result.Signal);
-                scopes.Add(result.Scope!);
+                _logger.LogInformation("  '{PipelineName}' (id:{PipelineId}): no branches configured, querying across all branches", pipeline.Name, pipeline.Id);
+                var result = await CollectBranchSignalAsync(orgUrl, projectName, pipeline, branch: null, buildClient, cancellationToken);
+                scopes.Add(result.Scope ?? new CollectedScope($"azdo:{orgUrl}/{projectName}/{pipeline.Id}"));
+                if (result.Signal is not null)
+                {
+                    signals.Add(result.Signal);
+                }
+                if (result.Failure is not null)
+                {
+                    failures.Add(result.Failure);
+                }
+
+                return (signals, scopes, failures);
             }
-            if (result.Failure is not null)
+
+            // Collect signals for all branches in parallel
+            var branchTasks = branches.Select(branch => CollectBranchSignalAsync(
+                orgUrl, projectName, pipeline, branch, buildClient, cancellationToken));
+            var branchResults = await Task.WhenAll(branchTasks);
+
+            foreach (var result in branchResults)
             {
-                failures.Add(result.Failure);
+                scopes.Add(result.Scope ?? new CollectedScope($"azdo:{orgUrl}/{projectName}/{pipeline.Id}"));
+                if (result.Signal is not null)
+                {
+                    signals.Add(result.Signal);
+                }
+                if (result.Failure is not null)
+                {
+                    failures.Add(result.Failure);
+                }
             }
         }
 
@@ -153,17 +180,19 @@ internal sealed class AzureDevOpsSignalCollector : ISignalCollector
         string orgUrl,
         string projectName,
         AzureDevOpsPipelineConfig pipeline,
-        string branch,
+        string? branch,
         BuildHttpClient buildClient,
         CancellationToken cancellationToken)
     {
-        var scopeKey = $"azdo:{orgUrl}/{projectName}/{pipeline.Id}/{branch}";
+        var scopeKey = branch is not null
+            ? $"azdo:{orgUrl}/{projectName}/{pipeline.Id}/{branch}"
+            : $"azdo:{orgUrl}/{projectName}/{pipeline.Id}";
         try
         {
             var builds = await buildClient.GetBuildsAsync(
                 project: projectName,
                 definitions: [pipeline.Id],
-                branchName: $"refs/heads/{branch}",
+                branchName: branch is not null ? $"refs/heads/{branch}" : null,
                 queryOrder: BuildQueryOrder.FinishTimeDescending,
                 top: 1,
                 cancellationToken: cancellationToken);
