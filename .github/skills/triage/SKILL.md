@@ -132,3 +132,45 @@ Then execute the selected actions using the appropriate tools (GitHub MCP for is
 ## Output
 
 A structured triage report followed by an interactive prompt for automated follow-up actions.
+
+## JSON Output Mode
+
+When the caller requests **JSON output** (e.g., "output as JSON", "return JSON"), skip the markdown report and Step 5 interactive prompt. Instead, output a single fenced JSON code block with this schema:
+
+```json
+{
+  "signals": [
+    {
+      "type": "azdo_build | github_issue | github_pr",
+      "title": "Short descriptive name",
+      "buildId": "12345",
+      "branch": "main",
+      "status": "failed | partially_succeeded | open | closed",
+      "url": "https://dev.azure.com/...",
+      "pipeline": "dotnet-dotnet (1330)",
+      "number": 123,
+      "repo": "dotnet/source-build"
+    }
+  ],
+  "incidents": [
+    {
+      "title": "Short incident name",
+      "severity": "high | medium | low",
+      "category": "TestFailure | BuildFailure | Timeout | Infrastructure | Dependency | Configuration | Unknown",
+      "description": "1-2 sentence summary",
+      "rootCause": "Concise explanation",
+      "affectedBranches": ["main", "release/10.0.4xx"],
+      "signals": [ ... ],
+      "nextSteps": "Actionable recommendation"
+    }
+  ]
+}
+```
+
+### Field rules:
+- **type**: `azdo_build` for pipelines, `github_issue` for issues, `github_pr` for PRs.
+- **buildId**: Numeric AzDO build ID as a string. Only for `azdo_build`.
+- **pipeline**: Format as `"name (definitionId)"`. Only for `azdo_build`.
+- **number** / **repo**: Only for `github_issue` and `github_pr`.
+- **incidents[].signals**: The subset of top-level signals grouped into this incident. Same schema as top-level signals.
+- **severity**: `high` = active regressions or blocking; `medium` = ongoing tracked; `low` = warnings or stale.

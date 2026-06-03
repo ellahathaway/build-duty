@@ -263,6 +263,44 @@ Skills are in `.github/skills/` and available to anyone who clones the repo:
 | `/reconcile-findings` | Group and deduplicate findings |
 | `/review-work-items` | Deep-dive into specific incidents |
 
+### JSON output mode
+
+The `/triage` skill supports a JSON output mode. Append "output as JSON" to the prompt to receive structured data instead of a markdown report:
+
+```
+/triage with config path: configs/.source-build-monitor.yml — output as JSON
+```
+
+Returns a `{ signals: [...], incidents: [...] }` object with typed signal/incident arrays. Useful for programmatic consumers like the triage dashboard canvas.
+
+## Triage Dashboard Canvas
+
+A canvas extension (`.github/extensions/triage-dashboard/`) that provides a live dashboard UI for triage results. Features:
+
+- **Multi-config tabs** — monitor multiple `.build-duty.yml` configs simultaneously
+- **Signal & incident display** — shows pipeline failures, GitHub issues, and grouped incidents
+- **Investigate buttons** — spawns a new autonomous session to investigate any signal or incident
+- **Run Triage** — kicks off a triage session that collects signals and pushes JSON results to the dashboard
+- **Persistent state** — config selections and triage results survive across sessions
+
+### Installation
+
+The canvas is auto-discovered when cloning this repo. To install it standalone:
+
+```bash
+# From a GitHub repo folder URL
+copilot extension install https://github.com/ellahathaway/build-duty/tree/main/.github/extensions/triage-dashboard
+```
+
+### Usage
+
+Open the dashboard from any session:
+```
+open the triage-dashboard canvas with configPath "configs/.source-build-monitor.yml"
+```
+
+Or add configs interactively via the "+" button in the dashboard UI.
+
 ## Contributing
 
 1. Fork and clone the repository.
