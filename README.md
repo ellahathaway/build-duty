@@ -191,6 +191,21 @@ github:
 
 See the [configs/](configs/) directory for full examples.
 
+### Azure DevOps Pipeline fields
+
+Each entry under `pipelines` defines a pipeline to monitor. All fields except `id` and `name` are optional.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | int | Pipeline definition ID (required) |
+| `name` | string | Display name for the pipeline (required) |
+| `branches` | list | Branch names to monitor. When omitted, queries without a branch filter (latest build across all branches) |
+| `release` | object | Auto-discover release branches (see below) |
+| `age` | duration | Maximum build age to consider, e.g. `7d`, `24h`, `2d12h` |
+| `status` | list | Build results to signal on (default: `Failed`, `PartiallySucceeded`, `Canceled`) |
+| `timelineFilters` | list | Filter timeline records by type/name pattern |
+| `context` | string | Free-text context injected into AI analysis prompts |
+
 ### GitHub Issue and PR fields
 
 Each entry under `issues` or `prs` is a pattern. All fields except `name` are optional.

@@ -164,8 +164,11 @@ public class AzureDevOpsSignalCollectorTests
     }
 
     [Fact]
-    public async Task CollectAsync_NonEmptyConfig_NoBranchesAndNoRelease_ReturnsEmpty()
+    public async Task CollectAsync_NonEmptyConfig_NoBranchesAndNoRelease_AttemptsCollection()
     {
+        // When no branches and no release are configured, the collector should
+        // attempt to query (not silently skip). With a stub token provider that
+        // can't connect, this surfaces as a failure rather than being silently ignored.
         var collector = new AzureDevOpsSignalCollector(
             new AzureDevOpsConfig
             {
@@ -202,7 +205,10 @@ public class AzureDevOpsSignalCollectorTests
 
         var result = await collector.CollectAsync();
 
-        Assert.Empty(result.Signals);
+        // The pipeline should not be silently skipped — it should report a failure
+        // since the stub token provider cannot create a real connection.
+        Assert.NotEmpty(result.Failures);
+        Assert.Contains(result.Failures, f => f.ScopeKey.Contains("test-project/1"));
     }
 
     private static bool InvokeMatchesTimelineFilter(TimelineRecord record, List<TimelineFilter> filters)
