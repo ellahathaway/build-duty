@@ -9,9 +9,14 @@
     <PackageType>McpServer</PackageType>
     <Description>MCP server for build-duty signal collection. Exposes signal collection and config resolution as MCP tools for use with GitHub Copilot and other AI surfaces.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <ChangelogFile>CHANGELOG.md</ChangelogFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\BuildDuty.Core\BuildDuty.Core.csproj" />
