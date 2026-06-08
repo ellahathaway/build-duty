@@ -39,8 +39,25 @@ if ($Pack) {
 if ($Install) {
     Write-Host '==> Install (MCP server global tool)'
     & { $ErrorActionPreference = 'SilentlyContinue'; dotnet tool uninstall -g ellahathaway.buildduty.mcp 2>&1 | Out-Null }
-    dotnet tool install --global --add-source (Join-Path $Artifacts 'packages') ellahathaway.buildduty.mcp --prerelease
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    $LocalPackages = Join-Path $Artifacts 'packages'
+    $LocalConfig = Join-Path $Artifacts 'nuget.local.config'
+    @"
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="local-artifacts" value="$LocalPackages" />
+  </packageSources>
+</configuration>
+"@ | Set-Content -Path $LocalConfig -Encoding utf8
+
+    try {
+        dotnet tool install --global --configfile $LocalConfig ellahathaway.buildduty.mcp --prerelease
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
+    finally {
+        Remove-Item -Path $LocalConfig -Force -ErrorAction SilentlyContinue
+    }
 }
 
 Write-Host '==> Done'
