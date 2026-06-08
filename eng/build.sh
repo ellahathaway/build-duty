@@ -46,7 +46,23 @@ fi
 if [ "$INSTALL" = true ]; then
     echo "==> Install (MCP server global tool)"
     dotnet tool uninstall -g ellahathaway.buildduty.mcp 2>/dev/null || true
-    dotnet tool install --global --add-source "$ARTIFACTS/packages" ellahathaway.buildduty.mcp --prerelease
+    LOCAL_CONFIG="$ARTIFACTS/nuget.local.config"
+    cleanup_local_config() {
+        rm -f "$LOCAL_CONFIG"
+    }
+    trap cleanup_local_config EXIT
+    cat > "$LOCAL_CONFIG" <<EOF
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="local-artifacts" value="$ARTIFACTS/packages" />
+  </packageSources>
+</configuration>
+EOF
+    dotnet tool install --global --configfile "$LOCAL_CONFIG" ellahathaway.buildduty.mcp --prerelease
+    trap - EXIT
+    cleanup_local_config
 fi
 
 echo "==> Done"
