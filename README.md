@@ -252,16 +252,21 @@ dotnet test    BuildDuty.slnx -c Release
 
 ## Copilot Skills
 
-Skills are in `.github/skills/` and available to anyone who clones the repo:
+Skills are packaged inside the marketplace plugins under `.github/plugin/<plugin>/skills/`.
+Each skill lives in exactly one place — its owning plugin — and is delivered when that
+plugin is installed (see [Usage](#usage)).
 
-| Skill | Description |
-|-------|-------------|
-| `/triage` | Full workflow — collect, analyze, reconcile |
-| `/analyze-azure-devops-pipeline` | Investigate a pipeline failure |
-| `/analyze-github-issue` | Investigate a GitHub issue |
-| `/analyze-github-pull-request` | Investigate a PR |
-| `/reconcile-findings` | Group and deduplicate findings |
-| `/review-work-items` | Deep-dive into specific incidents |
+| Skill | Plugin | Description |
+|-------|--------|-------------|
+| `/triage` | `triage` | Full workflow — collect, analyze, reconcile |
+| `/analyze-azure-devops-pipeline` | `triage` | Investigate a pipeline failure |
+| `/analyze-github-issue` | `triage` | Investigate a GitHub issue |
+| `/analyze-github-pull-request` | `triage` | Investigate a PR |
+| `/reconcile-findings` | `triage` | Group and deduplicate findings |
+| `/review-work-items` | `reporting` | Deep-dive into specific incidents |
+| `/generate-handoff` | `reporting` | Produce a rotation handoff report |
+| `/retry-build` | `remediation` | Retry a transient pipeline failure |
+| `/validate-config` | `config-management` | Validate a `.build-duty.yml` config |
 
 ### JSON output mode
 
