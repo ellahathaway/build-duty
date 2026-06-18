@@ -252,16 +252,41 @@ dotnet test    BuildDuty.slnx -c Release
 
 ## Copilot Skills
 
-Skills are in `.github/skills/` and available to anyone who clones the repo:
+Each skill has a **single source of truth** under its owning plugin at
+`.github/plugin/<plugin>/skills/<skill>/`. This is what the marketplace plugins
+package and deliver when installed (see [Usage](#usage)) — the plugin `plugin.json`
+files and `.github/plugin/marketplace.json` only ever reference these plugin-local
+skill directories. Edit a skill **only** in its plugin location.
 
-| Skill | Description |
-|-------|-------------|
-| `/triage` | Full workflow — collect, analyze, reconcile |
-| `/analyze-azure-devops-pipeline` | Investigate a pipeline failure |
-| `/analyze-github-issue` | Investigate a GitHub issue |
-| `/analyze-github-pull-request` | Investigate a PR |
-| `/reconcile-findings` | Group and deduplicate findings |
-| `/review-work-items` | Deep-dive into specific incidents |
+| Skill | Plugin | Description |
+|-------|--------|-------------|
+| `/triage` | `triage` | Full workflow — collect, analyze, reconcile |
+| `/analyze-azure-devops-pipeline` | `triage` | Investigate a pipeline failure |
+| `/analyze-github-issue` | `triage` | Investigate a GitHub issue |
+| `/analyze-github-pull-request` | `triage` | Investigate a PR |
+| `/reconcile-findings` | `triage` | Group and deduplicate findings |
+| `/review-work-items` | `reporting` | Deep-dive into specific incidents |
+| `/generate-handoff` | `reporting` | Produce a rotation handoff report |
+| `/retry-build` | `remediation` | Retry a transient pipeline failure |
+| `/validate-config` | `config-management` | Validate a `.build-duty.yml` config |
+
+### Repo-local discovery (`.github/skills/`)
+
+GitHub Copilot (CLI, VS Code, and other clients) also auto-discovers project
+skills from `.github/skills/` when working **inside this repo**. To get that
+zero-install discovery without duplicating any skill content, `.github/skills/<skill>`
+is a **git symlink** that points at the skill's single source under
+`.github/plugin/<plugin>/skills/<skill>/`. There is only ever one copy of each
+skill to edit.
+
+Symlinks materialize automatically on **Linux and macOS** (and on **Windows** with
+[Developer Mode](https://learn.microsoft.com/windows/apps/get-started/enable-your-device-for-development)
+enabled or an elevated checkout). On a Windows clone without symlink support, git
+writes the links as text stubs; running `.\eng\build.ps1` repairs them via
+[`eng/repair-skill-symlinks.ps1`](eng/repair-skill-symlinks.ps1) (enables
+`core.symlinks` for the clone and re-checks-out `.github/skills`). If symlink
+creation is still not permitted, the skills remain available by installing the
+marketplace plugins.
 
 ### JSON output mode
 
