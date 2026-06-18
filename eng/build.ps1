@@ -13,6 +13,11 @@ if ($Install) {
     $Pack = $true
 }
 
+# Materialize repo-local skill symlinks (.github/skills) on Windows clones that
+# checked them out as text stubs because core.symlinks was disabled. No-op on
+# Linux/macOS and on Windows where the symlinks are already real.
+& (Join-Path $PSScriptRoot 'repair-skill-symlinks.ps1') -RepoRoot $RepoRoot
+
 Write-Host '==> Clean'
 Get-ChildItem -Path (Join-Path $RepoRoot 'src') -Include bin, obj -Directory -Recurse | Remove-Item -Recurse -Force
 
