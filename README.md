@@ -62,7 +62,7 @@ gh auth refresh --scopes read:packages
 
 # Add the GitHub Packages NuGet source (one-time)
 dotnet nuget add source \
-  --username YOUR_GITHUB_USERNAME \
+  --username "$(gh api user --jq .login)" \
   --password "$(gh auth token)" \
   --store-password-in-clear-text \
   --name github-ellahathaway \
