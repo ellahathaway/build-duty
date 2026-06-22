@@ -59,15 +59,31 @@ One-time setup:
 ```bash
 # Ensure your GitHub CLI token has read:packages scope
 gh auth refresh --scopes read:packages
+```
 
+**Linux / macOS (bash)**
+```bash
 # Add the GitHub Packages NuGet source (one-time)
 dotnet nuget add source \
-  --username YOUR_GITHUB_USERNAME \
+  --username "$(gh api user --jq .login)" \
   --password "$(gh auth token)" \
   --store-password-in-clear-text \
   --name github-ellahathaway \
   "https://nuget.pkg.github.com/ellahathaway/index.json"
+```
 
+**Windows (PowerShell)**
+```powershell
+# Add the GitHub Packages NuGet source (one-time)
+dotnet nuget add source `
+  --username (gh api user --jq .login) `
+  --password (gh auth token) `
+  --store-password-in-clear-text `
+  --name github-ellahathaway `
+  "https://nuget.pkg.github.com/ellahathaway/index.json"
+```
+
+```bash
 # Install the MCP server tool globally
 dotnet tool install --global ellahathaway.buildduty.mcp --version 0.0.1
 ```
