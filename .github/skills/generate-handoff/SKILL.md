@@ -44,3 +44,12 @@ Highlight anything that:
 ## Output
 
 A handoff report suitable for posting in a Teams channel or issue comment.
+
+Render every reference to a build, pipeline, branch, pull request, or issue as a Markdown hyperlink, not bare text:
+- AzDO build → the signal's `Url`
+- AzDO pipeline → `{OrganizationUrl}/{ProjectName}/_build?definitionId={PipelineId}`
+- Branch → `https://github.com/{owner}/{repo}/tree/{branch}` (owning repo)
+- GitHub issue → `https://github.com/{owner}/{repo}/issues/{number}`
+- GitHub PR → `https://github.com/{owner}/{repo}/pull/{number}`
+
+If a branch's owning repo cannot be determined, use backticks instead of guessing a URL.
