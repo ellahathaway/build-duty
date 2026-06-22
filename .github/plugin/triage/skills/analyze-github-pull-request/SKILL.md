@@ -51,6 +51,9 @@ Prefer the conversation's stated root cause/decision and reconcile your independ
 - If open: is it in draft? Are there review comments or requested changes?
 - If merged: when was it merged?
 
+Specific Rules:
+- For open PRs with 0 files changed, apply the decision rule in [section-3-zero-files-changed.md](./section-3-zero-files-changed.md).
+
 ### 4. Analyze CI checks
 
 Review `Checks` to understand CI health:
