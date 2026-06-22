@@ -31,6 +31,22 @@ When the caller requests **JSON output** (e.g., "output as JSON", "return JSON")
 
 The JSON output must reflect *analyzed and reconciled* results — not raw collected signals.
 
+## Link Formatting
+
+In the markdown report, whenever the output references a build, pipeline, branch, pull request, or issue — in prose, tables, bullet lists, or next-step items — render it as a Markdown hyperlink rather than bare text. Apply this to **every** occurrence, not just the first mention.
+
+| Reference | Link text | URL |
+|---|---|---|
+| AzDO build | `Build {Id}` or `{Id}` | the signal's `Url` value (e.g. `{OrganizationUrl}/{ProjectName}/_build/results?buildId={Id}`) |
+| AzDO pipeline | the pipeline name | `{OrganizationUrl}/{ProjectName}/_build?definitionId={PipelineId}` |
+| Branch | `{branch}` | `https://github.com/{owner}/{repo}/tree/{branch}`, using the repo the pipeline builds or the GitHub signal's repo |
+| GitHub issue | `#{number}` | `https://github.com/{owner}/{repo}/issues/{number}` |
+| GitHub PR | `#{number}` | `https://github.com/{owner}/{repo}/pull/{number}` |
+
+- AzDO pipeline signals always include a `Url` — use it directly for the build link instead of reconstructing it.
+- GitHub issue/PR signals include the `Organization` and `Repository` fields needed to build their URLs.
+- If the owning repository for a branch cannot be determined, render the branch in backticks instead of guessing a URL. Never link to a URL you are not confident exists.
+
 ## Prerequisites
 
 ### MCP Servers
@@ -95,9 +111,11 @@ For each newly-discovered incident:
 
 | Type | Signal | Branch | Detail |
 |------|--------|--------|--------|
-| AzDo Pipeline | [Build NNNNNN](url) | branch | what failed in this build |
+| AzDo Pipeline | [Build NNNNNN](url) | [branch](branch-url) | what failed in this build |
 | GitHub Issue | [#NNN](url) | — | issue title and status |
-| GitHub PR | [#NNN](url) | branch | PR title and status |
+| GitHub PR | [#NNN](url) | [branch](branch-url) | PR title and status |
+
+Hyperlink every build, branch, PR, and issue reference per the [Link Formatting](#link-formatting) rules above — including references in prose and next-step items, not just this table.
 
 5. **Additional context** — any relevant notes: how long this has been failing, workarounds, who to contact, linked issues, etc.
 6. **Suggested next steps** — actionable recommendations for this incident. Examples:
