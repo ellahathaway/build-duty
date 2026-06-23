@@ -1,8 +1,8 @@
 name: install-scripts
 
-github:
+gitHub:
   organizations:
-    - organization: dotnet
+    - name: dotnet
       repositories:
         - name: install-scripts
           prs:

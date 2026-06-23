@@ -1,8 +1,8 @@
 name: domestic-cat
 
-github:
+gitHub:
   organizations:
-    - organization: dotnet
+    - name: dotnet
       repositories:
         - name: sdk
           prs:
