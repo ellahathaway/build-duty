@@ -97,7 +97,6 @@ gitHub:
             - name: ".*"
               labels:
                 - ops-monitor
-              state: Open
               context: >
                 Issues in dotnet/source-build with the ops-monitor label track
                 active source-build operational problems. These often correspond
