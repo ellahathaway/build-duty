@@ -1,8 +1,8 @@
 name: domestic-cat
 
-github:
+gitHub:
   organizations:
-    - organization: dotnet
+    - name: dotnet
       repositories:
         - name: sdk
           prs:
@@ -31,3 +31,20 @@ github:
         - name: workload-versions
           prs:
             - *bot-prs
+        - name: dotnet
+          prs:
+            # SDK codeflow into the VMR only. Matched by title regex (no author
+            # restriction) so it catches both maestro forward-flow
+            # ("[<branch>] Source code updates from dotnet/sdk") and manual
+            # forward-flow ("Forward flow sdk <branch>", which is often opened by
+            # a person rather than a bot). General VMR PRs are intentionally not
+            # monitored.
+            - name: ".*(Source code updates from dotnet/sdk|Forward flow sdk)"
+              excludeLabels:
+                - "wait for release"
+                - backport
+                - "Branch Lockdown"
+                - "DO NOT MERGE"
+                - do-not-merge
+              context: >
+                SDK codeflow PRs into the VMR (dotnet/dotnet).
