@@ -68,12 +68,16 @@ jobs:
         shell: pwsh
         run: Install-Module -Name Pester -Force -Scope CurrentUser -SkipPublisherCheck -MinimumVersion 5.0
 
+      - name: Verify plugin scripts are in sync
+        shell: pwsh
+        run: ./eng/sync-plugin-scripts.ps1 -Check
+
       - name: Run Pester tests
         shell: pwsh
         run: |
           Import-Module Pester -MinimumVersion 5.0 -Force
           $config = New-PesterConfiguration
-          $config.Run.Path = '.github/plugin/scripts/tests'
+          $config.Run.Path = '.github/plugin/tests'
           $config.Output.Verbosity = 'Detailed'
           $config.Run.Exit = $true
           Invoke-Pester -Configuration $config

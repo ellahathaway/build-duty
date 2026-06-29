@@ -5,12 +5,14 @@
     Structural validation tests for sessionStart hook wiring.
 .DESCRIPTION
     Verifies that all plugins reference a valid hooks.json, each hooks.json
-    is well-formed, and the referenced scripts exist.
+    is well-formed, the bundled scripts exist, and each plugin's bundled
+    scripts stay byte-identical to the canonical source in eng/plugin-scripts.
 #>
 
 BeforeAll {
-    $PluginRoot = Join-Path $PSScriptRoot '..' '..'
-    $ScriptsDir = Join-Path $PluginRoot 'scripts'
+    $PluginRoot = Join-Path $PSScriptRoot '..'
+    $RepoRoot = Join-Path $PSScriptRoot '..' '..' '..'
+    $CanonicalDir = Join-Path $RepoRoot 'eng' 'plugin-scripts'
     $PluginDirs = @('triage', 'config-management', 'remediation', 'reporting')
 }
 
@@ -60,13 +62,33 @@ Describe 'Plugin hook wiring' {
         }
     }
 
-    Context 'Referenced scripts exist' {
-        It 'build-duty-setup.ps1 exists' {
-            Join-Path $ScriptsDir 'build-duty-setup.ps1' | Should -Exist
+    Context 'Canonical setup scripts exist' {
+        It 'eng/plugin-scripts/build-duty-setup.ps1 exists' {
+            Join-Path $CanonicalDir 'build-duty-setup.ps1' | Should -Exist
         }
 
-        It 'build-duty-setup.sh exists' {
-            Join-Path $ScriptsDir 'build-duty-setup.sh' | Should -Exist
+        It 'eng/plugin-scripts/build-duty-setup.sh exists' {
+            Join-Path $CanonicalDir 'build-duty-setup.sh' | Should -Exist
+        }
+    }
+
+    Context 'Each plugin bundles its own setup scripts' {
+        It '<pluginName>/scripts/build-duty-setup.ps1 exists' -ForEach @(
+            @{ pluginName = 'triage' }
+            @{ pluginName = 'config-management' }
+            @{ pluginName = 'remediation' }
+            @{ pluginName = 'reporting' }
+        ) {
+            Join-Path $PluginRoot $pluginName 'scripts' 'build-duty-setup.ps1' | Should -Exist
+        }
+
+        It '<pluginName>/scripts/build-duty-setup.sh exists' -ForEach @(
+            @{ pluginName = 'triage' }
+            @{ pluginName = 'config-management' }
+            @{ pluginName = 'remediation' }
+            @{ pluginName = 'reporting' }
+        ) {
+            Join-Path $PluginRoot $pluginName 'scripts' 'build-duty-setup.sh' | Should -Exist
         }
     }
 
@@ -105,6 +127,27 @@ Describe 'Plugin hook wiring' {
                 $content = Get-Content (Join-Path $PluginRoot $plugin 'hooks.json') -Raw
                 $content | Should -Be $referenceContent -Because "$plugin/hooks.json should match triage/hooks.json"
             }
+        }
+    }
+
+    Context 'Bundled scripts match the canonical source (no drift)' {
+        It '<pluginName>/scripts/<file> is byte-identical to eng/plugin-scripts/<file>' -ForEach @(
+            @{ pluginName = 'triage';            file = 'build-duty-setup.ps1' }
+            @{ pluginName = 'triage';            file = 'build-duty-setup.sh' }
+            @{ pluginName = 'config-management'; file = 'build-duty-setup.ps1' }
+            @{ pluginName = 'config-management'; file = 'build-duty-setup.sh' }
+            @{ pluginName = 'remediation';       file = 'build-duty-setup.ps1' }
+            @{ pluginName = 'remediation';       file = 'build-duty-setup.sh' }
+            @{ pluginName = 'reporting';         file = 'build-duty-setup.ps1' }
+            @{ pluginName = 'reporting';         file = 'build-duty-setup.sh' }
+        ) {
+            $canonical = Join-Path $CanonicalDir $file
+            $copy = Join-Path $PluginRoot $pluginName 'scripts' $file
+            $canonical | Should -Exist
+            $copy | Should -Exist
+            $canonicalHash = (Get-FileHash -Path $canonical -Algorithm SHA256).Hash
+            $copyHash = (Get-FileHash -Path $copy -Algorithm SHA256).Hash
+            $copyHash | Should -Be $canonicalHash -Because "$pluginName/scripts/$file is out of sync; run: pwsh eng/sync-plugin-scripts.ps1"
         }
     }
 }
