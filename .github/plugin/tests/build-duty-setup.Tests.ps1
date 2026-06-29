@@ -2,14 +2,15 @@
 
 <#
 .SYNOPSIS
-    Tests for .github/plugin/scripts/build-duty-setup.ps1
+    Tests for eng/plugin-scripts/build-duty-setup.ps1
 .DESCRIPTION
     Validates idempotency, prerequisite checks, version gating, NuGet source
     configuration, and dotnet tool install/update paths by mocking external commands.
 #>
 
 BeforeAll {
-    $ScriptPath = Join-Path $PSScriptRoot '..' 'build-duty-setup.ps1'
+    $RepoRoot = Join-Path $PSScriptRoot '..' '..' '..'
+    $ScriptPath = Join-Path $RepoRoot 'eng' 'plugin-scripts' 'build-duty-setup.ps1'
 }
 
 Describe 'build-duty-setup.ps1' {
