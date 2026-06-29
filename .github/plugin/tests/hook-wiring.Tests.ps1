@@ -2,11 +2,12 @@
 
 <#
 .SYNOPSIS
-    Structural validation tests for sessionStart hook wiring.
+    Structural validation tests for plugin hook wiring.
 .DESCRIPTION
-    Verifies that all plugins reference a valid hooks.json, each hooks.json
-    is well-formed, the bundled scripts exist, and each plugin's bundled
-    scripts stay byte-identical to the canonical source in eng/plugin-scripts.
+    Verifies that all plugins reference a valid hooks.json, each hooks.json is
+    well-formed (skillInvocation + preToolUse), the bundled scripts exist, and
+    each plugin's bundled scripts stay byte-identical to the canonical source in
+    eng/plugin-scripts.
 #>
 
 BeforeAll {
@@ -47,6 +48,18 @@ Describe 'Plugin hook wiring' {
             $hooks.hooks.skillInvocation.Count | Should -BeGreaterOrEqual 1
         }
 
+        It '<pluginName>/hooks.json has a preToolUse array' -ForEach @(
+            @{ pluginName = 'triage' }
+            @{ pluginName = 'config-management' }
+            @{ pluginName = 'remediation' }
+            @{ pluginName = 'reporting' }
+        ) {
+            $hooksPath = Join-Path $PluginRoot $pluginName 'hooks.json'
+            $hooks = Get-Content $hooksPath -Raw | ConvertFrom-Json
+            $hooks.hooks.preToolUse | Should -Not -BeNullOrEmpty
+            $hooks.hooks.preToolUse.Count | Should -BeGreaterOrEqual 1
+        }
+
         It '<pluginName>/hooks.json skillInvocation entry has required fields' -ForEach @(
             @{ pluginName = 'triage' }
             @{ pluginName = 'config-management' }
@@ -60,6 +73,20 @@ Describe 'Plugin hook wiring' {
             $hook.powershell | Should -Not -BeNullOrEmpty
             $hook.timeoutSec | Should -BeGreaterThan 0
         }
+
+        It '<pluginName>/hooks.json preToolUse entry has required fields' -ForEach @(
+            @{ pluginName = 'triage' }
+            @{ pluginName = 'config-management' }
+            @{ pluginName = 'remediation' }
+            @{ pluginName = 'reporting' }
+        ) {
+            $hooksPath = Join-Path $PluginRoot $pluginName 'hooks.json'
+            $hook = (Get-Content $hooksPath -Raw | ConvertFrom-Json).hooks.preToolUse[0]
+            $hook.type | Should -Be 'command'
+            $hook.bash | Should -Be './scripts/comment-review-gate.sh'
+            $hook.powershell | Should -Be './scripts/comment-review-gate.ps1'
+            $hook.timeoutSec | Should -BeGreaterThan 0
+        }
     }
 
     Context 'Canonical setup scripts exist' {
@@ -69,6 +96,14 @@ Describe 'Plugin hook wiring' {
 
         It 'eng/plugin-scripts/build-duty-setup.sh exists' {
             Join-Path $CanonicalDir 'build-duty-setup.sh' | Should -Exist
+        }
+
+        It 'eng/plugin-scripts/comment-review-gate.ps1 exists' {
+            Join-Path $CanonicalDir 'comment-review-gate.ps1' | Should -Exist
+        }
+
+        It 'eng/plugin-scripts/comment-review-gate.sh exists' {
+            Join-Path $CanonicalDir 'comment-review-gate.sh' | Should -Exist
         }
     }
 
@@ -89,6 +124,24 @@ Describe 'Plugin hook wiring' {
             @{ pluginName = 'reporting' }
         ) {
             Join-Path $PluginRoot $pluginName 'scripts' 'build-duty-setup.sh' | Should -Exist
+        }
+
+        It '<pluginName>/scripts/comment-review-gate.ps1 exists' -ForEach @(
+            @{ pluginName = 'triage' }
+            @{ pluginName = 'config-management' }
+            @{ pluginName = 'remediation' }
+            @{ pluginName = 'reporting' }
+        ) {
+            Join-Path $PluginRoot $pluginName 'scripts' 'comment-review-gate.ps1' | Should -Exist
+        }
+
+        It '<pluginName>/scripts/comment-review-gate.sh exists' -ForEach @(
+            @{ pluginName = 'triage' }
+            @{ pluginName = 'config-management' }
+            @{ pluginName = 'remediation' }
+            @{ pluginName = 'reporting' }
+        ) {
+            Join-Path $PluginRoot $pluginName 'scripts' 'comment-review-gate.sh' | Should -Exist
         }
     }
 
@@ -118,6 +171,32 @@ Describe 'Plugin hook wiring' {
             $resolvedPs = [System.IO.Path]::GetFullPath($resolvedPs)
             $resolvedPs | Should -Exist
         }
+
+        It '<pluginName> preToolUse bash path resolves to existing script' -ForEach @(
+            @{ pluginName = 'triage' }
+            @{ pluginName = 'config-management' }
+            @{ pluginName = 'remediation' }
+            @{ pluginName = 'reporting' }
+        ) {
+            $hooksPath = Join-Path $PluginRoot $pluginName 'hooks.json'
+            $hook = (Get-Content $hooksPath -Raw | ConvertFrom-Json).hooks.preToolUse[0]
+            $resolvedBash = Join-Path $PluginRoot $pluginName $hook.bash
+            $resolvedBash = [System.IO.Path]::GetFullPath($resolvedBash)
+            $resolvedBash | Should -Exist
+        }
+
+        It '<pluginName> preToolUse powershell path resolves to existing script' -ForEach @(
+            @{ pluginName = 'triage' }
+            @{ pluginName = 'config-management' }
+            @{ pluginName = 'remediation' }
+            @{ pluginName = 'reporting' }
+        ) {
+            $hooksPath = Join-Path $PluginRoot $pluginName 'hooks.json'
+            $hook = (Get-Content $hooksPath -Raw | ConvertFrom-Json).hooks.preToolUse[0]
+            $resolvedPs = Join-Path $PluginRoot $pluginName $hook.powershell
+            $resolvedPs = [System.IO.Path]::GetFullPath($resolvedPs)
+            $resolvedPs | Should -Exist
+        }
     }
 
     Context 'hooks.json content is identical across all plugins' {
@@ -140,6 +219,14 @@ Describe 'Plugin hook wiring' {
             @{ pluginName = 'remediation';       file = 'build-duty-setup.sh' }
             @{ pluginName = 'reporting';         file = 'build-duty-setup.ps1' }
             @{ pluginName = 'reporting';         file = 'build-duty-setup.sh' }
+            @{ pluginName = 'triage';            file = 'comment-review-gate.ps1' }
+            @{ pluginName = 'triage';            file = 'comment-review-gate.sh' }
+            @{ pluginName = 'config-management'; file = 'comment-review-gate.ps1' }
+            @{ pluginName = 'config-management'; file = 'comment-review-gate.sh' }
+            @{ pluginName = 'remediation';       file = 'comment-review-gate.ps1' }
+            @{ pluginName = 'remediation';       file = 'comment-review-gate.sh' }
+            @{ pluginName = 'reporting';         file = 'comment-review-gate.ps1' }
+            @{ pluginName = 'reporting';         file = 'comment-review-gate.sh' }
         ) {
             $canonical = Join-Path $CanonicalDir $file
             $copy = Join-Path $PluginRoot $pluginName 'scripts' $file

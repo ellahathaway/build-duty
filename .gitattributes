@@ -1,0 +1,4 @@
+# Shell scripts must use LF so they run under bash on every platform,
+# including Windows git-bash / WSL. Without this, autocrlf can rewrite the
+# working tree to CRLF and bash fails on the shebang / `set` line.
+*.sh text eol=lf

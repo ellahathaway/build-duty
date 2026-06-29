@@ -21,7 +21,8 @@
     "skills/analyze-azure-devops-pipeline",
     "skills/analyze-github-issue",
     "skills/analyze-github-pull-request",
-    "skills/reconcile-findings"
+    "skills/reconcile-findings",
+    "skills/post-comment"
   ],
   "mcpServers": {
     "build-duty-mcp-server": {

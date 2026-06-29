@@ -171,6 +171,8 @@ Ask the user: "Which of these would you like me to do? (all / none / comma-separ
 
 Then execute the selected actions using the appropriate tools (GitHub MCP for issues/comments, AzDo MCP for build retries, etc.).
 
+**Before posting any comment** on a GitHub issue or PR (e.g. the ping/escalate actions above), follow the `post-comment` skill: render the exact comment text in a fenced preview, get the user's explicit confirmation, then post that exact string. Never post an unreviewed comment unless the user has explicitly opted out (e.g. "post without review").
+
 ## JSON Output Schema
 
 When JSON output mode is active (see "Output Modes" at the top), output this schema:

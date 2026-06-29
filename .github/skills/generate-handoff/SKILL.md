@@ -45,6 +45,8 @@ Highlight anything that:
 
 A handoff report suitable for posting in a Teams channel or issue comment.
 
+If the user asks you to post the handoff as a comment on a GitHub issue or PR, follow the `post-comment` skill: render the exact comment in a fenced preview, get explicit confirmation, then post that exact string.
+
 Render every reference to a build, pipeline, branch, pull request, or issue as a Markdown hyperlink, not bare text:
 - AzDO build → the signal's `Url`
 - AzDO pipeline → `{OrganizationUrl}/{ProjectName}/_build?definitionId={PipelineId}`

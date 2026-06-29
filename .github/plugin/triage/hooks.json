@@ -1,6 +1,14 @@
 {
   "version": 1,
   "hooks": {
+    "preToolUse": [
+      {
+        "type": "command",
+        "bash": "./scripts/comment-review-gate.sh",
+        "powershell": "./scripts/comment-review-gate.ps1",
+        "timeoutSec": 10
+      }
+    ],
     "skillInvocation": [
       {
         "type": "command",

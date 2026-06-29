@@ -17,7 +17,8 @@
   "hooks": "hooks.json",
   "skills": [
     "skills/generate-handoff",
-    "skills/review-work-items"
+    "skills/review-work-items",
+    "skills/post-comment"
   ],
   "mcpServers": {
     "build-duty-mcp-server": {

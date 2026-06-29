@@ -33,7 +33,7 @@ $CanonicalDir = Join-Path $RepoRoot 'eng/plugin-scripts'
 $PluginRoot = Join-Path $RepoRoot '.github/plugin'
 
 $Plugins = @('triage', 'config-management', 'remediation', 'reporting')
-$ScriptFiles = @('build-duty-setup.ps1', 'build-duty-setup.sh')
+$ScriptFiles = @('build-duty-setup.ps1', 'build-duty-setup.sh', 'comment-review-gate.ps1', 'comment-review-gate.sh')
 
 function Get-FileBytes([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) { return $null }
