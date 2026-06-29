@@ -4,7 +4,7 @@
 
 import { createServer } from "node:http";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync } from "node:fs";
-import { join, basename, dirname } from "node:path";
+import { join, basename, dirname, isAbsolute, resolve } from "node:path";
 import { homedir } from "node:os";
 import { joinSession, createCanvas, CanvasError } from "@github/copilot-sdk/extension";
 
@@ -67,6 +67,74 @@ function getOrCreateState(configPath) {
         });
     }
     return triageState.get(configPath);
+}
+
+// Resolve a (possibly relative) config path to an absolute path so triage runs
+// in another session can locate the file regardless of their working directory.
+// Returns a forward-slash path — backslashes get mangled as escape sequences
+// when the path is interpolated into the triage prompt string.
+function resolveConfigPath(configPath) {
+    if (!configPath) return configPath;
+    if (isAbsolute(configPath)) return configPath.replace(/\\/g, "/");
+
+    const rel = configPath.replace(/\\/g, "/").replace(/^\.\//, "");
+
+    // 1. Try resolving against the workspace path and cwd.
+    const bases = [process.env.COPILOT_WORKSPACE_PATH, process.cwd()].filter(Boolean);
+    for (const base of bases) {
+        const candidate = resolve(base, configPath);
+        if (existsSync(candidate)) return candidate.replace(/\\/g, "/");
+    }
+
+    // 2. The extension's base may not be the repo (e.g. it's the copilot home).
+    //    Search the known repo/config locations for the actual file, matching by
+    //    the relative suffix first, then by basename.
+    const found = findConfigFileByRelative(rel);
+    if (found) return found.replace(/\\/g, "/");
+
+    // 3. Fall back to a best-effort resolution against the first base.
+    return resolve(bases[0] || ".", configPath).replace(/\\/g, "/");
+}
+
+// Walk the known search dirs looking for a file whose normalized path ends with
+// the given relative suffix; falls back to matching by basename.
+function findConfigFileByRelative(rel) {
+    const relLower = rel.toLowerCase();
+    const base = basename(rel).toLowerCase();
+    const searchDirs = [];
+    if (process.env.COPILOT_WORKSPACE_PATH) searchDirs.push(process.env.COPILOT_WORKSPACE_PATH);
+    const home = homedir();
+    const copilotRepos = join(home, ".copilot", "repos");
+    if (existsSync(copilotRepos)) searchDirs.push(copilotRepos);
+    const repos = join(home, "Repos");
+    if (existsSync(repos)) searchDirs.push(repos);
+
+    let suffixMatch = null;
+    let baseMatch = null;
+    function walk(dir, depth = 0) {
+        if (depth > 6 || (suffixMatch && baseMatch)) return;
+        let entries;
+        try { entries = readdirSync(dir); } catch { return; }
+        for (const entry of entries) {
+            if (entry === "node_modules" || entry === ".git") continue;
+            const full = join(dir, entry);
+            let stat;
+            try { stat = statSync(full); } catch { continue; }
+            if (stat.isDirectory()) {
+                walk(full, depth + 1);
+            } else {
+                const fullNorm = full.replace(/\\/g, "/").toLowerCase();
+                if (!suffixMatch && fullNorm.endsWith("/" + relLower)) suffixMatch = full;
+                if (!baseMatch && entry.toLowerCase() === base) baseMatch = full;
+            }
+            if (suffixMatch) break;
+        }
+    }
+    for (const dir of searchDirs) {
+        walk(dir);
+        if (suffixMatch) break;
+    }
+    return suffixMatch || baseMatch;
 }
 
 function escapeHtml(str) {
@@ -541,9 +609,10 @@ async function startServer(instanceId) {
             res.end(JSON.stringify({ ok: true }));
             if (instanceState.activeConfig) {
                 const configName = basename(instanceState.activeConfig);
+                const fullConfigPath = resolveConfigPath(instanceState.activeConfig);
                 session.send(
-                    `Create a new session named "Triage: ${configName}" and run triage for config path: ${instanceState.activeConfig}. ` +
-                    `Use the kickoff_prompt: "/triage with config path: ${instanceState.activeConfig} — output as JSON" in autopilot mode. ` +
+                    `Create a new session named "Triage: ${configName}" and run triage for config path: ${fullConfigPath}. ` +
+                    `Use the kickoff_prompt: "/triage with config path: ${fullConfigPath} — output as JSON" in autopilot mode. ` +
                     `When the triage session completes, push the signals and incidents to triage-dashboard canvas instance "${instanceId}" with configPath "${instanceState.activeConfig}" using update_signals and update_incidents. Then set status to idle.`
                 );
             }
