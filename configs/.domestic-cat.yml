@@ -1,5 +1,21 @@
 name: domestic-cat
 
+azureDevOps:
+  organizations:
+    - url: https://dev.azure.com/dnceng-public
+      projects:
+        - name: public
+          pipelines:
+            - id: 101
+              name: dotnet-sdk (Public CI)
+              branches:
+                - main
+              release:
+                supportPhases: [active, maintenance, preview, goLive]
+              context: >
+                Public CI pipeline for dotnet/sdk. Validates PRs and
+                branch health for main and active release branches.
+
 gitHub:
   organizations:
     - name: dotnet
