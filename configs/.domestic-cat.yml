@@ -10,11 +10,9 @@ azureDevOps:
               name: dotnet-sdk (Public CI)
               branches:
                 - main
-              release:
-                supportPhases: [active, maintenance, preview, goLive]
               context: >
                 Public CI pipeline for dotnet/sdk. Validates PRs and
-                branch health for main and active release branches.
+                branch health for the main branch.
 
 gitHub:
   organizations:
