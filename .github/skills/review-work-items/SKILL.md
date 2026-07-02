@@ -41,6 +41,8 @@ Based on the investigation, suggest:
 - **Retry/rerun** — likely transient (infrastructure issue, flaky test)
 - **Resolved** — the issue has cleared since the last triage
 
+If the user asks you to act on a suggestion by **commenting on a GitHub issue or PR** (e.g. pinging an assignee, posting a status update, or cross-linking a fix), follow the `post-comment` skill: render the exact comment in a fenced preview, get explicit confirmation, then post that exact string.
+
 ## Output
 
 For each reviewed finding, produce:

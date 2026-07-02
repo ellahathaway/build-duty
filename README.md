@@ -278,6 +278,16 @@ Skills are in `.github/skills/` and available to anyone who clones the repo:
 | `/analyze-github-pull-request` | Investigate a PR |
 | `/reconcile-findings` | Group and deduplicate findings |
 | `/review-work-items` | Deep-dive into specific incidents |
+| `/post-comment` | Render a GitHub issue/PR comment for review and post only after confirmation |
+
+The `/post-comment` skill is backed by a deterministic `preToolUse` hook
+(`comment-review-gate`) bundled with each plugin. The hook inspects every tool
+call and forces an interactive confirmation whenever it detects a GitHub issue/PR
+comment or review **post** (the GitHub MCP comment/review tools, or `gh issue/pr
+comment`, `gh pr review`, or `gh api .../comments|/reviews` with a body) — even
+under autopilot / `--yolo`. It never blocks a session outright; it only escalates
+to a human "ask". To allow unreviewed posting for a session, set
+`BUILD_DUTY_ALLOW_UNREVIEWED_COMMENTS=1` (also accepts `true`, `yes`, or `on`).
 
 ### JSON output mode
 
